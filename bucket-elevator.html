@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>VECTRIX™ — Bucket Elevator Designer</title>
+<script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.development.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/recharts@2.5.0/umd/Recharts.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Barlow:wght@300;400;500;600;700;800&family=Barlow+Condensed:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#07111e; --panel:#0d1c2e; --panel2:#060f1a; --hi:#132238;
+  --border:#162438; --border2:#1c3050;
+  --text:#ddeaf6; --muted:#5a7a9a; --muted2:#7a9ab8; --faint:#3a5470;
+  --accent:#c8192e; --accent2:#a01122; --accent-dim:rgba(200,25,46,.12);
+  --blue:#4a9eff; --green:#1fb86e; --red:#e05252; --amber:#d98e00; --teal:#2dd4bf;
+  --chart1:#4a9eff; --chart2:#c8192e; --chart3:#1fb86e; --chart4:#a78bfa; --chart5:#2dd4bf;
+  --ff-display:'DM Serif Display',serif;
+  --ff-ui:'Barlow',sans-serif;
+  --ff-cond:'Barlow Condensed',sans-serif;
+  --ff-mono:'JetBrains Mono',monospace;
+}
+html,body,#root{height:100%;background:var(--bg);color:var(--text);font-family:var(--ff-ui)}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--panel2)}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+
+/* NAV — polished stainless steel */
+.nav{
+  height:56px; display:flex; align-items:center; gap:0; padding:0 20px;
+  background:linear-gradient(180deg,#1e3a5a 0%,#0f2540 35%,#091a30 100%);
+  border-bottom:1px solid #1c3a5a;
+  box-shadow:0 1px 0 rgba(255,255,255,.06) inset, 0 3px 12px rgba(0,0,0,.5);
+  position:relative; z-index:100; flex-shrink:0; user-select:none;
+}
+.nav::before{
+  content:''; position:absolute; top:0; left:0; right:0; height:1px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.18),transparent);
+}
+.nav-brand{display:flex;align-items:center;gap:10px;margin-right:24px}
+.nav-logo{
+  width:34px;height:34px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,var(--accent) 0%,var(--accent2) 100%);
+  box-shadow:0 2px 8px rgba(200,25,46,.4);font-size:16px;
+}
+.nav-title{font-family:var(--ff-cond);font-weight:700;font-size:17px;letter-spacing:.06em;color:#c8dff0}
+.nav-sub{font-size:10px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;font-weight:500}
+.nav-tabs{display:flex;gap:2px;flex:1}
+.nav-tab{
+  padding:6px 14px;border-radius:4px;font-size:12px;font-weight:600;letter-spacing:.04em;
+  font-family:var(--ff-cond);cursor:pointer;transition:all .15s;border:none;background:transparent;
+  color:var(--muted);text-transform:uppercase;
+}
+.nav-tab:hover{background:rgba(255,255,255,.05);color:var(--text)}
+.nav-tab.active{background:var(--accent);color:#fff;box-shadow:0 2px 8px rgba(200,25,46,.4)}
+.nav-badge{
+  margin-left:6px;padding:2px 6px;border-radius:3px;font-size:9px;font-weight:700;
+  background:rgba(200,25,46,.2);color:var(--accent);border:1px solid rgba(200,25,46,.3);
+}
+
+/* LAYOUT */
+.app-body{display:flex;flex:1;overflow:hidden;height:calc(100vh - 56px)}
+.sidebar{
+  width:310px;flex-shrink:0;background:var(--panel2);border-right:1px solid var(--border);
+  overflow-y:auto;display:flex;flex-direction:column;
+}
+.main{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:0}
+
+/* INPUT PANELS */
+.inp-section{border-bottom:1px solid var(--border)}
+.inp-hdr{
+  padding:10px 14px;display:flex;align-items:center;gap:8px;cursor:pointer;
+  font-family:var(--ff-cond);font-size:11px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted2);
+  background:var(--panel);border-bottom:1px solid var(--border);
+  transition:color .15s;
+}
+.inp-hdr:hover{color:var(--text)}
+.inp-hdr .hdr-dot{
+  width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0;
+  box-shadow:0 0 6px rgba(200,25,46,.6);
+}
+.inp-body{padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.inp-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.inp-field{display:flex;flex-direction:column;gap:3px}
+.inp-label{font-size:10px;color:var(--muted);letter-spacing:.04em;font-weight:500}
+.inp-wrap{position:relative}
+.inp-wrap input{
+  width:100%;background:var(--panel);border:1px solid var(--border2);color:var(--text);
+  padding:5px 36px 5px 8px;border-radius:4px;font-family:var(--ff-mono);font-size:12px;
+  transition:border-color .15s;
+}
+.inp-wrap input:focus{outline:none;border-color:var(--blue)}
+.inp-unit{
+  position:absolute;right:6px;top:50%;transform:translateY(-50%);
+  font-size:9px;color:var(--faint);font-family:var(--ff-mono);pointer-events:none;
+}
+select.inp-sel{
+  width:100%;background:var(--panel);border:1px solid var(--border2);color:var(--text);
+  padding:5px 8px;border-radius:4px;font-family:var(--ff-ui);font-size:11px;
+  transition:border-color .15s;cursor:pointer;
+}
+select.inp-sel:focus{outline:none;border-color:var(--blue)}
+
+/* OUTPUT CARDS */
+.results-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;padding:16px}
+.res-card{
+  background:var(--panel);border:1px solid var(--border);border-radius:6px;
+  padding:12px;display:flex;flex-direction:column;gap:4px;transition:border-color .2s;
+}
+.res-card:hover{border-color:var(--border2)}
+.res-card.warn{border-color:rgba(217,142,0,.4);background:rgba(217,142,0,.04)}
+.res-card.fail{border-color:rgba(224,82,82,.4);background:rgba(224,82,82,.04)}
+.res-card.ok{border-color:rgba(31,184,110,.3)}
+.res-label{font-size:10px;color:var(--muted);letter-spacing:.04em;font-weight:500;text-transform:uppercase}
+.res-value{font-family:var(--ff-mono);font-size:20px;font-weight:700;color:var(--text);line-height:1}
+.res-unit{font-size:11px;color:var(--muted);font-family:var(--ff-mono)}
+.res-sub{font-size:10px;color:var(--muted)}
+.status-pill{
+  display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:10px;
+  font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-family:var(--ff-cond);
+}
+.pill-ok{background:rgba(31,184,110,.15);color:var(--green);border:1px solid rgba(31,184,110,.3)}
+.pill-warn{background:rgba(217,142,0,.15);color:var(--amber);border:1px solid rgba(217,142,0,.3)}
+.pill-fail{background:rgba(224,82,82,.15);color:var(--red);border:1px solid rgba(224,82,82,.3)}
+.pill-info{background:rgba(74,158,255,.15);color:var(--blue);border:1px solid rgba(74,158,255,.3)}
+
+/* SECTION HEADINGS */
+.sec-hdr{
+  padding:10px 16px 8px;font-family:var(--ff-cond);font-size:10px;font-weight:700;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  border-bottom:1px solid var(--border);background:var(--panel2);
+  display:flex;align-items:center;gap:8px;
+}
+.sec-hdr::after{content:'';flex:1;height:1px;background:var(--border)}
+.divider{height:1px;background:var(--border);margin:0}
+
+/* SVG CANVAS */
+.canvas-wrap{background:var(--panel2);border-bottom:1px solid var(--border);position:relative}
+canvas,svg{display:block}
+
+/* WARN PANEL */
+.warn-panel{padding:12px 16px;display:flex;flex-direction:column;gap:6px}
+.warn-item{
+  display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border-radius:5px;
+  font-size:11px;line-height:1.4;
+}
+.warn-item.w-warn{background:rgba(217,142,0,.08);border:1px solid rgba(217,142,0,.25);color:#e8a800}
+.warn-item.w-fail{background:rgba(224,82,82,.08);border:1px solid rgba(224,82,82,.25);color:#e87070}
+.warn-item.w-ok{background:rgba(31,184,110,.08);border:1px solid rgba(31,184,110,.25);color:#3dd48a}
+.warn-item.w-info{background:rgba(74,158,255,.08);border:1px solid rgba(74,158,255,.25);color:#6db8ff}
+
+/* CHART AREA */
+.chart-wrap{padding:16px;background:var(--panel)}
+.chart-title{font-family:var(--ff-cond);font-size:11px;font-weight:700;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted2);margin-bottom:10px}
+
+/* TABS (sub) */
+.sub-tabs{display:flex;gap:1px;background:var(--panel2);border-bottom:1px solid var(--border)}
+.sub-tab{
+  padding:8px 16px;font-size:11px;font-weight:600;letter-spacing:.04em;font-family:var(--ff-cond);
+  cursor:pointer;text-transform:uppercase;border:none;background:transparent;
+  color:var(--muted);transition:all .15s;border-bottom:2px solid transparent;
+}
+.sub-tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+.sub-tab:hover:not(.active){color:var(--text)}
+
+/* TOOLTIP */
+.tooltip{
+  position:absolute;background:var(--panel);border:1px solid var(--border2);
+  border-radius:5px;padding:8px 10px;font-size:11px;color:var(--text);
+  pointer-events:none;z-index:200;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.5);
+}
+
+/* TABLE */
+.data-table{width:100%;border-collapse:collapse;font-size:11px}
+.data-table th{
+  padding:6px 10px;text-align:left;font-family:var(--ff-cond);font-size:10px;
+  font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+  background:var(--panel2);border-bottom:1px solid var(--border);
+}
+.data-table td{padding:6px 10px;border-bottom:1px solid rgba(22,36,56,.5);color:var(--text)}
+.data-table tr:hover td{background:rgba(255,255,255,.02)}
+.mono{font-family:var(--ff-mono);font-size:11px}
+
+/* OPTIMIZE BTN */
+.btn-solve{
+  margin:12px;padding:10px 16px;border-radius:5px;border:none;cursor:pointer;
+  background:linear-gradient(135deg,var(--accent) 0%,var(--accent2) 100%);
+  color:#fff;font-family:var(--ff-cond);font-size:13px;font-weight:700;
+  letter-spacing:.06em;text-transform:uppercase;
+  box-shadow:0 2px 10px rgba(200,25,46,.35);transition:all .15s;
+}
+.btn-solve:hover{box-shadow:0 4px 16px rgba(200,25,46,.5);transform:translateY(-1px)}
+.btn-sec{
+  margin:4px 12px;padding:7px 14px;border-radius:5px;border:1px solid var(--border2);cursor:pointer;
+  background:transparent;color:var(--muted2);font-family:var(--ff-cond);font-size:11px;font-weight:600;
+  letter-spacing:.05em;text-transform:uppercase;transition:all .15s;
+}
+.btn-sec:hover{background:var(--hi);color:var(--text)}
+
+/* SLIDER */
+.slider-wrap{padding:10px 14px;display:flex;flex-direction:column;gap:6px}
+input[type=range]{
+  width:100%;accent-color:var(--accent);height:3px;
+  background:linear-gradient(90deg,var(--accent) 0%,var(--border2) 0%);
+}
+
+/* PERF METER */
+.perf-bar-bg{height:8px;background:var(--border);border-radius:4px;overflow:hidden}
+.perf-bar-fill{height:100%;border-radius:4px;transition:width .4s}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState, useEffect, useRef, useMemo, useCallback} = React;
+const {LineChart,Line,BarChart,Bar,XAxis,YAxis,CartesianGrid,Tooltip,Legend,ResponsiveContainer,ReferenceLine,Area,AreaChart,ScatterChart,Scatter} = window.Recharts;
+
+// ═══════════════════════════════════════════════════════════════
+// COLOUR CONSTANTS
+// ═══════════════════════════════════════════════════════════════
+const C = {
+  bg:'#07111e', panel:'#0d1c2e', panel2:'#060f1a', hi:'#132238',
+  border:'#162438', border2:'#1c3050',
+  text:'#ddeaf6', muted:'#5a7a9a', muted2:'#7a9ab8', faint:'#3a5470',
+  accent:'#c8192e', accent2:'#a01122',
+  blue:'#4a9eff', green:'#1fb86e', red:'#e05252', amber:'#d98e00', teal:'#2dd4bf',
+};
+
+// ═══════════════════════════════════════════════════════════════
+// MATERIAL DATABASE (CEMA-inspired)
+// ═══════════════════════════════════════════════════════════════
+const MATERIALS = [
+  {id:'wheat',     name:'Wheat',              rho:770,  angle:28, abr:'A', flow:'Free',    Km:1.0},
+  {id:'corn',      name:'Corn (Maize)',        rho:720,  angle:25, abr:'A', flow:'Free',    Km:1.0},
+  {id:'soybeans',  name:'Soybeans',           rho:770,  angle:29, abr:'A', flow:'Free',    Km:1.0},
+  {id:'rice',      name:'Rice (rough)',        rho:580,  angle:38, abr:'B', flow:'Average', Km:1.1},
+  {id:'sugar',     name:'Sugar (granulated)', rho:850,  angle:35, abr:'A', flow:'Free',    Km:1.0},
+  {id:'salt',      name:'Salt (fine)',         rho:1200, angle:32, abr:'B', flow:'Average', Km:1.1},
+  {id:'cement',    name:'Cement (dry)',        rho:1500, angle:40, abr:'D', flow:'Poor',    Km:1.4},
+  {id:'limestone', name:'Limestone (crushed)', rho:1450, angle:38, abr:'C', flow:'Average', Km:1.2},
+  {id:'coal',      name:'Coal (bituminous)',   rho:850,  angle:38, abr:'B', flow:'Average', Km:1.1},
+  {id:'ironore',   name:'Iron Ore (fines)',    rho:2000, angle:42, abr:'D', flow:'Poor',    Km:1.4},
+  {id:'sand',      name:'Sand (dry)',          rho:1600, angle:35, abr:'C', flow:'Average', Km:1.2},
+  {id:'clinker',   name:'Clinker',            rho:1300, angle:45, abr:'D', flow:'Poor',    Km:1.5},
+  {id:'flyash',    name:'Fly Ash',            rho:800,  angle:42, abr:'B', flow:'Poor',    Km:1.2},
+  {id:'phosphate', name:'Phosphate Rock',     rho:1200, angle:38, abr:'C', flow:'Average', Km:1.3},
+  {id:'woodchips', name:'Wood Chips',         rho:250,  angle:40, abr:'A', flow:'Poor',    Km:1.1},
+  {id:'custom',    name:'Custom Material',    rho:1000, angle:35, abr:'B', flow:'Average', Km:1.1},
+];
+
+// ═══════════════════════════════════════════════════════════════
+// BUCKET DATABASE
+// ═══════════════════════════════════════════════════════════════
+const BUCKET_SERIES = [
+  {id:'AA', name:'Series AA — Super Capacity',  W:305, H:203, P:190, V:7.4,  proj:'CC'},
+  {id:'A',  name:'Series A — Extra Capacity',   W:254, H:178, P:165, V:5.0,  proj:'CC'},
+  {id:'B',  name:'Series B — Medium Capacity',  W:203, H:152, P:140, V:3.3,  proj:'CC'},
+  {id:'C',  name:'Series C — Centrifugal',       W:152, H:127, P:115, V:1.9,  proj:'CC'},
+  {id:'D',  name:'Series D — Centrifugal Sm.',  W:102, H:89,  P:89,  V:0.77, proj:'CC'},
+  {id:'MF', name:'Series MF — Milk of Lime',    W:254, H:152, P:152, V:4.0,  proj:'CC'},
+  {id:'PF', name:'Series PF — Pellet/Feed',     W:305, H:203, P:178, V:6.5,  proj:'CC'},
+  {id:'HF', name:'Series HF — High Capacity',   W:356, H:254, P:229, V:11.2, proj:'CC'},
+];
+
+// Belt widths available (mm)
+const BELT_WIDTHS = [102, 127, 152, 178, 203, 254, 305, 356, 406, 457, 508, 610, 762, 914];
+
+// ═══════════════════════════════════════════════════════════════
+// PHYSICS ENGINE
+// ═══════════════════════════════════════════════════════════════
+
+// Centrifugal discharge condition: v² / (r·g) — releases when > 1
+function centrifugalRatio(v_ms, D_mm) {
+  const r = D_mm / 2000; // m
+  return (v_ms * v_ms) / (r * 9.81);
+}
+
+// Release angle (from vertical) based on centrifugal ratio
+// θ = acos(2/3 * g*r / v²) for standard analysis
+function releaseAngle_deg(v_ms, D_mm) {
+  const r = D_mm / 2000;
+  const cr = centrifugalRatio(v_ms, D_mm);
+  if (cr <= 0) return 90;
+  // Classical release: when centrifugal force = gravity component
+  // cos(θ) = g·r/v²  → θ = acos(g·r/v²)
+  const cosTheta = (9.81 * r) / (v_ms * v_ms);
+  if (cosTheta <= -1) return 180;
+  if (cosTheta >= 1) return 0;
+  return Math.acos(cosTheta) * 180 / Math.PI;
+}
+
+// Discharge trajectory (projectile motion from release point)
+function dischargeTrajectory(v_ms, D_mm, steps = 40) {
+  const r = D_mm / 2000;
+  const theta_rad = releaseAngle_deg(v_ms, D_mm) * Math.PI / 180;
+  // Release point relative to pulley center
+  const rx0 = r * Math.sin(theta_rad);
+  const ry0 = r * Math.cos(theta_rad);
+  // Velocity components at release (tangential)
+  const vx = v_ms * Math.cos(theta_rad);
+  const vy = v_ms * Math.sin(theta_rad);
+  const pts = [];
+  const dt = 0.04;
+  for (let i = 0; i <= steps; i++) {
+    const t = i * dt;
+    const x = rx0 + vx * t;
+    const y = ry0 + vy * t - 0.5 * 9.81 * t * t;
+    pts.push({x: +(x * 1000).toFixed(1), y: +(y * 1000).toFixed(1)});
+    if (y < -r * 2) break;
+  }
+  return pts;
+}
+
+// Capacity calculation (CEMA)
+// Q [t/h] = 3.6 * n * Vb * rho * eta / s
+// n = speed (rpm), Vb = bucket volume (L), rho = density (kg/m³)
+// eta = fill factor, s = bucket spacing (m)
+function calcCapacity(inp) {
+  const {n_rpm, bucket, rho, fill_pct, spacing_m} = inp;
+  const Vb = bucket.V / 1000; // m³
+  const eta = fill_pct / 100;
+  // Buckets per second = n/60, spacing check
+  const bps = n_rpm / 60;
+  // Buckets per metre of belt: 1/spacing
+  // Mass per bucket = Vb * eta * rho
+  // Flow = (bps) * Vb * eta * rho  [kg/s] — belt speed = n*pi*D/60 [m/s]  
+  // Actually: Q = (v / s) * Vb * eta * rho  [kg/s]
+  const v = inp.v_ms;
+  const Q_kgs = (v / spacing_m) * Vb * eta * rho;
+  return Q_kgs * 3.6; // t/h
+}
+
+// Belt speed from pulley diameter + RPM
+function beltSpeed(D_mm, n_rpm) {
+  return Math.PI * D_mm / 1000 * n_rpm / 60;
+}
+
+// Power (CEMA elevator power)
+// P_lift = Q * H / 367   [kW] (Q in t/h, H in m)
+// P_friction ≈ P_lift * Km * (1 + L/H)
+function calcPower(Q_th, H_m, Km, horizFactor = 0.06) {
+  const P_lift = Q_th * H_m / 367;
+  const P_frict = P_lift * horizFactor * Km;
+  const P_total = (P_lift + P_frict) * Km;
+  return {P_lift, P_frict, P_total};
+}
+
+// Belt tension
+// T1 (tight side) = P * 1000 / v  [N]
+// T2 (slack side) = T1 / e^(μθ)
+// Effective tension = T1 - T2
+function calcTension(P_kW, v_ms, mu = 0.35, wrap_deg = 180) {
+  const F_eff = P_kW * 1000 / v_ms; // N
+  const theta = wrap_deg * Math.PI / 180;
+  const emuTheta = Math.exp(mu * theta);
+  const T1 = F_eff * emuTheta / (emuTheta - 1);
+  const T2 = T1 / emuTheta;
+  return {T1, T2, F_eff, ratio: T1/T2};
+}
+
+// Shaft torque + size
+function calcShaft(P_kW, n_rpm, tau_allowable = 55e6) {
+  const omega = 2 * Math.PI * n_rpm / 60;
+  const T_Nm = P_kW * 1000 / omega;
+  // d = (16T / pi*tau)^(1/3)
+  const d_m = Math.pow(16 * T_Nm / (Math.PI * tau_allowable), 1/3);
+  return {T_Nm, d_mm: d_m * 1000};
+}
+
+// Bearing L10 life
+function calcBearing(T_Nm, n_rpm, D_shaft_mm, C_basic = 80000) {
+  // Radial load from belt tension
+  const P_load = T_Nm * 2 / (D_shaft_mm / 1000); // approximate
+  const L10 = Math.pow(C_basic / Math.max(P_load, 1), 3) * 1e6 / (60 * n_rpm);
+  return L10; // hours
+}
+
+// Motor selection
+const MOTOR_SIZES = [0.37,0.55,0.75,1.1,1.5,2.2,3,4,5.5,7.5,11,15,18.5,22,30,37,45,55,75,90,110,132,160,200,250];
+function selectMotor(P_kW, sf = 1.25) {
+  const req = P_kW * sf;
+  return MOTOR_SIZES.find(m => m >= req) || MOTOR_SIZES[MOTOR_SIZES.length - 1];
+}
+
+// Auto bucket selection
+function selectBucket(Q_th, rho, v_ms, n_rpm) {
+  // Required volume per bucket
+  for (const b of BUCKET_SERIES) {
+    // estimate capacity
+    const spacing = (b.P + 10) / 1000;
+    const fill = 0.75;
+    const Vb = b.V / 1000;
+    const Q_est = (v_ms / spacing) * Vb * fill * rho * 3.6;
+    if (Q_est >= Q_th) return b;
+  }
+  return BUCKET_SERIES[BUCKET_SERIES.length - 1];
+}
+
+// Auto belt width selection
+function selectBeltWidth(bucket_W_mm) {
+  return BELT_WIDTHS.find(w => w >= bucket_W_mm + 25) || BELT_WIDTHS[BELT_WIDTHS.length - 1];
+}
+
+// FULL SOLVE
+function solve(inp) {
+  const mat = MATERIALS.find(m => m.id === inp.matId) || MATERIALS[0];
+  const rho = inp.customRho > 0 ? inp.customRho : mat.rho;
+
+  // Speed
+  const v = beltSpeed(inp.D_mm, inp.n_rpm);
+
+  // Select bucket
+  const bucket = inp.autoBucket
+    ? selectBucket(inp.Q_req, rho, v, inp.n_rpm)
+    : BUCKET_SERIES.find(b => b.id === inp.bucketId) || BUCKET_SERIES[2];
+
+  const spacing = (bucket.P + inp.bucketGap) / 1000;
+  const fill_pct = inp.fill_pct;
+
+  // Capacity
+  const Q = calcCapacity({n_rpm: inp.n_rpm, bucket, rho, fill_pct, spacing_m: spacing, v_ms: v});
+
+  // Power
+  const {P_lift, P_frict, P_total} = calcPower(Q, inp.H_m, mat.Km);
+
+  // Tension
+  const {T1, T2, F_eff, ratio: tensionRatio} = calcTension(P_total, Math.max(v, 0.1), inp.mu, inp.wrap_deg);
+
+  // Shaft
+  const {T_Nm, d_mm} = calcShaft(P_total, inp.n_rpm);
+
+  // Belt width
+  const beltW = selectBeltWidth(bucket.W);
+
+  // Motor
+  const motorKW = selectMotor(P_total, inp.sf);
+
+  // Discharge physics
+  const cr = centrifugalRatio(v, inp.D_mm);
+  const theta_rel = releaseAngle_deg(v, inp.D_mm);
+  const trajectory = dischargeTrajectory(v, inp.D_mm, 50);
+
+  // Bearing L10
+  const L10 = calcBearing(T_Nm, inp.n_rpm, d_mm * 1.2);
+
+  // Checks
+  const checks = [];
+  if (Q < inp.Q_req) checks.push({type:'fail', msg:`Capacity ${Q.toFixed(1)} t/h < required ${inp.Q_req} t/h`});
+  else checks.push({type:'ok', msg:`Capacity OK: ${Q.toFixed(1)} t/h ≥ ${inp.Q_req} t/h`});
+
+  if (v > 2.5) checks.push({type:'warn', msg:`Belt speed ${v.toFixed(2)} m/s may cause spillage`});
+  if (v < 0.5) checks.push({type:'warn', msg:`Belt speed ${v.toFixed(2)} m/s — risk of back-legging`});
+
+  if (cr < 0.8) checks.push({type:'warn', msg:`Centrifugal ratio ${cr.toFixed(2)} — gravity discharge (not centrifugal)`});
+  else if (cr > 2.5) checks.push({type:'warn', msg:`Centrifugal ratio ${cr.toFixed(2)} — may cause material scatter`});
+  else checks.push({type:'ok', msg:`Centrifugal discharge OK (ratio ${cr.toFixed(2)})`});
+
+  if (T1 > 50000) checks.push({type:'fail', msg:`Tight side tension ${(T1/1000).toFixed(1)} kN — check belt rating`});
+  if (L10 < 20000) checks.push({type:'warn', msg:`Bearing L10 life ${L10.toFixed(0)} h — consider upgrade`});
+
+  if (d_mm > inp.D_mm * 0.4) checks.push({type:'warn', msg:`Shaft dia ${d_mm.toFixed(0)} mm large relative to pulley`});
+
+  // Sensitivity: power vs speed curve
+  const speedSweep = [];
+  for (let n = 20; n <= 200; n += 10) {
+    const vn = beltSpeed(inp.D_mm, n);
+    const Qn = calcCapacity({n_rpm: n, bucket, rho, fill_pct, spacing_m: spacing, v_ms: vn});
+    const {P_total: Pn} = calcPower(Qn, inp.H_m, mat.Km);
+    const crn = centrifugalRatio(vn, inp.D_mm);
+    speedSweep.push({rpm: n, speed: +vn.toFixed(2), capacity: +Qn.toFixed(1), power: +Pn.toFixed(2), cr: +crn.toFixed(3)});
+  }
+
+  // Capacity vs fill curve
+  const fillSweep = [];
+  for (let f = 30; f <= 100; f += 5) {
+    const Qf = calcCapacity({n_rpm: inp.n_rpm, bucket, rho, fill_pct: f, spacing_m: spacing, v_ms: v});
+    fillSweep.push({fill: f, capacity: +Qf.toFixed(1)});
+  }
+
+  return {
+    Q, P_lift, P_frict, P_total, T1, T2, F_eff, tensionRatio,
+    T_Nm, d_mm, beltW, motorKW, v, bucket, spacing, cr, theta_rel,
+    trajectory, L10, checks, speedSweep, fillSweep, rho, mat,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ELEVATOR SVG SCHEMATIC
+// ═══════════════════════════════════════════════════════════════
+function ElevatorSchematic({inp, res}) {
+  const W = 420, H = 480;
+  const cx = W / 2;
+  const bootY = 420, headY = 60;
+  const casing_w = 80, casing_half = casing_w / 2;
+  const pulleyR = 28;
+
+  // Belt sides
+  const beltL = cx - 18, beltR = cx + 18;
+
+  // Bucket positions along belt (go-side = right of casing center)
+  const nBuckets = 6;
+  const bucketH = Math.max(12, Math.min(22, res.bucket.H / 10));
+  const bucketW = Math.max(16, Math.min(32, res.bucket.W / 9));
+
+  const buckets = [];
+  for (let i = 0; i < nBuckets; i++) {
+    const frac = i / (nBuckets - 1);
+    const by = bootY - 60 + (headY + 60 - (bootY - 60)) * frac;
+    buckets.push({x: beltR - 2, y: by, frac});
+  }
+
+  // Trajectory (scaled to schematic)
+  const traj = res.trajectory;
+  const trajScale = 0.12;
+  const trajOriginX = cx + pulleyR;
+  const trajOriginY = headY;
+  const trajPts = traj.map(p => ({
+    x: trajOriginX + p.x * trajScale,
+    y: trajOriginY - p.y * trajScale,
+  }));
+  const trajPath = trajPts.map((p,i) => `${i===0?'M':'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+
+  const speedOK = res.v >= 0.5 && res.v <= 2.5;
+  const capOK = res.Q >= inp.Q_req;
+
+  return (
+    <svg width={W} height={H} style={{display:'block',margin:'0 auto'}}>
+      {/* Background */}
+      <rect width={W} height={H} fill={C.panel2}/>
+      
+      {/* Grid lines */}
+      {[100,200,300,400].map(y => (
+        <line key={y} x1={0} y1={y} x2={W} y2={y} stroke={C.border} strokeWidth={0.5} strokeDasharray="4,6"/>
+      ))}
+
+      {/* Elevation label */}
+      <text x={20} y={headY + 10} fill={C.muted} fontSize={9} fontFamily="'JetBrains Mono'" textAnchor="middle"
+        transform={`rotate(-90,20,${(headY+bootY)/2})`}>H = {inp.H_m} m</text>
+      <line x1={28} y1={headY} x2={28} y2={bootY} stroke={C.faint} strokeWidth={1} strokeDasharray="3,4"/>
+      <line x1={24} y1={headY} x2={32} y2={headY} stroke={C.faint} strokeWidth={1}/>
+      <line x1={24} y1={bootY} x2={32} y2={bootY} stroke={C.faint} strokeWidth={1}/>
+
+      {/* CASING — outer shell */}
+      <rect x={cx - casing_half - 6} y={headY + pulleyR} width={casing_w + 12}
+        height={bootY - headY - pulleyR * 2}
+        fill="none" stroke={C.border2} strokeWidth={2} rx={2}/>
+
+      {/* CASING — inner */}
+      <rect x={cx - casing_half} y={headY + pulleyR + 8} width={casing_w}
+        height={bootY - headY - pulleyR * 2 - 16}
+        fill="rgba(13,28,46,.6)" stroke={C.border} strokeWidth={1} rx={1}/>
+
+      {/* BELT — return side (left) */}
+      <line x1={beltL} y1={headY + pulleyR} x2={beltL} y2={bootY - pulleyR}
+        stroke={C.muted} strokeWidth={4} strokeLinecap="round" opacity={0.5}/>
+
+      {/* BELT — carry side (right) */}
+      <line x1={beltR} y1={headY + pulleyR} x2={beltR} y2={bootY - pulleyR}
+        stroke={speedOK ? C.green : C.amber} strokeWidth={4} strokeLinecap="round" opacity={0.8}/>
+
+      {/* HEAD PULLEY */}
+      <circle cx={cx} cy={headY} r={pulleyR} fill={C.hi} stroke={C.border2} strokeWidth={2}/>
+      <circle cx={cx} cy={headY} r={pulleyR * 0.55} fill="none" stroke={C.faint} strokeWidth={1}/>
+      <circle cx={cx} cy={headY} r={4} fill={C.accent}/>
+      <text x={cx + pulleyR + 8} y={headY - 10} fill={C.muted2} fontSize={9} fontFamily="'Barlow Condensed'" fontWeight={700}>HEAD</text>
+      <text x={cx + pulleyR + 8} y={headY + 2} fill={C.muted} fontSize={8} fontFamily="'JetBrains Mono'">Ø{inp.D_mm}mm</text>
+      <text x={cx + pulleyR + 8} y={headY + 13} fill={C.muted} fontSize={8} fontFamily="'JetBrains Mono'">{inp.n_rpm}RPM</text>
+
+      {/* BOOT PULLEY */}
+      <circle cx={cx} cy={bootY} r={pulleyR * 0.8} fill={C.hi} stroke={C.border} strokeWidth={2}/>
+      <circle cx={cx} cy={bootY} r={3} fill={C.muted}/>
+      <text x={cx + pulleyR + 4} y={bootY + 4} fill={C.muted} fontSize={9} fontFamily="'Barlow Condensed'" fontWeight={700}>BOOT</text>
+
+      {/* TAKE-UP */}
+      <rect x={cx - pulleyR * 0.8 - 4} y={bootY + 24} width={(pulleyR * 0.8 + 4) * 2} height={8}
+        fill="none" stroke={C.faint} strokeWidth={1} strokeDasharray="3,3"/>
+      <text x={cx} y={bootY + 40} fill={C.faint} fontSize={8} fontFamily="'Barlow Condensed'" textAnchor="middle">TAKE-UP</text>
+
+      {/* DISCHARGE SPOUT */}
+      <path d={`M ${cx + pulleyR} ${headY - 10} L ${cx + pulleyR + 40} ${headY - 25} L ${cx + pulleyR + 50} ${headY - 10} L ${cx + pulleyR + 10} ${headY}`}
+        fill="rgba(180,100,20,.15)" stroke={C.amber} strokeWidth={1.5} opacity={0.8}/>
+      <text x={cx + pulleyR + 52} y={headY - 18} fill={C.amber} fontSize={9} fontFamily="'Barlow Condensed'" fontWeight={700}>DISCHARGE</text>
+
+      {/* INLET FEED BOOT */}
+      <path d={`M ${cx - casing_half - 6} ${bootY - 10} L ${cx - casing_half - 30} ${bootY + 15} L ${cx - casing_half - 30} ${bootY + 30} L ${cx - casing_half + 10} ${bootY + 30} L ${cx - casing_half + 10} ${bootY + 10}`}
+        fill="rgba(31,184,110,.08)" stroke={C.green} strokeWidth={1.5} opacity={0.8}/>
+      <text x={cx - casing_half - 34} y={bootY + 44} fill={C.green} fontSize={9} fontFamily="'Barlow Condensed'" fontWeight={700}>FEED INLET</text>
+
+      {/* BUCKETS — carry side */}
+      {buckets.map((b, i) => (
+        <g key={i} transform={`translate(${b.x},${b.y})`}>
+          <rect x={0} y={-bucketH/2} width={bucketW} height={bucketH}
+            fill={capOK ? 'rgba(74,158,255,.2)' : 'rgba(224,82,82,.2)'}
+            stroke={capOK ? C.blue : C.red} strokeWidth={1} rx={2}/>
+          {/* Material inside bucket */}
+          <rect x={2} y={0} width={bucketW - 4} height={bucketH/2 - 2}
+            fill={capOK ? 'rgba(74,158,255,.4)' : 'rgba(224,82,82,.4)'} rx={1}/>
+        </g>
+      ))}
+
+      {/* DISCHARGE TRAJECTORY */}
+      {traj.length > 2 && (
+        <path d={trajPath} fill="none" stroke={C.teal} strokeWidth={1.5} strokeDasharray="4,3" opacity={0.7}/>
+      )}
+      <text x={trajOriginX + 5} y={headY - 35} fill={C.teal} fontSize={9} fontFamily="'JetBrains Mono'" opacity={0.8}>
+        θ={res.theta_rel.toFixed(0)}°
+      </text>
+
+      {/* SPEED INDICATOR */}
+      <rect x={W - 80} y={10} width={70} height={38} fill={C.hi} stroke={C.border2} rx={4}/>
+      <text x={W - 45} y={24} fill={C.muted} fontSize={8} fontFamily="'Barlow Condensed'" fontWeight={700} textAnchor="middle">BELT SPEED</text>
+      <text x={W - 45} y={40} fill={speedOK ? C.green : C.amber} fontSize={14} fontFamily="'JetBrains Mono'" fontWeight={700} textAnchor="middle">
+        {res.v.toFixed(2)}
+      </text>
+      <text x={W - 10} y={40} fill={C.muted} fontSize={8} fontFamily="'JetBrains Mono'">m/s</text>
+
+      {/* CAPACITY INDICATOR */}
+      <rect x={W - 80} y={54} width={70} height={38} fill={C.hi} stroke={capOK ? C.border2 : 'rgba(224,82,82,.4)'} rx={4}/>
+      <text x={W - 45} y={68} fill={C.muted} fontSize={8} fontFamily="'Barlow Condensed'" fontWeight={700} textAnchor="middle">CAPACITY</text>
+      <text x={W - 45} y={84} fill={capOK ? C.green : C.red} fontSize={14} fontFamily="'JetBrains Mono'" fontWeight={700} textAnchor="middle">
+        {res.Q.toFixed(0)}
+      </text>
+      <text x={W - 12} y={84} fill={C.muted} fontSize={7} fontFamily="'JetBrains Mono'">t/h</text>
+
+      {/* BUCKET label */}
+      <text x={cx} y={H - 10} fill={C.muted} fontSize={9} fontFamily="'Barlow Condensed'" fontWeight={600} textAnchor="middle">
+        BUCKET {res.bucket.id} — {res.bucket.W}×{res.bucket.H}mm — {res.bucket.V}L — SPACING {(res.spacing*1000).toFixed(0)}mm
+      </text>
+    </svg>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RESULTS KPI GRID
+// ═══════════════════════════════════════════════════════════════
+function KpiGrid({res, inp}) {
+  const capOK = res.Q >= inp.Q_req;
+  const speedOK = res.v >= 0.5 && res.v <= 2.5;
+
+  const kpis = [
+    {label:'Capacity', value: res.Q.toFixed(1), unit:'t/h', status: capOK ? 'ok' : 'fail', sub: `req ${inp.Q_req} t/h`},
+    {label:'Belt Speed', value: res.v.toFixed(2), unit:'m/s', status: speedOK ? 'ok' : 'warn', sub: `${inp.n_rpm} RPM`},
+    {label:'Total Power', value: res.P_total.toFixed(2), unit:'kW', status: 'info', sub: `lift ${res.P_lift.toFixed(2)} kW`},
+    {label:'Motor Selected', value: res.motorKW, unit:'kW', status: 'info', sub: `SF ${inp.sf}`},
+    {label:'Tight-side T1', value: (res.T1/1000).toFixed(2), unit:'kN', status: res.T1 > 50000 ? 'fail' : 'ok', sub: `ratio ${res.tensionRatio.toFixed(2)}`},
+    {label:'Shaft Dia.', value: res.d_mm.toFixed(0), unit:'mm', status: 'info', sub: `T = ${(res.T_Nm/1000).toFixed(2)} kNm`},
+    {label:'Belt Width', value: res.beltW, unit:'mm', status: 'info', sub: `bucket ${res.bucket.W}mm`},
+    {label:'Centrifugal Ratio', value: res.cr.toFixed(3), unit:'—', status: res.cr < 0.8 ? 'warn' : res.cr > 2.5 ? 'warn' : 'ok', sub: `θ_rel ${res.theta_rel.toFixed(1)}°`},
+    {label:'Bearing L10', value: res.L10 > 9999 ? (res.L10/1000).toFixed(0)+'k' : res.L10.toFixed(0), unit:'h', status: res.L10 < 20000 ? 'warn' : 'ok', sub: `@ ${inp.n_rpm} rpm`},
+    {label:'Bucket Series', value: res.bucket.id, unit:'', status: 'info', sub: `${res.bucket.V}L, Km=${res.mat.Km}`},
+    {label:'Material', value: res.rho, unit:'kg/m³', status: 'info', sub: res.mat.name},
+    {label:'Fill Factor', value: inp.fill_pct, unit:'%', status: 'info', sub: `${(res.bucket.V * inp.fill_pct/100).toFixed(2)}L/bucket`},
+  ];
+
+  const statusClass = {ok:'ok', fail:'fail', warn:'warn', info:''};
+
+  return (
+    <div className="results-grid">
+      {kpis.map((k,i) => (
+        <div key={i} className={`res-card ${statusClass[k.status]||''}`}>
+          <div className="res-label">{k.label}</div>
+          <div style={{display:'flex',alignItems:'baseline',gap:4}}>
+            <div className="res-value">{k.value}</div>
+            {k.unit && <div className="res-unit">{k.unit}</div>}
+          </div>
+          <div className="res-sub">{k.sub}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CHART PANEL
+// ═══════════════════════════════════════════════════════════════
+function ChartsPanel({res, inp}) {
+  const [activeChart, setActiveChart] = useState('speed');
+  const charts = [
+    {id:'speed', label:'Speed Sweep'},
+    {id:'fill', label:'Fill Analysis'},
+    {id:'traj', label:'Discharge Trajectory'},
+    {id:'tension', label:'Tension Model'},
+  ];
+
+  const tooltipStyle = {background: C.panel, border:`1px solid ${C.border2}`, borderRadius:5, fontFamily:'JetBrains Mono', fontSize:11};
+
+  return (
+    <div>
+      <div className="sub-tabs">
+        {charts.map(c => (
+          <button key={c.id} className={`sub-tab ${activeChart===c.id?'active':''}`} onClick={() => setActiveChart(c.id)}>
+            {c.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="chart-wrap" style={{minHeight:280}}>
+        {activeChart === 'speed' && (
+          <>
+            <div className="chart-title">Capacity & Power vs Belt Speed (RPM Sweep, fixed diameter)</div>
+            <ResponsiveContainer width="100%" height={240}>
+              <LineChart data={res.speedSweep} margin={{top:5,right:20,left:0,bottom:5}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                <XAxis dataKey="rpm" stroke={C.muted} tick={{fill:C.muted,fontSize:10}} label={{value:'RPM',position:'insideBottom',offset:-2,fill:C.muted,fontSize:10}}/>
+                <YAxis yAxisId="left" stroke={C.muted} tick={{fill:C.muted,fontSize:10}}/>
+                <YAxis yAxisId="right" orientation="right" stroke={C.muted} tick={{fill:C.muted,fontSize:10}}/>
+                <Tooltip contentStyle={tooltipStyle} labelStyle={{color:C.muted2}}/>
+                <Legend wrapperStyle={{fontSize:11,color:C.muted}}/>
+                <Line yAxisId="left" type="monotone" dataKey="capacity" name="Capacity (t/h)" stroke={C.blue} strokeWidth={2} dot={false}/>
+                <Line yAxisId="right" type="monotone" dataKey="power" name="Power (kW)" stroke={C.accent} strokeWidth={2} dot={false}/>
+                <ReferenceLine yAxisId="left" y={inp.Q_req} stroke={C.green} strokeDasharray="5 3" label={{value:`Req ${inp.Q_req}t/h`,fill:C.green,fontSize:10}}/>
+                <ReferenceLine x={inp.n_rpm} yAxisId="left" stroke={C.amber} strokeDasharray="5 3"/>
+              </LineChart>
+            </ResponsiveContainer>
+          </>
+        )}
+
+        {activeChart === 'fill' && (
+          <>
+            <div className="chart-title">Capacity vs Bucket Fill Factor</div>
+            <ResponsiveContainer width="100%" height={240}>
+              <AreaChart data={res.fillSweep} margin={{top:5,right:20,left:0,bottom:5}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                <XAxis dataKey="fill" stroke={C.muted} tick={{fill:C.muted,fontSize:10}} label={{value:'Fill %',position:'insideBottom',offset:-2,fill:C.muted,fontSize:10}}/>
+                <YAxis stroke={C.muted} tick={{fill:C.muted,fontSize:10}}/>
+                <Tooltip contentStyle={tooltipStyle}/>
+                <Area type="monotone" dataKey="capacity" name="Capacity (t/h)" stroke={C.teal} fill="rgba(45,212,191,.15)" strokeWidth={2}/>
+                <ReferenceLine x={inp.fill_pct} stroke={C.amber} strokeDasharray="5 3" label={{value:`${inp.fill_pct}%`,fill:C.amber,fontSize:10}}/>
+                <ReferenceLine y={inp.Q_req} stroke={C.green} strokeDasharray="5 3" label={{value:`${inp.Q_req}t/h`,fill:C.green,fontSize:10}}/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </>
+        )}
+
+        {activeChart === 'traj' && (
+          <>
+            <div className="chart-title">Discharge Trajectory (Projectile — relative to head pulley centre)</div>
+            <ResponsiveContainer width="100%" height={240}>
+              <LineChart data={res.trajectory} margin={{top:5,right:20,left:20,bottom:20}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                <XAxis dataKey="x" type="number" name="X (mm)" stroke={C.muted} tick={{fill:C.muted,fontSize:10}} label={{value:'Horizontal (mm)',position:'insideBottom',offset:-10,fill:C.muted,fontSize:10}}/>
+                <YAxis stroke={C.muted} tick={{fill:C.muted,fontSize:10}} label={{value:'Vertical (mm)',angle:-90,position:'insideLeft',fill:C.muted,fontSize:10}}/>
+                <Tooltip contentStyle={tooltipStyle} formatter={(v) => [v.toFixed(1)+'mm']}/>
+                <Line type="monotone" dataKey="y" name="Y (mm)" stroke={C.teal} strokeWidth={2} dot={false}/>
+              </LineChart>
+            </ResponsiveContainer>
+            <div style={{padding:'8px 12px',fontSize:10,color:C.muted,display:'flex',gap:20}}>
+              <span>Release angle: <span style={{color:C.text}}>{res.theta_rel.toFixed(1)}°</span> from vertical</span>
+              <span>Centrifugal ratio: <span style={{color:res.cr>1?C.green:C.amber}}>{res.cr.toFixed(3)}</span></span>
+              <span>Head pulley: <span style={{color:C.text}}>Ø{inp.D_mm}mm</span></span>
+            </div>
+          </>
+        )}
+
+        {activeChart === 'tension' && (
+          <>
+            <div className="chart-title">Belt Tension Model — Tight/Slack Side Analysis</div>
+            <div style={{padding:'16px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+              {[
+                {label:'Effective Tension', value:(res.F_eff/1000).toFixed(3)+' kN', color:C.blue},
+                {label:'Tight Side (T₁)', value:(res.T1/1000).toFixed(3)+' kN', color:C.accent},
+                {label:'Slack Side (T₂)', value:(res.T2/1000).toFixed(3)+' kN', color:C.teal},
+                {label:'Tension Ratio T₁/T₂', value:res.tensionRatio.toFixed(3), color:C.amber},
+                {label:'Wrap Angle', value:inp.wrap_deg+'°', color:C.muted2},
+                {label:'Friction μ', value:inp.mu.toFixed(2), color:C.muted2},
+              ].map((item,i) => (
+                <div key={i} style={{background:C.hi,borderRadius:5,padding:'10px 12px',border:`1px solid ${C.border2}`}}>
+                  <div style={{fontSize:10,color:C.muted,marginBottom:4}}>{item.label}</div>
+                  <div style={{fontFamily:'JetBrains Mono',fontSize:16,fontWeight:700,color:item.color}}>{item.value}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{padding:'4px 16px 12px',fontSize:10,color:C.muted}}>
+              Belt slip condition: T₁/T₂ = e^(μθ) = e^({inp.mu}×{(inp.wrap_deg*Math.PI/180).toFixed(3)}) = {Math.exp(inp.mu*inp.wrap_deg*Math.PI/180).toFixed(3)}
+              {res.tensionRatio > Math.exp(inp.mu*inp.wrap_deg*Math.PI/180)
+                ? <span style={{color:C.red,marginLeft:8}}>⚠ SLIP RISK</span>
+                : <span style={{color:C.green,marginLeft:8}}>✓ No slip</span>}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// OPTIMIZER PANEL
+// ═══════════════════════════════════════════════════════════════
+function OptimizerPanel({inp, onApply}) {
+  const [running, setRunning] = useState(false);
+  const [results, setResults] = useState(null);
+  const [objective, setObjective] = useState('power');
+
+  const runOptimizer = useCallback(() => {
+    setRunning(true);
+    setTimeout(() => {
+      const mat = MATERIALS.find(m => m.id === inp.matId) || MATERIALS[0];
+      const rho = inp.customRho > 0 ? inp.customRho : mat.rho;
+
+      let best = null;
+      let bestScore = Infinity;
+      const candidates = [];
+
+      // Grid search over: RPM, bucket, fill
+      for (const bucket of BUCKET_SERIES) {
+        for (let rpm = 40; rpm <= 160; rpm += 10) {
+          for (let fill = 60; fill <= 90; fill += 5) {
+            const v = beltSpeed(inp.D_mm, rpm);
+            const spacing = (bucket.P + inp.bucketGap) / 1000;
+            const Q = calcCapacity({n_rpm: rpm, bucket, rho, fill_pct: fill, spacing_m: spacing, v_ms: v});
+            if (Q < inp.Q_req) continue; // capacity constraint
+            if (v < 0.5 || v > 3.0) continue; // speed limits
+
+            const {P_total} = calcPower(Q, inp.H_m, mat.Km);
+            const {T1} = calcTension(P_total, v, inp.mu, inp.wrap_deg);
+            const cr = centrifugalRatio(v, inp.D_mm);
+            const motor = selectMotor(P_total, inp.sf);
+
+            // Score
+            let score = 0;
+            if (objective === 'power') score = P_total;
+            else if (objective === 'tension') score = T1;
+            else if (objective === 'motor') score = motor;
+            else score = P_total * 0.5 + T1 * 0.0001 + (cr < 0.8 || cr > 2.5 ? 1000 : 0);
+
+            candidates.push({rpm, bucket: bucket.id, fill, Q: +Q.toFixed(1), P: +P_total.toFixed(2), T1: +(T1/1000).toFixed(2), cr: +cr.toFixed(3), motor, score: +score.toFixed(3)});
+
+            if (score < bestScore) {
+              bestScore = score;
+              best = {rpm, bucketId: bucket.id, fill_pct: fill};
+            }
+          }
+        }
+      }
+
+      // Sort and take top 10
+      candidates.sort((a,b) => a.score - b.score);
+      setResults({best, top: candidates.slice(0, 12), total: candidates.length});
+      setRunning(false);
+    }, 50);
+  }, [inp, objective]);
+
+  return (
+    <div style={{padding:16,display:'flex',flexDirection:'column',gap:12}}>
+      <div style={{fontSize:11,color:C.muted}}>
+        Multi-objective optimizer searches RPM × Bucket × Fill space subject to Q ≥ {inp.Q_req} t/h and speed limits.
+      </div>
+
+      <div className="inp-field">
+        <div className="inp-label">Objective Function</div>
+        <select className="inp-sel" value={objective} onChange={e => setObjective(e.target.value)}>
+          <option value="power">Minimize Power</option>
+          <option value="tension">Minimize Belt Tension</option>
+          <option value="motor">Minimize Motor Size</option>
+          <option value="balanced">Balanced (Power + Tension + Discharge)</option>
+        </select>
+      </div>
+
+      <button className="btn-solve" style={{margin:0}} onClick={runOptimizer} disabled={running}>
+        {running ? '⟳ OPTIMIZING...' : '▶ RUN OPTIMIZER'}
+      </button>
+
+      {results && (
+        <>
+          <div style={{padding:'10px 12px',background:C.hi,borderRadius:5,border:`1px solid ${C.border2}`,fontSize:11}}>
+            <span style={{color:C.muted}}>Best solution: </span>
+            <span style={{color:C.green,fontFamily:'JetBrains Mono',fontWeight:700}}>
+              {results.best.rpm} RPM · Bucket {results.best.bucketId} · Fill {results.best.fill_pct}%
+            </span>
+            <span style={{color:C.muted,marginLeft:8}}>({results.total} feasible candidates)</span>
+          </div>
+
+          <button className="btn-sec" style={{margin:0}} onClick={() => onApply(results.best)}>
+            ✓ Apply Best Solution to Inputs
+          </button>
+
+          <div style={{overflow:'auto'}}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Rank</th><th>RPM</th><th>Bucket</th><th>Fill%</th>
+                  <th>Q t/h</th><th>P kW</th><th>T₁ kN</th><th>CR</th><th>Motor kW</th>
+                </tr>
+              </thead>
+              <tbody>
+                {results.top.map((r,i) => (
+                  <tr key={i} style={{background:i===0?'rgba(31,184,110,.06)':''}}>
+                    <td className="mono" style={{color:i===0?C.green:C.muted}}>{i===0?'★':i+1}</td>
+                    <td className="mono">{r.rpm}</td>
+                    <td className="mono" style={{color:C.blue}}>{r.bucket}</td>
+                    <td className="mono">{r.fill}%</td>
+                    <td className="mono" style={{color:C.green}}>{r.Q}</td>
+                    <td className="mono" style={{color:C.amber}}>{r.P}</td>
+                    <td className="mono">{r.T1}</td>
+                    <td className="mono" style={{color:r.cr<0.8||r.cr>2.5?C.red:C.teal}}>{r.cr}</td>
+                    <td className="mono">{r.motor}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// COMPONENT DESIGN PANEL
+// ═══════════════════════════════════════════════════════════════
+function ComponentPanel({res, inp}) {
+  const [tab, setTab] = useState('belt');
+  const tabs = [{id:'belt',label:'Belt/Chain'},{id:'bucket',label:'Buckets'},{id:'shaft',label:'Shaft & Bearings'},{id:'gearbox',label:'Drive'}];
+
+  // Belt ply rating (simplified)
+  const beltPlyRating = Math.ceil(res.T1 / 12000); // ~12kN per ply ROUGH
+  const chainPitch = res.T1 < 20000 ? 63.5 : res.T1 < 50000 ? 101.6 : 152.4;
+
+  // Bucket volume utilisation
+  const fillVol = res.bucket.V * inp.fill_pct / 100;
+  const matMass = fillVol * res.rho / 1000;
+
+  return (
+    <div>
+      <div className="sub-tabs">
+        {tabs.map(t => (
+          <button key={t.id} className={`sub-tab ${tab===t.id?'active':''}`} onClick={() => setTab(t.id)}>{t.label}</button>
+        ))}
+      </div>
+      <div style={{padding:16,display:'flex',flexDirection:'column',gap:10}}>
+        {tab === 'belt' && (
+          <>
+            <div style={{fontSize:11,color:C.muted,marginBottom:6}}>Belt Design — CEMA Standards</div>
+            <table className="data-table">
+              <tbody>
+                <tr><td style={{color:C.muted}}>Belt Width</td><td className="mono">{res.beltW} mm</td></tr>
+                <tr><td style={{color:C.muted}}>Effective Tension</td><td className="mono">{(res.F_eff/1000).toFixed(2)} kN</td></tr>
+                <tr><td style={{color:C.muted}}>Tight Side T₁</td><td className="mono" style={{color:res.T1>50000?C.red:C.text}}>{(res.T1/1000).toFixed(2)} kN</td></tr>
+                <tr><td style={{color:C.muted}}>Slack Side T₂</td><td className="mono">{(res.T2/1000).toFixed(2)} kN</td></tr>
+                <tr><td style={{color:C.muted}}>Tension Ratio</td><td className="mono">{res.tensionRatio.toFixed(3)}</td></tr>
+                <tr><td style={{color:C.muted}}>Recommended Ply Rating</td><td className="mono" style={{color:C.blue}}>{beltPlyRating} PLY (est.)</td></tr>
+                <tr><td style={{color:C.muted}}>Chain Pitch (if chain)</td><td className="mono">{chainPitch} mm</td></tr>
+              </tbody>
+            </table>
+            <div className="warn-item w-info" style={{fontSize:10}}>
+              ℹ Belt tension ratio should be ≤ e^(μθ) = {Math.exp(inp.mu*inp.wrap_deg*Math.PI/180).toFixed(3)} to prevent slip (μ={inp.mu}, θ={inp.wrap_deg}°)
+            </div>
+          </>
+        )}
+        {tab === 'bucket' && (
+          <>
+            <div style={{fontSize:11,color:C.muted,marginBottom:6}}>Bucket Analysis — Series {res.bucket.id}</div>
+            <table className="data-table">
+              <tbody>
+                <tr><td style={{color:C.muted}}>Series</td><td className="mono" style={{color:C.blue}}>{res.bucket.id} — {res.bucket.name}</td></tr>
+                <tr><td style={{color:C.muted}}>Width × Height</td><td className="mono">{res.bucket.W} × {res.bucket.H} mm</td></tr>
+                <tr><td style={{color:C.muted}}>Projection (P)</td><td className="mono">{res.bucket.P} mm</td></tr>
+                <tr><td style={{color:C.muted}}>Volume (struck)</td><td className="mono">{res.bucket.V} L</td></tr>
+                <tr><td style={{color:C.muted}}>Fill Factor</td><td className="mono">{inp.fill_pct}%</td></tr>
+                <tr><td style={{color:C.muted}}>Active Volume</td><td className="mono">{fillVol.toFixed(3)} L</td></tr>
+                <tr><td style={{color:C.muted}}>Mass per Bucket</td><td className="mono">{(matMass*1000).toFixed(1)} g ({res.mat.name})</td></tr>
+                <tr><td style={{color:C.muted}}>Spacing</td><td className="mono">{(res.spacing*1000).toFixed(0)} mm</td></tr>
+                <tr><td style={{color:C.muted}}>Buckets per metre</td><td className="mono">{(1/res.spacing).toFixed(2)}</td></tr>
+                <tr><td style={{color:C.muted}}>Abrasiveness</td><td className="mono" style={{color:res.mat.abr==='D'?C.red:res.mat.abr==='C'?C.amber:C.green}}>{res.mat.abr} — {res.mat.abr==='A'?'Non-abrasive':res.mat.abr==='B'?'Mildly abrasive':res.mat.abr==='C'?'Abrasive':'Highly abrasive'}</td></tr>
+              </tbody>
+            </table>
+            <div style={{marginTop:6}}>
+              <div style={{fontSize:10,color:C.muted,marginBottom:4}}>Bucket Fill Visualisation</div>
+              <div className="perf-bar-bg">
+                <div className="perf-bar-fill" style={{width:`${inp.fill_pct}%`,background:`linear-gradient(90deg,${C.blue},${C.teal})`}}/>
+              </div>
+              <div style={{fontSize:9,color:C.muted,marginTop:3,display:'flex',justifyContent:'space-between'}}>
+                <span>0%</span><span style={{color:C.text}}>{inp.fill_pct}% fill</span><span>100%</span>
+              </div>
+            </div>
+          </>
+        )}
+        {tab === 'shaft' && (
+          <>
+            <div style={{fontSize:11,color:C.muted,marginBottom:6}}>Shaft & Bearing Design</div>
+            <table className="data-table">
+              <tbody>
+                <tr><td style={{color:C.muted}}>Shaft Torque</td><td className="mono">{(res.T_Nm/1000).toFixed(3)} kNm</td></tr>
+                <tr><td style={{color:C.muted}}>Min Shaft Dia (torsion)</td><td className="mono" style={{color:C.blue}}>{res.d_mm.toFixed(1)} mm</td></tr>
+                <tr><td style={{color:C.muted}}>Allowable Shear Stress</td><td className="mono">55 MPa (mild steel)</td></tr>
+                <tr><td style={{color:C.muted}}>Head Pulley Dia</td><td className="mono">{inp.D_mm} mm</td></tr>
+                <tr><td style={{color:C.muted}}>Belt Speed</td><td className="mono">{res.v.toFixed(3)} m/s</td></tr>
+                <tr><td style={{color:C.muted}}>Head Shaft RPM</td><td className="mono">{inp.n_rpm} rpm</td></tr>
+                <tr><td style={{color:C.muted}}>Bearing L10 Life</td><td className="mono" style={{color:res.L10<20000?C.amber:C.green}}>{res.L10.toFixed(0)} h</td></tr>
+              </tbody>
+            </table>
+            <div className="warn-item w-info" style={{fontSize:10,marginTop:6}}>
+              ℹ Shaft sizing uses pure torsion. Add 15–20% for keyway stress concentration and combined bending loads in detailed design.
+            </div>
+          </>
+        )}
+        {tab === 'gearbox' && (
+          <>
+            <div style={{fontSize:11,color:C.muted,marginBottom:6}}>Drive System Design</div>
+            <table className="data-table">
+              <tbody>
+                <tr><td style={{color:C.muted}}>Required Power</td><td className="mono">{res.P_total.toFixed(2)} kW</td></tr>
+                <tr><td style={{color:C.muted}}>Service Factor</td><td className="mono">{inp.sf}</td></tr>
+                <tr><td style={{color:C.muted}}>Design Power</td><td className="mono">{(res.P_total*inp.sf).toFixed(2)} kW</td></tr>
+                <tr><td style={{color:C.muted}}>Selected Motor</td><td className="mono" style={{color:C.green}}>{res.motorKW} kW</td></tr>
+                <tr><td style={{color:C.muted}}>Head Shaft Speed</td><td className="mono">{inp.n_rpm} rpm</td></tr>
+                <tr><td style={{color:C.muted}}>Head Shaft Torque</td><td className="mono">{(res.T_Nm/1000).toFixed(3)} kNm</td></tr>
+                <tr><td style={{color:C.muted}}>Typical Motor Speed</td><td className="mono">1450 rpm (4P)</td></tr>
+                <tr><td style={{color:C.muted}}>Required Ratio</td><td className="mono">{(1450/inp.n_rpm).toFixed(1)} : 1</td></tr>
+              </tbody>
+            </table>
+            <div className="warn-item w-ok" style={{marginTop:6,fontSize:10}}>
+              ✓ Select gearbox rated ≥ {(res.T_Nm/1000*inp.sf).toFixed(2)} kNm output torque at {inp.n_rpm} rpm output
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// WARNINGS PANEL
+// ═══════════════════════════════════════════════════════════════
+function WarningsPanel({checks}) {
+  return (
+    <div className="warn-panel">
+      {checks.map((c,i) => (
+        <div key={i} className={`warn-item ${c.type==='fail'?'w-fail':c.type==='warn'?'w-warn':c.type==='ok'?'w-ok':'w-info'}`}>
+          <span>{c.type==='fail'?'✗':c.type==='warn'?'⚠':c.type==='ok'?'✓':'ℹ'}</span>
+          <span>{c.msg}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MAIN APP
+// ═══════════════════════════════════════════════════════════════
+const DEFAULT_INP = {
+  // Process
+  Q_req: 100, H_m: 25, matId: 'wheat', customRho: 0,
+  // Mechanical
+  D_mm: 400, n_rpm: 60, fill_pct: 75, bucketGap: 15,
+  autoBucket: true, bucketId: 'B',
+  // Belt/tension
+  mu: 0.35, wrap_deg: 180, sf: 1.25,
+};
+
+function App() {
+  const [inp, setInp] = useState(DEFAULT_INP);
+  const [activeNav, setActiveNav] = useState('design');
+  const [collapsed, setCollapsed] = useState({});
+
+  const res = useMemo(() => solve(inp), [inp]);
+
+  const setF = (k, v) => setInp(p => ({...p, [k]: v}));
+  const numF = (k) => (e) => setF(k, parseFloat(e.target.value) || 0);
+  const toggleCollapse = (k) => setCollapsed(p => ({...p, [k]: !p[k]}));
+
+  const applyOptimizer = (best) => {
+    setInp(p => ({...p, n_rpm: best.rpm, bucketId: best.bucketId, autoBucket: false, fill_pct: best.fill_pct}));
+    setActiveNav('design');
+  };
+
+  const navTabs = [
+    {id:'design', label:'Design'},
+    {id:'optimizer', label:'Optimizer', badge:'AUTO'},
+    {id:'components', label:'Components'},
+    {id:'checks', label:'Checks', badge: res.checks.filter(c=>c.type==='fail').length > 0 ? res.checks.filter(c=>c.type==='fail').length : null},
+  ];
+
+  const InputSection = ({id, title, children}) => (
+    <div className="inp-section">
+      <div className="inp-hdr" onClick={() => toggleCollapse(id)}>
+        <span className="hdr-dot"/>
+        <span style={{flex:1}}>{title}</span>
+        <span style={{color:C.faint,fontSize:10}}>{collapsed[id]?'▶':'▼'}</span>
+      </div>
+      {!collapsed[id] && <div className="inp-body">{children}</div>}
+    </div>
+  );
+
+  const Field = ({label, k, unit, min, max, step=1, type='number'}) => (
+    <div className="inp-field">
+      <div className="inp-label">{label}</div>
+      <div className="inp-wrap">
+        <input type={type} value={inp[k]} min={min} max={max} step={step}
+          onChange={numF(k)}/>
+        {unit && <span className="inp-unit">{unit}</span>}
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',height:'100vh'}}>
+      {/* NAV */}
+      <div className="nav">
+        <div className="nav-brand">
+          <div className="nav-logo">⚙</div>
+          <div>
+            <div className="nav-title">VECTRIX™</div>
+            <div className="nav-sub">Bucket Elevator</div>
+          </div>
+        </div>
+
+        <div className="nav-tabs">
+          {navTabs.map(t => (
+            <button key={t.id} className={`nav-tab ${activeNav===t.id?'active':''}`} onClick={() => setActiveNav(t.id)}>
+              {t.label}
+              {t.badge && <span className="nav-badge">{t.badge}</span>}
+            </button>
+          ))}
+        </div>
+
+        {/* Quick KPIs in nav */}
+        <div style={{display:'flex',gap:16,alignItems:'center',fontSize:11,fontFamily:'JetBrains Mono'}}>
+          <span style={{color:C.muted}}>Q: <span style={{color:res.Q>=inp.Q_req?C.green:C.red,fontWeight:700}}>{res.Q.toFixed(0)}</span> t/h</span>
+          <span style={{color:C.muted}}>P: <span style={{color:C.amber,fontWeight:700}}>{res.P_total.toFixed(1)}</span> kW</span>
+          <span style={{color:C.muted}}>v: <span style={{color:C.blue,fontWeight:700}}>{res.v.toFixed(2)}</span> m/s</span>
+        </div>
+      </div>
+
+      {/* BODY */}
+      <div className="app-body">
+        {/* SIDEBAR */}
+        <div className="sidebar">
+          <div style={{padding:'8px 12px 4px',fontSize:9,color:C.faint,letterSpacing:'.1em',textTransform:'uppercase',fontFamily:'Barlow Condensed',fontWeight:700}}>
+            System Inputs
+          </div>
+
+          <InputSection id="process" title="A — Process Requirements">
+            <Field label="Required Capacity" k="Q_req" unit="t/h" min={1} max={5000}/>
+            <Field label="Lift Height" k="H_m" unit="m" min={1} max={200}/>
+            <div className="inp-field">
+              <div className="inp-label">Material</div>
+              <select className="inp-sel" value={inp.matId} onChange={e => setF('matId', e.target.value)}>
+                {MATERIALS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            </div>
+            {inp.matId === 'custom' && (
+              <Field label="Custom Density" k="customRho" unit="kg/m³" min={100} max={5000}/>
+            )}
+            <div style={{fontSize:10,color:C.muted,padding:'4px 0'}}>
+              ρ = {inp.customRho > 0 ? inp.customRho : (MATERIALS.find(m=>m.id===inp.matId)||MATERIALS[0]).rho} kg/m³ · 
+              Km = {(MATERIALS.find(m=>m.id===inp.matId)||MATERIALS[0]).Km}
+            </div>
+          </InputSection>
+
+          <InputSection id="mech" title="B — Mechanical Parameters">
+            <Field label="Head Pulley Dia." k="D_mm" unit="mm" min={100} max={1500} step={25}/>
+            <Field label="Head Shaft Speed" k="n_rpm" unit="rpm" min={10} max={300}/>
+            <Field label="Bucket Fill Factor" k="fill_pct" unit="%" min={30} max={100}/>
+            <Field label="Bucket Spacing Gap" k="bucketGap" unit="mm" min={0} max={200}/>
+          </InputSection>
+
+          <InputSection id="bucket" title="C — Bucket Selection">
+            <div className="inp-field">
+              <div className="inp-label">Selection Mode</div>
+              <select className="inp-sel" value={inp.autoBucket ? 'auto' : 'manual'} onChange={e => setF('autoBucket', e.target.value==='auto')}>
+                <option value="auto">Auto Select</option>
+                <option value="manual">Manual Select</option>
+              </select>
+            </div>
+            {!inp.autoBucket && (
+              <div className="inp-field">
+                <div className="inp-label">Bucket Series</div>
+                <select className="inp-sel" value={inp.bucketId} onChange={e => setF('bucketId', e.target.value)}>
+                  {BUCKET_SERIES.map(b => <option key={b.id} value={b.id}>{b.id} — {b.V}L</option>)}
+                </select>
+              </div>
+            )}
+            <div style={{padding:'6px 0',fontSize:10,color:C.muted2,fontFamily:'JetBrains Mono'}}>
+              Selected: <span style={{color:C.blue}}>{res.bucket.id}</span> · {res.bucket.W}×{res.bucket.H}mm · {res.bucket.V}L
+            </div>
+          </InputSection>
+
+          <InputSection id="belt" title="D — Belt & Drive">
+            <div className="inp-row">
+              <Field label="Friction μ" k="mu" unit="" min={0.1} max={0.6} step={0.01}/>
+              <Field label="Wrap Angle" k="wrap_deg" unit="°" min={90} max={240}/>
+            </div>
+            <Field label="Service Factor" k="sf" unit="" min={1.0} max={2.0} step={0.05}/>
+          </InputSection>
+
+          <div style={{padding:8}}>
+            <div style={{fontSize:9,color:C.faint,textAlign:'center',fontFamily:'Barlow Condensed',letterSpacing:'.06em'}}>
+              VECTRIX™ · JAYVEECONS ENGINEERING<br/>Bucket Elevator Module v1.0
+            </div>
+          </div>
+        </div>
+
+        {/* MAIN CONTENT */}
+        <div className="main">
+          {activeNav === 'design' && (
+            <>
+              <div className="sec-hdr">Elevator Schematic</div>
+              <div className="canvas-wrap">
+                <ElevatorSchematic inp={inp} res={res}/>
+              </div>
+              <div className="sec-hdr">Key Performance Indicators</div>
+              <KpiGrid res={res} inp={inp}/>
+              <div className="sec-hdr">Performance Analysis</div>
+              <ChartsPanel res={res} inp={inp}/>
+            </>
+          )}
+
+          {activeNav === 'optimizer' && (
+            <>
+              <div className="sec-hdr">Multi-Parameter Optimizer</div>
+              <OptimizerPanel inp={inp} onApply={applyOptimizer}/>
+            </>
+          )}
+
+          {activeNav === 'components' && (
+            <>
+              <div className="sec-hdr">Component-Level Design</div>
+              <ComponentPanel res={res} inp={inp}/>
+            </>
+          )}
+
+          {activeNav === 'checks' && (
+            <>
+              <div className="sec-hdr">Engineering Checks & Warnings</div>
+              <WarningsPanel checks={res.checks}/>
+              <div className="sec-hdr" style={{marginTop:8}}>Design Summary</div>
+              <div style={{padding:16,display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,fontSize:11}}>
+                {[
+                  ['Material', res.mat.name],
+                  ['Density', res.rho + ' kg/m³'],
+                  ['Lift Height', inp.H_m + ' m'],
+                  ['Required Capacity', inp.Q_req + ' t/h'],
+                  ['Achieved Capacity', res.Q.toFixed(1) + ' t/h'],
+                  ['Belt Speed', res.v.toFixed(3) + ' m/s'],
+                  ['Head Pulley Dia.', inp.D_mm + ' mm @ ' + inp.n_rpm + ' rpm'],
+                  ['Bucket Series', res.bucket.id + ' — ' + res.bucket.V + 'L'],
+                  ['Belt Width', res.beltW + ' mm'],
+                  ['Lift Power', res.P_lift.toFixed(2) + ' kW'],
+                  ['Total Power', res.P_total.toFixed(2) + ' kW'],
+                  ['Motor', res.motorKW + ' kW'],
+                  ['Tight-side Tension', (res.T1/1000).toFixed(2) + ' kN'],
+                  ['Min Shaft Dia.', res.d_mm.toFixed(1) + ' mm'],
+                  ['Centrifugal Ratio', res.cr.toFixed(3)],
+                  ['Discharge Angle', res.theta_rel.toFixed(1) + '° from vertical'],
+                ].map(([k,v],i) => (
+                  <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 10px',background:i%2?'transparent':C.hi,borderRadius:3}}>
+                    <span style={{color:C.muted}}>{k}</span>
+                    <span style={{fontFamily:'JetBrains Mono',color:C.text}}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
