@@ -11,17 +11,20 @@ import ChecksPanel from "../components/ChecksPanel";
 import SaveLoadModal from "../components/SaveLoadModal";
 
 const NAV_TABS = [
-  { id: "design",     label: "Design",     badge: null },
-  { id: "optimizer",  label: "Optimizer",  badge: "AI" },
-  { id: "components", label: "Components", badge: null },
+  { id: "design",     label: "Design",      badge: null },
+  { id: "optimizer",  label: "Optimizer",   badge: "AI" },
+  { id: "components", label: "Components",  badge: null },
   { id: "checks",     label: "Eng. Checks", badge: null },
 ];
 
 export default function BucketElevatorPage() {
   const { inputs, results, loading, error, setField, applyOptimizer, saveCurrentDesign, loadDesign } =
     useElevatorCalc();
-  const [activeNav, setActiveNav] = useState("design");
+  const [activeNav, setActiveNav]     = useState("design");
   const [showSaveLoad, setShowSaveLoad] = useState(false);
+
+  // Derive fail-count badge for Checks tab
+  const failCount = results?.checks?.filter((c) => c.status === "fail").length ?? 0;
 
   return (
     <>
@@ -37,33 +40,54 @@ export default function BucketElevatorPage() {
 
         <div className="nav-tabs">
           {NAV_TABS.map((t) => (
-            <button key={t.id} className={`nav-tab ${activeNav === t.id ? "active" : ""}`}
-              onClick={() => setActiveNav(t.id)}>
+            <button
+              key={t.id}
+              className={`nav-tab ${activeNav === t.id ? "active" : ""}`}
+              onClick={() => setActiveNav(t.id)}
+            >
               {t.label}
               {t.badge && <span className="nav-badge">{t.badge}</span>}
+              {t.id === "checks" && failCount > 0 && (
+                <span className="nav-badge" style={{ background: "var(--accent)" }}>
+                  {failCount}
+                </span>
+              )}
             </button>
           ))}
         </div>
 
-        {/* Quick KPIs */}
+        {/* Quick KPIs — uses normalised FastAPI field names */}
         {results && (
           <div style={{ display: "flex", gap: 16, alignItems: "center", fontSize: 11, fontFamily: "JetBrains Mono" }}>
             <span style={{ color: "var(--muted)" }}>
-              Q: <span style={{ color: results.Q >= inputs.Q_req ? "var(--green)" : "var(--red)", fontWeight: 700 }}>
-                {results.Q.toFixed(0)}
-              </span> t/h
+              Q:{" "}
+              <span style={{ color: (results.Q_th ?? 0) >= inputs.Q_req ? "var(--green)" : "var(--red)", fontWeight: 700 }}>
+                {(results.Q_th ?? 0).toFixed(0)}
+              </span>{" "}
+              t/h
             </span>
             <span style={{ color: "var(--muted)" }}>
-              P: <span style={{ color: "var(--amber)", fontWeight: 700 }}>{results.P_total.toFixed(1)}</span> kW
+              P:{" "}
+              <span style={{ color: "var(--amber)", fontWeight: 700 }}>
+                {(results.power_P_total ?? 0).toFixed(1)}
+              </span>{" "}
+              kW
             </span>
             <span style={{ color: "var(--muted)" }}>
-              v: <span style={{ color: "var(--blue)", fontWeight: 700 }}>{results.v.toFixed(2)}</span> m/s
+              v:{" "}
+              <span style={{ color: "var(--blue)", fontWeight: 700 }}>
+                {(results.v_ms ?? 0).toFixed(2)}
+              </span>{" "}
+              m/s
             </span>
           </div>
         )}
 
-        <button className="btn-secondary" style={{ marginLeft: 12, padding: "5px 12px", fontSize: 11 }}
-          onClick={() => setShowSaveLoad(true)}>
+        <button
+          className="btn-secondary"
+          style={{ marginLeft: 12, padding: "5px 12px", fontSize: 11 }}
+          onClick={() => setShowSaveLoad(true)}
+        >
           💾 Save / Load
         </button>
       </div>
@@ -77,7 +101,9 @@ export default function BucketElevatorPage() {
 
         <div className="main-content">
           {error && (
-            <div className="warn-item w-fail" style={{ margin: 12 }}>⚠ API Error: {error}</div>
+            <div className="warn-item w-fail" style={{ margin: 12 }}>
+              ⚠ API Error: {error}
+            </div>
           )}
 
           {activeNav === "design" && (
