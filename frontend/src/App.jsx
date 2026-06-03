@@ -10,7 +10,7 @@ function ScrewConveyorPage() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center",
       flex: 1, flexDirection: "column", gap: 12, color: "var(--muted)", fontSize: 13 }}>
       <div style={{ fontSize: 32 }}>🔩</div>
-      <div style={{ fontFamily: "var(--ff-cond)", fontSize: 14, letterSpacing: ".08em",
+      <div style={{ fontFamily: "var(--ff-ui)", fontSize: 14, letterSpacing: ".08em",
         textTransform: "uppercase" }}>Screw Conveyor Module</div>
       <div>Your existing screw conveyor design platform renders here.</div>
     </div>
@@ -34,16 +34,16 @@ export default function App() {
             onClick={() => setModule(m.id)}>
             {m.icon} {m.label}
             {m.badge && (
-              <span style={{ marginLeft: 6, fontSize: 8, color: "var(--accent)",
+              <span style={{ marginLeft: 6, fontSize: 8, color: "var(--primary)",
                 background: "rgba(200,25,46,.15)", border: "1px solid rgba(200,25,46,.3)",
-                padding: "1px 5px", borderRadius: 3, fontFamily: "var(--ff-cond)", fontWeight: 700 }}>
+                padding: "1px 5px", borderRadius: 3, fontFamily: "var(--ff-ui)", fontWeight: 700 }}>
                 {m.badge}
               </span>
             )}
           </button>
         ))}
         <div style={{ marginLeft: "auto", padding: "8px 0", fontSize: 9,
-          color: "var(--faint)", fontFamily: "var(--ff-cond)", letterSpacing: ".08em", textTransform: "uppercase" }}>
+          color: "var(--faint)", fontFamily: "var(--ff-ui)", letterSpacing: ".08em", textTransform: "uppercase" }}>
           AKSHAYVIPRA EL-MEC · VECTRIX™ Platform
         </div>
       </div>
