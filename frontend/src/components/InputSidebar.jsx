@@ -78,7 +78,7 @@ export default function InputSidebar({ inputs, setField, results }) {
           color: "var(--faint)",
           letterSpacing: ".1em",
           textTransform: "uppercase",
-          fontFamily: "var(--ff-cond)",
+          fontFamily: "var(--ff-ui)",
           fontWeight: 700,
         }}
       >
@@ -170,7 +170,7 @@ export default function InputSidebar({ inputs, setField, results }) {
             fontSize: 9,
             color: "var(--faint)",
             textAlign: "center",
-            fontFamily: "var(--ff-cond)",
+            fontFamily: "var(--ff-ui)",
             letterSpacing: ".06em",
           }}
         >

@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { listDesigns, deleteDesign } from "../api/client";
 import { v4 as uuidv4 } from "uuid";
 
-const C = { muted: "#5a7a9a", green: "#1fb86e", red: "#e05252", amber: "#d98e00", blue: "#4a9eff" };
+const C = { muted: "var(--text3)", green: "var(--success)", red: "var(--danger)", amber: "var(--warning)", blue: "var(--primary)" };
 
 export default function SaveLoadModal({ onClose, onSave, onLoad }) {
   const [tab, setTab] = useState("save");
@@ -42,7 +42,7 @@ export default function SaveLoadModal({ onClose, onSave, onLoad }) {
       <div className="modal-box">
         <div className="modal-title">💾 Designs — Save / Load</div>
 
-        <div className="sub-tabs" style={{ margin: "0 -0px 16px", borderRadius: 4, overflow: "hidden" }}>
+        <div className="sub-tabs" style={{ margin: "0 -0px 16px", borderRadius: "var(--r-md)", overflow: "hidden" }}>
           {["save", "load"].map((t) => (
             <button key={t} className={`sub-tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}
               style={{ flex: 1, textTransform: "uppercase" }}>
@@ -81,7 +81,7 @@ export default function SaveLoadModal({ onClose, onSave, onLoad }) {
               <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 300, overflowY: "auto" }}>
                 {designs.map((d) => (
                   <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px",
-                    background: "var(--hi)", borderRadius: 5, border: "1px solid var(--border2)" }}>
+                    background: "var(--hi)", borderRadius: "var(--r-md)", border: "1px solid var(--border2)" }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 12, fontWeight: 600 }}>{d.name}</div>
                       {d.project && <div style={{ fontSize: 10, color: C.muted }}>{d.project}</div>}
