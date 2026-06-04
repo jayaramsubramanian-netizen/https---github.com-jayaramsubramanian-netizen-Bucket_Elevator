@@ -15,8 +15,11 @@ CHANGES FROM ORIGINAL
 
 4. CORS allow_origins now reads from VECTRIX_CORS_ORIGINS env variable
    with localhost fallback for development.
+
+5. Report generator endpoint added: POST /api/bucket-elevator/report
 """
 
+import io
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import os
@@ -25,10 +28,13 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from database import get_db, init_db
 from models import BucketElevatorInput, DesignRecord, OptimizerRequest
 from calculations import solve_elevator, run_optimizer, MATERIALS, BUCKET_SERIES, MOTOR_SIZES
+from generate_report import build_report, build_variant_report
 
 
 # ── Lifespan (replaces deprecated @app.on_event) ─────────────────────────────
@@ -99,6 +105,62 @@ def optimize(req: OptimizerRequest):
         return {"candidates": candidates, "count": len(candidates)}
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+
+# ─── REPORT ──────────────────────────────────────────────────────────────────
+
+class ReportRequest(BaseModel):
+    results: dict
+    inputs:  dict
+    project: Optional[str] = ""
+    ref:     Optional[str] = ""
+
+
+@app.post("/api/bucket-elevator/report")
+def generate_report(data: ReportRequest):
+    """Generate A4 portrait PDF engineering report."""
+    try:
+        pdf = build_report(
+            data.results,
+            data.inputs,
+            project=data.project or "",
+            doc_ref=data.ref or "",
+        )
+        return StreamingResponse(
+            io.BytesIO(pdf),
+            media_type="application/pdf",
+            headers={"Content-Disposition": 'attachment; filename="elevator_report.pdf"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── VARIANT COMPARISON REPORT ──────────────────────────────────────────────
+
+class VariantReportRequest(BaseModel):
+    candidates: list
+    inputs:     dict
+    project:    Optional[str] = ""
+    ref:        Optional[str] = ""
+
+
+@app.post("/api/bucket-elevator/report-variants")
+def generate_variant_report(data: VariantReportRequest):
+    """Generate A4 PDF comparing multiple optimizer candidate variants."""
+    try:
+        pdf = build_variant_report(
+            data.candidates,
+            data.inputs,
+            project=data.project or "",
+            doc_ref=data.ref or "",
+        )
+        return StreamingResponse(
+            io.BytesIO(pdf),
+            media_type="application/pdf",
+            headers={"Content-Disposition": 'attachment; filename="elevator_variants.pdf"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─── DESIGNS ──────────────────────────────────────────────────────────────────
