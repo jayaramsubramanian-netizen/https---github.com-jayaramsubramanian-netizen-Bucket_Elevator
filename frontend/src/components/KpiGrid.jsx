@@ -163,7 +163,7 @@ function KpiCard({ label, value, unit, status, target, margin, formula, disc }) 
   );
 }
 
-export default function KpiGrid({ results, inputs }) {
+export default function KpiGrid({ results, inputs, compact }) {
   if (!results || !results.bucket) return null;
 
   const capOK    = results.Q >= inputs.Q_req;
@@ -371,9 +371,11 @@ CEMA 375 §4: fill > 80% increases spillage risk at boot`,
   return (
     <div style={{
       display: "grid",
-      gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-      gap: 10,
-      padding: 16,
+      gridTemplateColumns: compact
+        ? "1fr"  // single column in right panel (360px)
+        : "repeat(auto-fill, minmax(220px, 1fr))",
+      gap: compact ? 6 : 10,
+      padding: compact ? "10px 10px" : 16,
     }}>
       {kpis.map((k, i) => <KpiCard key={i} {...k} />)}
     </div>

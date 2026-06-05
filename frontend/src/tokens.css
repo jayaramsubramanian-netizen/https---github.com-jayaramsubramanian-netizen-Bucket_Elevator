@@ -165,16 +165,19 @@ html, body, #root {
 }
 
 .app-body {
+  /* Legacy: still used by standalone pages.
+     3-col layout in BucketElevatorPage overrides this inline. */
   display: flex;
   flex: 1;
   overflow: hidden;
 }
 
 .sidebar {
+  /* Width overridden inline in 3-col layout (280px).
+     Kept here for standalone/fallback usage. */
   width: 300px;
   flex-shrink: 0;
   background: var(--panel);
-  border-right: 1px solid var(--border);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -329,7 +332,7 @@ html, body, #root {
    ══════════════════════════════════════════════════════════════════ */
 
 .inp-section {
-  margin: 8px 10px;
+  margin: 6px 8px;
   border-radius: var(--r-lg);
   background: var(--surface);
   border: 1px solid var(--border);

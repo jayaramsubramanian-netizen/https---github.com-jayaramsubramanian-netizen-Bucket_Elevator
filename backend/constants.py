@@ -49,7 +49,8 @@ SHAFT_FS                = 2.0   # CEMA-recommended safety factor for head shaft
 CEMA_MAX_SHAFT_SLOPE    = 0.0015  # in/in (dimensionless) per CEMA pulley std
 
 # ── Belt weight (CEMA 375 §4, T2 calculation) ───────────────────────────────
-BELT_PIW_DEFAULT        = 1.5   # kg/m² — typical elevator belt weight per unit area
+BELT_WEIGHT_DEFAULT = 8.0    # kg/m²
+BELT_PIW_DEFAULT    = BELT_WEIGHT_DEFAULT   # deprecated alias
 
 # ── Bucket material density ──────────────────────────────────────────────────
 BUCKET_STEEL_DENSITY    = 7850  # kg/m³ — for bucket self-weight estimation
