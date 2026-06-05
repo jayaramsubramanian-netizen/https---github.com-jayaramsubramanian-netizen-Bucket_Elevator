@@ -1,36 +1,37 @@
-// BucketElevatorPage.jsx — save this in src/ alongside App.jsx
-// Component imports match YOUR actual folder structure (src/components/, src/hooks/)
+// BucketElevatorPage.jsx — Task 3 updated nav bar
+// Fixed: Quick KPI field names corrected to match API response
+//   results.Q_th → results.Q
+//   results.power_P_total → results.P_total
+//   results.v_ms → results.v
+// Fixed: fail badge uses --danger token not var(--accent)
+// Fixed: import paths corrected for src/ location
+// Added: discipline view tabs styled as pills matching new system
+
 import { useState, useEffect } from "react";
 import { useElevatorCalc } from "./hooks/useElevatorCalc";
-import InputSidebar from "./components/InputSidebar";
+import InputSidebar    from "./components/InputSidebar";
 import ElevatorSchematic from "./components/ElevatorSchematic";
-import KpiGrid from "./components/KpiGrid";
-import ChartsPanel from "./components/ChartsPanel";
-import OptimizerPanel from "./components/OptimizerPanel";
-import ComponentPanel from "./components/ComponentPanel";
-import ChecksPanel from "./components/ChecksPanel";
-import SaveLoadModal from "./components/SaveLoadModal";
+import KpiGrid         from "./components/KpiGrid";
+import ChartsPanel     from "./components/ChartsPanel";
+import OptimizerPanel  from "./components/OptimizerPanel";
+import ComponentPanel  from "./components/ComponentPanel";
+import ChecksPanel     from "./components/ChecksPanel";
+import SaveLoadModal   from "./components/SaveLoadModal";
 
 const NAV_TABS = [
-  { id: "design", label: "Design", badge: null },
-  { id: "optimizer", label: "Optimizer", badge: "AI" },
-  { id: "components", label: "Components", badge: null },
-  { id: "checks", label: "Eng. Checks", badge: null },
+  { id: "design",     label: "Design",       icon: "◈", badge: null },
+  { id: "optimizer",  label: "Optimizer",    icon: "⌬", badge: "AI" },
+  { id: "components", label: "Components",   icon: "◻", badge: null },
+  { id: "checks",     label: "Eng. Checks",  icon: "✓", badge: null, failBadge: true },
 ];
 
 export default function BucketElevatorPage({ onResultsChange }) {
   const {
-    inputs,
-    results,
-    loading,
-    error,
-    setField,
-    applyOptimizer,
-    saveCurrentDesign,
-    loadDesign,
+    inputs, results, loading, error,
+    setField, applyOptimizer, saveCurrentDesign, loadDesign,
   } = useElevatorCalc();
 
-  const [activeNav, setActiveNav] = useState("design");
+  const [activeNav,    setActiveNav]    = useState("design");
   const [showSaveLoad, setShowSaveLoad] = useState(false);
 
   // Lift results + inputs up to App so the PDF button can access them
@@ -38,98 +39,177 @@ export default function BucketElevatorPage({ onResultsChange }) {
     if (onResultsChange) onResultsChange({ results, inputs });
   }, [results, inputs, onResultsChange]);
 
-  const failCount =
-    results?.checks?.filter((c) => c.status === "fail").length ?? 0;
+  // Count fail-level checks for the badge
+  const failCount = results?.checks?.filter((c) => c.type === "fail").length ?? 0;
 
   return (
     <>
-      {/* ── Top Navigation ──────────────────────────────── */}
+      {/* ══════════════════════════════════════════════════
+          MODULE NAV BAR
+          Left:  module title + sub
+          Centre: discipline tabs (pill row)
+          Right:  live KPI strip + save button
+          ══════════════════════════════════════════════════ */}
       <div className="nav">
+
+        {/* Module identity */}
         <div className="nav-brand">
-          <div className="nav-logo">⚙</div>
+          <div style={{
+            width: 28, height: 28,
+            borderRadius: "var(--r-sm)",
+            background: "var(--primary-dim)",
+            border: "1px solid var(--primary-ring)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 13, color: "var(--primary)",
+          }}>⛏</div>
           <div>
-            <div className="nav-title">VECTRIX™</div>
-            <div className="nav-sub">Bucket Elevator</div>
+            <div className="nav-title">Bucket Elevator</div>
+            <div className="nav-sub">VECTOMEC™ · CEMA 375</div>
           </div>
         </div>
 
-        <div className="nav-tabs">
-          {NAV_TABS.map((t) => (
-            <button
-              key={t.id}
-              className={`nav-tab ${activeNav === t.id ? "active" : ""}`}
-              onClick={() => setActiveNav(t.id)}
-            >
-              {t.label}
-              {t.badge && <span className="nav-badge">{t.badge}</span>}
-              {t.id === "checks" && failCount > 0 && (
-                <span
-                  className="nav-badge"
-                  style={{ background: "var(--accent)" }}
-                >
-                  {failCount}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* Quick KPIs */}
-        {results && (
-          <div
-            style={{
-              display: "flex",
-              gap: 16,
-              alignItems: "center",
-              fontSize: 11,
-              fontFamily: "JetBrains Mono",
-            }}
-          >
-            <span style={{ color: "var(--muted)" }}>
-              Q:{" "}
-              <span
+        {/* Discipline tabs — pill group matching platform switcher */}
+        <div style={{
+          display: "flex", gap: 3,
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--r-pill)",
+          padding: "3px",
+          marginRight: 16,
+        }}>
+          {NAV_TABS.map((t) => {
+            const active = activeNav === t.id;
+            const showFail = t.failBadge && failCount > 0;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setActiveNav(t.id)}
                 style={{
-                  fontWeight: 700,
-                  color:
-                    (results.Q_th ?? 0) >= inputs.Q_req
-                      ? "var(--green)"
-                      : "var(--red)",
+                  display: "flex", alignItems: "center", gap: 5,
+                  padding: "5px 12px",
+                  borderRadius: "var(--r-pill)",
+                  border: "none",
+                  cursor: "pointer",
+                  fontFamily: "var(--ff-ui)",
+                  fontSize: 12,
+                  fontWeight: active ? 600 : 400,
+                  transition: "all var(--t-base)",
+                  background: active ? "var(--panel)" : "transparent",
+                  color: active ? "var(--text)" : "var(--text3)",
+                  boxShadow: active
+                    ? "0 1px 4px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.06)"
+                    : "none",
+                  whiteSpace: "nowrap",
+                }}
+                onMouseEnter={e => {
+                  if (!active) e.currentTarget.style.color = "var(--text2)";
+                }}
+                onMouseLeave={e => {
+                  if (!active) e.currentTarget.style.color = "var(--text3)";
                 }}
               >
-                {(results.Q_th ?? 0).toFixed(0)}
-              </span>{" "}
-              t/h
-            </span>
-            <span style={{ color: "var(--muted)" }}>
-              P:{" "}
-              <span style={{ fontWeight: 700, color: "var(--amber)" }}>
-                {(results.power_P_total ?? 0).toFixed(1)}
-              </span>{" "}
-              kW
-            </span>
-            <span style={{ color: "var(--muted)" }}>
-              v:{" "}
-              <span style={{ fontWeight: 700, color: "var(--blue)" }}>
-                {(results.v_ms ?? 0).toFixed(2)}
-              </span>{" "}
-              m/s
-            </span>
+                {t.label}
+
+                {/* AI badge */}
+                {t.badge && (
+                  <span style={{
+                    fontSize: 8, fontWeight: 700, letterSpacing: ".06em",
+                    padding: "1px 5px", borderRadius: "var(--r-pill)",
+                    background: "var(--primary-dim)",
+                    color: "var(--primary)",
+                    border: "1px solid var(--primary-ring)",
+                  }}>
+                    {t.badge}
+                  </span>
+                )}
+
+                {/* Fail count badge — danger color */}
+                {showFail && (
+                  <span style={{
+                    fontSize: 8, fontWeight: 700,
+                    padding: "1px 5px", borderRadius: "var(--r-pill)",
+                    background: "var(--danger-dim)",
+                    color: "var(--danger)",
+                    border: "1px solid var(--danger-border)",
+                    minWidth: 16, textAlign: "center",
+                  }}>
+                    {failCount}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Live KPI strip — corrected field names */}
+        {results && (
+          <div style={{
+            display: "flex", gap: 12, alignItems: "center",
+            marginRight: 12,
+          }}>
+            {[
+              {
+                label: "Q",
+                value: results.Q?.toFixed(0) ?? "—",
+                unit: "t/h",
+                ok: (results.Q ?? 0) >= inputs.Q_req,
+                color: (results.Q ?? 0) >= inputs.Q_req
+                  ? "var(--success)" : "var(--danger)",
+              },
+              {
+                label: "P",
+                value: results.P_total?.toFixed(1) ?? "—",
+                unit: "kW",
+                color: "var(--warning)",
+              },
+              {
+                label: "v",
+                value: results.v?.toFixed(2) ?? "—",
+                unit: "m/s",
+                color: "var(--primary)",
+              },
+            ].map((k) => (
+              <div key={k.label} style={{
+                display: "flex", flexDirection: "column", alignItems: "center",
+                padding: "3px 10px",
+                background: "var(--surface)",
+                borderRadius: "var(--r-md)",
+                border: "1px solid var(--border)",
+                minWidth: 52,
+              }}>
+                <span style={{
+                  fontSize: 9, color: "var(--muted)",
+                  fontWeight: 600, letterSpacing: ".06em",
+                  textTransform: "uppercase",
+                }}>{k.label}</span>
+                <span style={{
+                  fontFamily: "JetBrains Mono, monospace",
+                  fontSize: 13, fontWeight: 700,
+                  color: k.color, lineHeight: 1.2,
+                }}>{k.value}</span>
+                <span style={{
+                  fontSize: 9, color: "var(--muted)",
+                  fontFamily: "JetBrains Mono, monospace",
+                }}>{k.unit}</span>
+              </div>
+            ))}
           </div>
         )}
 
+        {/* Save / Load */}
         <button
           className="btn-secondary"
-          style={{ marginLeft: 12, padding: "5px 12px", fontSize: 11 }}
+          style={{ padding: "5px 12px", fontSize: 11, flexShrink: 0 }}
           onClick={() => setShowSaveLoad(true)}
         >
           💾 Save / Load
         </button>
       </div>
 
-      {/* ── Loading bar ─────────────────────────────────── */}
+      {/* Loading bar */}
       {loading && <div className="loading-bar" />}
 
-      {/* ── Body ────────────────────────────────────────── */}
+      {/* Body */}
       <div className="app-body">
         <InputSidebar inputs={inputs} setField={setField} results={results} />
 
@@ -176,7 +256,6 @@ export default function BucketElevatorPage({ onResultsChange }) {
         </div>
       </div>
 
-      {/* ── Save/Load Modal ─────────────────────────────── */}
       {showSaveLoad && (
         <SaveLoadModal
           onClose={() => setShowSaveLoad(false)}

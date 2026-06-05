@@ -2,31 +2,40 @@
 VECTRIX™ — AKSHAYVIPRA EL-MEC VECTOMEC™ Design Platform
 FastAPI Backend — Bucket Elevator Module
 
-CHANGES FROM ORIGINAL
-─────────────────────
-1. ImportError fixed: 'OptimizerResult' and 'BucketElevatorResult' removed
-   from model imports — neither is defined in models.py.
-
-2. @app.on_event('startup') replaced with lifespan context manager
-   (deprecated since FastAPI 0.93, removed in 0.115+).
-
-3. datetime.utcnow() replaced with datetime.now(timezone.utc)
-   (deprecated since Python 3.12, user is on 3.14).
-
-4. CORS allow_origins now reads from VECTRIX_CORS_ORIGINS env variable
-   with localhost fallback for development.
-
-5. Report generator endpoint added: POST /api/bucket-elevator/report
+v1.1.0 — Engineering Platform Hardening
+────────────────────────────────────────────────────────────────────────────────
+ 1. Response envelope     {meta, data, warnings} on all calculation endpoints.
+ 2. _solver_meta()        Central version / standard / timestamp / input-hash.
+ 3. _collect_warnings()   Non-fatal CEMA 375-2017 advisory flags alongside
+                          results rather than raising HTTP 422.
+ 4. Structured errors     ErrorDetail(code, field, standard_clause) replaces
+                          bare HTTPException strings.
+ 5. /api/v1 prefix        APIRouter for forward-compatible versioning; old
+                          /api/* kept as hidden compat aliases.
+ 6. lru_cache             Reference data payloads cached at module level —
+                          no realloc on every GET.
+ 7. Audit table           calc_audit written via BackgroundTasks (never
+                          blocks the HTTP response).
+ 8. CORS regex            VECTRIX_CORS_REGEX env var for internal wildcard
+                          sub-domains alongside the origins list.
+ 9. calc_schema_version   Stored per design record; enables forward-compat
+                          migration when equations evolve.
+10. _err() helper         Single raise site for structured HTTP errors;
+                          annotated -> Never so type-checkers flag dead code.
+────────────────────────────────────────────────────────────────────────────────
 """
 
+import hashlib
 import io
+import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from functools import lru_cache
 import os
 import sqlite3
-from typing import Optional
+from typing import Any, Never, Optional
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import APIRouter, BackgroundTasks, FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -37,197 +46,545 @@ from calculations import solve_elevator, run_optimizer, MATERIALS, BUCKET_SERIES
 from generate_report import build_report, build_variant_report
 
 
-# ── Lifespan (replaces deprecated @app.on_event) ─────────────────────────────
+# ── Constants ─────────────────────────────────────────────────────────────────
+
+CALC_SCHEMA_VERSION = "1.1.0"
+CEMA_STANDARD       = "CEMA 375-2017"
+
+# Must match the DB path used in database.py.  Override via env if needed.
+_DB_PATH = os.getenv("VECTRIX_DB", "vectrix.db")
+
+
+# ── Improvement 2 — Solver metadata helper ─────────────────────────────────────
+#
+# Every calculation response includes this block.
+# input_hash is a truncated SHA-256 of the canonicalised input dict:
+#   • clients can skip re-sending a request when the hash matches a cache entry
+#   • audit records can be joined back to calc_audit by hash alone
+#   • regression test suites can assert on hash stability across solver versions
+
+def _solver_meta(inp_dict: dict | None = None) -> dict[str, Any]:
+    meta: dict[str, Any] = {
+        "solver_version": CALC_SCHEMA_VERSION,
+        "cema_reference": CEMA_STANDARD,
+        "timestamp":      datetime.now(timezone.utc).isoformat(),
+    }
+    if inp_dict:
+        raw = json.dumps(inp_dict, sort_keys=True, default=str).encode()
+        meta["input_hash"] = hashlib.sha256(raw).hexdigest()[:16]
+    return meta
+
+
+# ── Improvement 1 — Response envelope ──────────────────────────────────────────
+#
+# Why a dedicated model rather than a plain dict?
+#   • FastAPI validates and documents the shape automatically in OpenAPI.
+#   • Front-end clients can switch on response.warnings.length without
+#     guessing whether the field will exist.
+#   • Adding new top-level keys (e.g. "debug") in future is non-breaking.
+
+class CalcResponse(BaseModel):
+    """
+    Standard wrapper for all calculation endpoints.
+
+    meta     — solver_version, cema_reference, timestamp, input_hash
+    data     — raw solver output (shape varies per endpoint)
+    warnings — non-fatal CEMA advisory notes; empty list when all clear
+    """
+    meta:     dict[str, Any]
+    data:     Any
+    warnings: list[str] = []
+
+
+# ── Improvement 4 — Structured error model ─────────────────────────────────────
+#
+# Returning a bare string in HTTPException.detail is fine for development but
+# breaks clients that try to parse errors programmatically.  With ErrorDetail:
+#   • code      — machine-readable constant (e.g. "SOLVER_ERROR")
+#   • field     — which input field caused the problem, if applicable
+#   • standard_clause — CEMA section that defines the violated constraint
+#
+# _err() is annotated -> Never so mypy / pyright know it never returns.
+# Any code in the same branch after _err() is flagged as unreachable.
+
+class ErrorDetail(BaseModel):
+    code:            str
+    message:         str
+    field:           str | None = None
+    standard_clause: str | None = None
+
+
+def _err(
+    code:   str,
+    msg:    str,
+    field:  str | None = None,
+    clause: str | None = None,
+    status: int = 422,
+) -> Never:
+    raise HTTPException(
+        status_code=status,
+        detail=ErrorDetail(
+            code=code, message=msg,
+            field=field, standard_clause=clause,
+        ).model_dump(),
+    )
+
+
+# ── Improvement 3 — Warning accumulator ────────────────────────────────────────
+#
+# Design warnings are different from validation errors:
+#   • Validation errors    → refuse to solve; return HTTP 422 immediately.
+#   • Engineering warnings → solve anyway; flag the advisory alongside results.
+#
+# This distinction matters on real projects.  An engineer may knowingly run
+# a slightly over-filled elevator to compare HPR; blocking them with a 422
+# forces them to game the inputs instead of reading the warning.
+#
+# Field names below (bucket_fill_pct, belt_speed_fpm, discharge_type, …)
+# must match the keys returned by solve_elevator().  Extend this list as the
+# physics layer gains additional tracked quantities.
+
+def _collect_warnings(inp: BucketElevatorInput, results: dict[str, Any]) -> list[str]:
+    w: list[str] = []
+
+    fill = results.get("bucket_fill_pct", 0.0)
+    if fill > 80.0:
+        w.append(
+            f"Bucket fill {fill:.1f} % exceeds recommended 80 % "
+            f"(CEMA 375-2017 §6.4). Consider larger bucket series or reduced belt speed."
+        )
+
+    speed  = results.get("belt_speed_fpm", 0.0)
+    d_type = results.get("discharge_type", "centrifugal")
+
+    if d_type == "centrifugal":
+        if speed > 225.0:
+            w.append(
+                f"Belt speed {speed:.0f} fpm exceeds centrifugal-discharge upper limit "
+                f"of 225 fpm (CEMA 375-2017 §7.2). Verify pulley diameter and RPM."
+            )
+        elif speed < 100.0:
+            w.append(
+                f"Belt speed {speed:.0f} fpm may be insufficient for centrifugal "
+                f"discharge (CEMA 375-2017 §7.2 recommends ≥ 100 fpm)."
+            )
+
+    # Motor oversizing flag — more than 25 % above calculated requirement
+    # is worth flagging for energy-efficiency review.
+    motor_hp     = results.get("motor_hp",          0.0)
+    sel_motor_hp = results.get("selected_motor_hp", 0.0)
+    if sel_motor_hp > 0 and sel_motor_hp > motor_hp * 1.25:
+        w.append(
+            f"Selected motor ({sel_motor_hp:.1f} hp) is more than 25 % oversized "
+            f"relative to calculated requirement ({motor_hp:.2f} hp). "
+            f"Verify motor selection or consider a smaller standard frame."
+        )
+
+    return w
+
+
+# ── Improvement 7 — Calculation audit log ──────────────────────────────────────
+#
+# Every POST /calculate is persisted to calc_audit for:
+#   • Project traceability (who ran what, when)
+#   • Regression testing (replay a hash, compare results across versions)
+#   • Debugging (compare inputs_json to what the solver actually received)
+#
+# _audit_calc opens its own SQLite connection because the request-scoped `db`
+# dependency may already be closed when the background task runs.
+# BackgroundTasks.add_task() means this write never delays the HTTP response.
+
+def _init_audit_table() -> None:
+    """Create calc_audit if absent.  Called once during lifespan startup."""
+    con = sqlite3.connect(_DB_PATH)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS calc_audit (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            input_hash    TEXT    NOT NULL,
+            module        TEXT    NOT NULL,
+            schema_ver    TEXT    NOT NULL,
+            inputs_json   TEXT,
+            results_json  TEXT,
+            warnings_json TEXT,
+            created_at    TEXT    NOT NULL
+        )
+    """)
+    con.commit()
+    con.close()
+
+
+def _audit_calc(
+    module:     str,
+    inp_dict:   dict,
+    results:    Any,
+    warnings:   list[str],
+    input_hash: str,
+) -> None:
+    con = sqlite3.connect(_DB_PATH)
+    try:
+        con.execute("""
+            INSERT INTO calc_audit
+                (input_hash, module, schema_ver,
+                 inputs_json, results_json, warnings_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            input_hash,
+            module,
+            CALC_SCHEMA_VERSION,
+            json.dumps(inp_dict,  default=str),
+            json.dumps(results,   default=str),
+            json.dumps(warnings),
+            datetime.now(timezone.utc).isoformat(),
+        ))
+        con.commit()
+    finally:
+        con.close()
+
+
+# ── Lifespan ──────────────────────────────────────────────────────────────────
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    _init_audit_table()   # create audit table alongside designs table
     yield
 
 
-# ── CORS origins from env (safe for production) ───────────────────────────────
+# ── Improvement 8 — CORS (origins list + optional regex) ──────────────────────
+#
+# VECTRIX_CORS_ORIGINS  — comma-separated explicit origins (existing behaviour)
+# VECTRIX_CORS_REGEX    — Python regex for internal wildcard sub-domains, e.g.
+#                         r"https://.*\.akshayvipra\.internal"
+#
+# Both are additive; neither is required in development (localhost fallback).
+
 _cors_env = os.getenv("VECTRIX_CORS_ORIGINS", "")
-CORS_ORIGINS = (
+CORS_ORIGINS: list[str] = (
     [o.strip() for o in _cors_env.split(",") if o.strip()]
     if _cors_env
     else ["http://localhost:3000", "http://localhost:5173"]
 )
+CORS_ORIGIN_REGEX: str | None = os.getenv("VECTRIX_CORS_REGEX") or None
 
+
+# ── Application ───────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title="VECTRIX™ Design Platform API",
     description="AKSHAYVIPRA EL-MEC — VECTOMEC™ Bucket Elevator & Conveyor Design",
-    version="1.0.0",
+    version=CALC_SCHEMA_VERSION,
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
+_cors_kw: dict[str, Any] = dict(
     allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+if CORS_ORIGIN_REGEX:
+    _cors_kw["allow_origin_regex"] = CORS_ORIGIN_REGEX
+
+app.add_middleware(CORSMiddleware, **_cors_kw)
 
 
-# ─── REFERENCE DATA ──────────────────────────────────────────────────────────
+# ── Improvement 5 — Versioned router ───────────────────────────────────────────
+#
+# All new routes live under /api/v1.
+# The compat block at the bottom re-registers every route at /api/* with
+# include_in_schema=False so existing frontends keep working without appearing
+# in OpenAPI docs.  Remove the compat block when the frontend is updated.
 
-@app.get("/api/materials")
-def get_materials():
-    return {"materials": MATERIALS}
-
-
-@app.get("/api/bucket-series")
-def get_bucket_series():
-    return {"bucket_series": BUCKET_SERIES}
+v1 = APIRouter(prefix="/api/v1")
 
 
-@app.get("/api/motor-sizes")
-def get_motor_sizes():
-    return {"motor_sizes": MOTOR_SIZES}
+# ── Improvement 6 — Reference data (cached) ────────────────────────────────────
+#
+# MATERIALS, BUCKET_SERIES, MOTOR_SIZES are module-level constants in
+# calculations.py.  Wrapping them in lru_cache(maxsize=1) avoids rebuilding
+# the response dict on every GET — cheap but eliminates any repeated allocation.
+
+@lru_cache(maxsize=1)
+def _materials_payload():     return {"materials":     MATERIALS}
+
+@lru_cache(maxsize=1)
+def _bucket_series_payload(): return {"bucket_series": BUCKET_SERIES}
+
+@lru_cache(maxsize=1)
+def _motor_sizes_payload():   return {"motor_sizes":   MOTOR_SIZES}
 
 
-# ─── CALCULATIONS ─────────────────────────────────────────────────────────────
+@v1.get("/materials")
+def get_materials():     return _materials_payload()
 
-@app.post("/api/bucket-elevator/calculate")
-def calculate(inp: BucketElevatorInput):
-    """Full CEMA 375-2017 bucket elevator design calculation."""
+@v1.get("/bucket-series")
+def get_bucket_series(): return _bucket_series_payload()
+
+@v1.get("/motor-sizes")
+def get_motor_sizes():   return _motor_sizes_payload()
+
+
+# ── Calculations ──────────────────────────────────────────────────────────────
+
+@v1.post("/bucket-elevator/calculate", response_model=CalcResponse)
+def calculate(
+    inp:              BucketElevatorInput,
+    background_tasks: BackgroundTasks,
+    db:               sqlite3.Connection = Depends(get_db),
+):
+    """
+    Full CEMA 375-2017 bucket elevator design calculation.
+
+    Returns CalcResponse{meta, data, warnings}.
+    warnings is a list of non-fatal engineering advisory notes;
+    an empty list means all CEMA checks passed cleanly.
+    """
+    inp_dict = inp.model_dump()
+    meta     = _solver_meta(inp_dict)
+
     try:
-        return solve_elevator(inp)
+        results = solve_elevator(inp)
+    except ValueError as e:
+        # ValueError is the convention for domain validation failures
+        # in the calculation layer (e.g. negative height, zero capacity).
+        _err("VALIDATION_ERROR", str(e))
     except Exception as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        _err("SOLVER_ERROR", str(e), status=500)
+
+    warnings = _collect_warnings(inp, results)
+
+    # Audit write deferred — never delays the response.
+    background_tasks.add_task(
+        _audit_calc,
+        "bucket_elevator", inp_dict, results, warnings, meta["input_hash"],
+    )
+
+    return CalcResponse(meta=meta, data=results, warnings=warnings)
 
 
-@app.post("/api/bucket-elevator/optimize")
+@v1.post("/bucket-elevator/optimize", response_model=CalcResponse)
 def optimize(req: OptimizerRequest):
     """Grid-search optimizer over RPM × Bucket × Fill space."""
+    meta = _solver_meta()
     try:
         candidates = run_optimizer(req)
-        return {"candidates": candidates, "count": len(candidates)}
     except Exception as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        _err("OPTIMIZER_ERROR", str(e))
+
+    return CalcResponse(
+        meta=meta,
+        data={"candidates": candidates, "count": len(candidates)},
+    )
 
 
-# ─── REPORT ──────────────────────────────────────────────────────────────────
+# ── Reports ───────────────────────────────────────────────────────────────────
 
 class ReportRequest(BaseModel):
     results: dict
     inputs:  dict
-    project: Optional[str] = ""
-    ref:     Optional[str] = ""
+    project: str | None = ""
+    ref:     str | None = ""
 
 
-@app.post("/api/bucket-elevator/report")
+@v1.post("/bucket-elevator/report")
 def generate_report(data: ReportRequest):
     """Generate A4 portrait PDF engineering report."""
     try:
         pdf = build_report(
-            data.results,
-            data.inputs,
+            data.results, data.inputs,
             project=data.project or "",
             doc_ref=data.ref or "",
         )
-        return StreamingResponse(
-            io.BytesIO(pdf),
-            media_type="application/pdf",
-            headers={"Content-Disposition": 'attachment; filename="elevator_report.pdf"'},
-        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        _err("REPORT_ERROR", str(e), status=500)
 
+    return StreamingResponse(
+        io.BytesIO(pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="elevator_report.pdf"'},
+    )
 
-# ─── VARIANT COMPARISON REPORT ──────────────────────────────────────────────
 
 class VariantReportRequest(BaseModel):
     candidates: list
     inputs:     dict
-    project:    Optional[str] = ""
-    ref:        Optional[str] = ""
+    project:    str | None = ""
+    ref:        str | None = ""
 
 
-@app.post("/api/bucket-elevator/report-variants")
+@v1.post("/bucket-elevator/report-variants")
 def generate_variant_report(data: VariantReportRequest):
     """Generate A4 PDF comparing multiple optimizer candidate variants."""
     try:
         pdf = build_variant_report(
-            data.candidates,
-            data.inputs,
+            data.candidates, data.inputs,
             project=data.project or "",
             doc_ref=data.ref or "",
         )
-        return StreamingResponse(
-            io.BytesIO(pdf),
-            media_type="application/pdf",
-            headers={"Content-Disposition": 'attachment; filename="elevator_variants.pdf"'},
-        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        _err("REPORT_ERROR", str(e), status=500)
+
+    return StreamingResponse(
+        io.BytesIO(pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="elevator_variants.pdf"'},
+    )
 
 
-# ─── DESIGNS ──────────────────────────────────────────────────────────────────
+# ── Designs ───────────────────────────────────────────────────────────────────
 
-@app.post("/api/designs/save")
+@v1.post("/designs/save")
 def save_design(record: DesignRecord, db: sqlite3.Connection = Depends(get_db)):
-    """Persist a named design to SQLite."""
+    """
+    Persist a named design to SQLite.
+
+    Improvement 9: calc_schema_version is stored alongside the record.
+    When solve_elevator() equations change in a future release, old designs
+    remain queryable — you can filter by schema_ver to identify which records
+    need recalculation or migration.
+    """
     cur = db.cursor()
     cur.execute("""
         INSERT OR REPLACE INTO designs
-        (id, module, name, project, inputs_json, results_json, notes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, module, name, project, inputs_json, results_json,
+             notes, calc_schema_version, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         record.id, record.module, record.name, record.project,
         record.inputs_json, record.results_json, record.notes,
+        CALC_SCHEMA_VERSION,
         record.created_at or datetime.now(timezone.utc).isoformat(),
         datetime.now(timezone.utc).isoformat(),
     ))
     db.commit()
-    return {"saved": True, "id": record.id}
+    return {"saved": True, "id": record.id, "calc_schema_version": CALC_SCHEMA_VERSION}
 
 
-@app.get("/api/designs")
+@v1.get("/designs")
 def list_designs(
-    module: Optional[str] = None,
-    project: Optional[str] = None,
+    module:  str | None = None,
+    project: str | None = None,
     db: sqlite3.Connection = Depends(get_db),
 ):
-    cur = db.cursor()
-    query  = "SELECT id, module, name, project, notes, created_at, updated_at FROM designs WHERE 1=1"
-    params = []
+    cur   = db.cursor()
+    query = (
+        "SELECT id, module, name, project, notes, "
+        "calc_schema_version, created_at, updated_at "
+        "FROM designs WHERE 1=1"
+    )
+    params: list = []
     if module:
-        query += " AND module = ?"; params.append(module)
+        query += " AND module = ?";  params.append(module)
     if project:
         query += " AND project = ?"; params.append(project)
     query += " ORDER BY updated_at DESC"
     return {"designs": [dict(r) for r in cur.execute(query, params).fetchall()]}
 
 
-@app.get("/api/designs/{design_id}")
+@v1.get("/designs/{design_id}")
 def get_design(design_id: str, db: sqlite3.Connection = Depends(get_db)):
-    row = db.cursor().execute("SELECT * FROM designs WHERE id = ?", (design_id,)).fetchone()
+    row = db.cursor().execute(
+        "SELECT * FROM designs WHERE id = ?", (design_id,)
+    ).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Design not found")
     return dict(row)
 
 
-@app.delete("/api/designs/{design_id}")
+@v1.delete("/designs/{design_id}")
 def delete_design(design_id: str, db: sqlite3.Connection = Depends(get_db)):
     db.cursor().execute("DELETE FROM designs WHERE id = ?", (design_id,))
     db.commit()
     return {"deleted": True, "id": design_id}
 
 
-# ─── PROJECTS ────────────────────────────────────────────────────────────────
+# ── Projects ──────────────────────────────────────────────────────────────────
 
-@app.get("/api/projects")
+@v1.get("/projects")
 def list_projects(db: sqlite3.Connection = Depends(get_db)):
     rows = db.cursor().execute(
-        "SELECT DISTINCT project FROM designs WHERE project IS NOT NULL ORDER BY project"
+        "SELECT DISTINCT project FROM designs "
+        "WHERE project IS NOT NULL ORDER BY project"
     ).fetchall()
     return {"projects": [r["project"] for r in rows]}
 
 
-# ─── HEALTH ──────────────────────────────────────────────────────────────────
+# ── Health ────────────────────────────────────────────────────────────────────
 
-@app.get("/api/health")
+@v1.get("/health")
 def health():
-    return {"status": "ok", "product": "VECTRIX™", "version": "1.0.0",
-            "cors_origins": CORS_ORIGINS}
+    return {
+        "status":           "ok",
+        "product":          "VECTRIX™",
+        "solver_version":   CALC_SCHEMA_VERSION,
+        "cema_reference":   CEMA_STANDARD,
+        "cors_origins":     CORS_ORIGINS,
+        "timestamp":        datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ── Register versioned router ─────────────────────────────────────────────────
+
+app.include_router(v1)
+
+
+# ── Backward-compat /api/* aliases ────────────────────────────────────────────
+#
+# IMPORTANT — why calculate/optimize are NOT in add_api_route here:
+#
+#   The v1 calculate() and optimize() functions return CalcResponse{meta, data,
+#   warnings}.  Wiring them via add_api_route would expose the envelope at the
+#   old /api/* paths too, breaking any frontend that reads response.speed_sweep,
+#   response.motor_hp, etc. directly.
+#
+#   The two explicit wrappers below call the v1 functions and strip .data,
+#   restoring the original flat-dict response the frontend expects.
+#
+#   All other endpoints (reference data, reports, designs, health) do not wrap
+#   results in an envelope, so they are safe to alias directly.
+#
+#   Remove this entire block once the frontend has been updated to /api/v1/*.
+
+_compat = APIRouter(prefix="/api", tags=["deprecated — migrate to /api/v1"])
+_R = dict(include_in_schema=False)
+
+_compat.add_api_route("/materials",                       get_materials,           methods=["GET"],    **_R)
+_compat.add_api_route("/bucket-series",                   get_bucket_series,       methods=["GET"],    **_R)
+_compat.add_api_route("/motor-sizes",                     get_motor_sizes,         methods=["GET"],    **_R)
+_compat.add_api_route("/bucket-elevator/report",          generate_report,         methods=["POST"],   **_R)
+_compat.add_api_route("/bucket-elevator/report-variants", generate_variant_report, methods=["POST"],   **_R)
+_compat.add_api_route("/designs/save",                    save_design,             methods=["POST"],   **_R)
+_compat.add_api_route("/designs",                         list_designs,            methods=["GET"],    **_R)
+_compat.add_api_route("/designs/{design_id}",             get_design,              methods=["GET"],    **_R)
+_compat.add_api_route("/designs/{design_id}",             delete_design,           methods=["DELETE"], **_R)
+_compat.add_api_route("/projects",                        list_projects,           methods=["GET"],    **_R)
+_compat.add_api_route("/health",                          health,                  methods=["GET"],    **_R)
+
+app.include_router(_compat)
+
+
+# ── Compat wrappers for enveloped endpoints ───────────────────────────────────
+#
+# calculate() → CalcResponse.data is the raw solve_elevator() dict:
+#   {"speed_sweep": [...], "motor_hp": ..., "belt_speed_fpm": ..., ...}
+#
+# optimize()  → CalcResponse.data is {"candidates": [...], "count": N}
+#
+# Stripping .data here gives the frontend exactly what it received from v1.0.0.
+# These are registered on `app` directly (not _compat) because add_api_route
+# does not preserve the CalcResponse → dict unwrapping we need.
+
+@app.post("/api/bucket-elevator/calculate", include_in_schema=False)
+def _compat_calculate(
+    inp:              BucketElevatorInput,
+    background_tasks: BackgroundTasks,
+    db:               sqlite3.Connection = Depends(get_db),
+):
+    """Compat shim — returns raw solver dict, not CalcResponse envelope."""
+    return calculate(inp, background_tasks, db).data
+
+
+@app.post("/api/bucket-elevator/optimize", include_in_schema=False)
+def _compat_optimize(req: OptimizerRequest):
+    """Compat shim — returns {candidates, count}, not CalcResponse envelope."""
+    return optimize(req).data
