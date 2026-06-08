@@ -775,3 +775,793 @@ class StructuralStressEngine:
             return f"GOOD ({L10_hours:.0f} h) — suitable for 24/7 continuous duty"
         else:
             return f"EXCELLENT ({L10_hours:.0f} h) — exceeds standard requirements"
+
+    # ── 8. Pulley Lagging Design ──────────────────────────────────────────────
+
+    @staticmethod
+    def pulley_lagging(
+        material: dict,
+        T_effective_N: float,
+        T_slack_N: float,
+        wrap_angle_deg: float = 180.0,
+        environment: str = "dry",
+        belt_type: str = "EP",
+    ) -> dict:
+        """
+        CEMA 375 §4 / manufacturer practice — Head pulley lagging selection.
+
+        Lagging serves two functions:
+          1. Friction — increases belt-pulley μ to prevent slip at drive pulley
+          2. Protection — shields shell from abrasion and corrosion
+
+        The selection is driven by four independent factors (all must be satisfied):
+          A. Material category (fine powder jams rubber grooves → ceramic)
+          B. Moisture / environment (wet conditions → grooved or ceramic)
+          C. Belt tension ratio (high ratio → high μ required → ceramic)
+          D. Material abrasiveness (abr ≥ 6 → ceramic or armoured rubber)
+
+        Selection matrix (conditions checked in priority order):
+          Fine powder OR highly abrasive OR (wet + high tension):
+            → ceramic_embedded_rubber   μ_dry=0.50  μ_wet=0.45  t=16mm
+          Wet OR (humid + high tension):
+            → rubber_diamond_groove     μ_dry=0.45  μ_wet=0.35  t=12mm
+          Light duty dry (abr ≤ 2, moisture ≤ 10%, standard tension):
+            → rubber_herringbone        μ_dry=0.40  μ_wet=0.28  t=10mm
+          Standard (default):
+            → rubber_herringbone        μ_dry=0.40  μ_wet=0.30  t=12mm
+
+        Slip upgrade rule: if the selected lagging is still insufficient to
+        prevent belt slip (actual T_tight/T_slack > e^(μ×θ)), the selection
+        is automatically upgraded to ceramic_embedded_rubber and re-checked.
+
+        Note for ST (steel cord) belts: diamond groove can cause resonant
+        vibration at splice gaps; herringbone is preferred.
+
+        Parameters
+        ----------
+        material       dict from MATERIALS database
+        T_effective_N  Effective tension = T1+T2 [N] from the solver
+        T_slack_N      Slack-side tension T3 [N] from the solver
+        wrap_angle_deg Drive pulley wrap angle [deg] — default 180°
+        environment    "dry" | "humid" | "wet" | "submerged"
+        belt_type      "EP" | "ST"
+
+        Returns
+        -------
+        {
+            "lagging_type":             str
+            "lagging_required":         bool
+            "ceramic_required":         bool
+            "thickness_mm":             float
+            "mu_dry":                   float
+            "mu_wet":                   float
+            "mu_operating":             float   (wet or dry per environment)
+            "euler_ratio_lagged":       float   e^(mu_oper × theta)
+            "belt_ratio_tight_slack":   float   (T_eff + T_slack) / T_slack
+            "slip_safe":                bool
+            "cover_recommendation":     str
+            "upgraded":                 bool    True if auto-upgraded for slip
+        }
+        """
+        abr         = material.get("abr_code",     3)
+        moisture    = material.get("moisture_pct", 0.0)
+        flowability = material.get("flowability",  2)
+        hazards     = material.get("hazard_codes", [])
+
+        is_wet         = environment in ("wet", "submerged") or moisture > 20.0
+        is_humid       = environment == "humid"              or moisture > 15.0
+        is_corrosive   = "B4" in hazards
+        is_fine_powder = flowability >= 4 and abr <= 5   # cement (abr=5), fly ash, flour
+        is_high_abr    = abr >= 6
+
+        # Belt tight-side load (T_tight = T_effective + T_slack in VECTRIX naming)
+        T_tight = T_effective_N + T_slack_N
+        ratio   = T_tight / max(T_slack_N, 1.0)
+
+        def _make_selection(lagging_type, mu_dry, mu_wet, thickness_mm, ceramic):
+            mu_op   = mu_wet if (is_wet or is_humid) else mu_dry
+            theta   = math.radians(wrap_angle_deg)
+            euler   = math.exp(mu_op * theta)
+            safe    = ratio <= euler
+            if lagging_type == "ceramic_embedded_rubber":
+                cover = "Ceramic tile in rubber matrix (Rulmeca HiCer, Martin Engineering, or equiv.)"
+            elif lagging_type == "rubber_diamond_groove":
+                cover = "Diamond groove NR rubber, Shore 60-65A"
+            else:
+                cover = "Herringbone groove NR rubber, Shore 55-60A"
+            if belt_type == "ST" and lagging_type == "rubber_diamond_groove":
+                lagging_type = "rubber_herringbone"
+                cover = "Herringbone NR rubber, Shore 60-65A (diamond groove not recommended for ST belt)"
+            return lagging_type, mu_dry, mu_wet, thickness_mm, ceramic, mu_op, euler, safe, cover
+
+        # Priority selection
+        if is_fine_powder or is_high_abr or (is_wet and ratio > 2.5) or is_corrosive:
+            t, mdry, mwet, tmm, cer, mop, eul, safe, cov = _make_selection(
+                "ceramic_embedded_rubber", 0.50, 0.45, 16, True)
+        elif is_wet or (is_humid and ratio > 2.2):
+            t, mdry, mwet, tmm, cer, mop, eul, safe, cov = _make_selection(
+                "rubber_diamond_groove", 0.45, 0.35, 12, False)
+        elif abr <= 2 and not is_humid and ratio <= 2.0:
+            t, mdry, mwet, tmm, cer, mop, eul, safe, cov = _make_selection(
+                "rubber_herringbone", 0.40, 0.28, 10, False)
+        else:
+            t, mdry, mwet, tmm, cer, mop, eul, safe, cov = _make_selection(
+                "rubber_herringbone", 0.40, 0.30, 12, False)
+
+        # Slip upgrade — if primary selection can't prevent slip, upgrade to ceramic
+        upgraded = False
+        if not safe and not cer:
+            t, mdry, mwet, tmm, cer, mop, eul, safe, cov = _make_selection(
+                "ceramic_embedded_rubber", 0.50, 0.45, 16, True)
+            upgraded = True
+
+        return {
+            "lagging_type":           t,
+            "lagging_required":       True,
+            "ceramic_required":       cer,
+            "thickness_mm":           tmm,
+            "mu_dry":                 mdry,
+            "mu_wet":                 mwet,
+            "mu_operating":           round(mop, 3),
+            "euler_ratio_lagged":     round(eul, 3),
+            "belt_ratio_tight_slack": round(ratio, 3),
+            "slip_safe":              safe,
+            "cover_recommendation":   cov,
+            "upgraded":               upgraded,
+            "note": (
+                "μ values are nominal CEMA/manufacturer mid-range. "
+                "Verify with belt and lagging supplier for actual service conditions."
+            ),
+        }
+
+    # ── 9. Pulley End Disc ────────────────────────────────────────────────────
+
+    @staticmethod
+    def pulley_end_disc(
+        pulley_diameter_m:   float,
+        hub_od_m:            float,
+        T_total_N:           float,
+        face_width_m:        float = 0.400,
+        allowable_stress_pa: float = 80e6,
+    ) -> dict:
+        """
+        Pulley end disc preliminary thickness — CEMA Pulley Standard / Roark.
+
+        The end disc transfers belt tension from the shell rim to the shaft hub.
+        Two criteria are checked; the larger governs:
+
+        1. Membrane (direct tension) at hub junction:
+              σ_mem = F_disc / (π × D_hub × t)
+              t_mem = F_disc / (π × D_hub × σ_allow)
+
+        2. Plate bending (disc treated as cantilever, loaded at rim):
+              M = F_disc × (R_shell − R_hub)   [N·m]
+              Z = (1/6) × π × D_hub × t²
+              σ_bend = M / Z
+              t_bend = √(6 × F_disc × arm / (π × D_hub × σ_allow))
+
+        where F_disc = T_total / 2 (two end discs share the belt tension load).
+
+        Note: This is a simplified first-pass model.  A full Roark annular plate
+        analysis or FEA is required for fabrication drawings.  The simplified
+        cantilever overestimates arm length slightly (conservative for t).
+
+        CEMA Pulley Standard minimum disc thicknesses enforced:
+          t_min = 8 mm  for D_pulley < 500 mm
+          t_min = 12 mm for D_pulley 500–800 mm
+          t_min = 16 mm for D_pulley > 800 mm
+
+        Parameters
+        ----------
+        pulley_diameter_m    Pulley shell OD [m]
+        hub_od_m             Hub outer diameter from hub_diameter() [m]
+        T_total_N            Total belt tight-side tension [N]
+        face_width_m         Pulley face width [m] (used only for context)
+        allowable_stress_pa  Allowable bending stress for A36 steel disc [Pa].
+                             Typical: 80–100 MPa for welded construction.
+        """
+        R_shell = pulley_diameter_m / 2.0
+        R_hub   = hub_od_m          / 2.0
+        F_disc  = T_total_N / 2.0   # each end disc carries half the load
+
+        # Criterion 1: membrane stress at hub bore
+        circ_hub  = math.pi * hub_od_m
+        t_mem     = F_disc / (circ_hub * allowable_stress_pa)
+
+        # Criterion 2: bending (cantilever from hub to shell rim)
+        arm     = R_shell - R_hub
+        t_bend  = math.sqrt(
+            6.0 * F_disc * arm / (math.pi * hub_od_m * allowable_stress_pa)
+        )
+
+        # CEMA Pulley Standard minimum
+        D_mm = pulley_diameter_m * 1000.0
+        if D_mm < 500:
+            t_cema = 0.008
+        elif D_mm <= 800:
+            t_cema = 0.012
+        else:
+            t_cema = 0.016
+
+        t_structural = max(t_mem, t_bend)
+        t_final      = max(t_structural, t_cema)
+        governed_by  = (
+            "CEMA_minimum"  if t_cema   >= max(t_mem, t_bend) else
+            "plate_bending" if t_bend   >= t_mem               else
+            "membrane_tension"
+        )
+
+        # Actual stresses at governing thickness
+        sig_mem  = F_disc / (math.pi * hub_od_m * t_final)
+        sig_bend = 6.0 * F_disc * arm / (math.pi * hub_od_m * t_final ** 2)
+        sig_max  = max(sig_mem, sig_bend)
+        SF       = allowable_stress_pa / max(sig_max, 1.0)
+
+        return {
+            "t_membrane_mm":     round(t_mem  * 1000, 1),
+            "t_bending_mm":      round(t_bend * 1000, 1),
+            "t_cema_min_mm":     round(t_cema * 1000, 0),
+            "t_governing_mm":    round(t_final * 1000, 1),
+            "governed_by":       governed_by,
+            "sigma_membrane_MPa":round(sig_mem  / 1e6, 1),
+            "sigma_bending_MPa": round(sig_bend / 1e6, 1),
+            "sigma_max_MPa":     round(sig_max  / 1e6, 1),
+            "allowable_MPa":     round(allowable_stress_pa / 1e6, 0),
+            "safety_factor":     round(SF, 2),
+            "F_per_disc_N":      round(F_disc, 0),
+            "arm_m":             round(arm, 4),
+            "note": (
+                "Simplified cantilever model — conservative preliminary sizing. "
+                "Full Roark annular plate analysis or FEA required for fabrication."
+            ),
+        }
+
+    # ── 10. Bucket Bolt Fatigue ───────────────────────────────────────────────
+
+    @staticmethod
+    def bucket_bolt_fatigue(
+        belt_speed_mps:      float,
+        head_radius_m:       float,
+        bucket_mass_kg:      float,
+        fill_mass_kg:        float,
+        n_bolts:             int   = 2,
+        bolt_diameter_mm:    float = 12.0,
+        bolt_grade:          str   = "8.8",
+        n_rpm:               float = 60.0,
+        service_hours_yr:    float = 8760.0,
+    ) -> dict:
+        """
+        Bucket mounting bolt fatigue assessment — Goodman diagram approach.
+
+        Each bucket cycle through the head pulley applies a FULLY REVERSING
+        centrifugal load to the mounting bolts:
+          F_max = (m_bucket + m_fill) × v² / r   [N]  (at head pulley — maximum)
+          F_min ≈ 0 N                                  (at boot — gravity loads belt,
+                                                         not the bolt)
+
+        Fatigue model (Goodman line, single-shear bolts):
+          σ_mean      = F_max / (2 × n_bolts × A_bolt)
+          σ_alt       = F_max / (2 × n_bolts × A_bolt)   (fully reversed ≈ same)
+          Goodman:    σ_alt / S_e + σ_mean / S_ut ≤ 1.0
+
+        Fatigue endurance limit S_e (metric bolts, machined surface, Kf=2.2):
+          S_e = 0.5 × S_ut / Kf  for S_ut ≤ 1400 MPa
+        Bolt grade ultimate strengths (ISO 898-1):
+          8.8:  S_ut = 800 MPa,  S_y = 640 MPa
+          10.9: S_ut = 1040 MPa, S_y = 940 MPa
+          12.9: S_ut = 1220 MPa, S_y = 1100 MPa
+          ASTM A325:  S_ut = 830 MPa
+          ASTM A490:  S_ut = 1040 MPa
+
+        Fatigue life estimate (Basquin, b = −0.085 for metric bolts):
+          N = (S_e / σ_alt)^(1/b)   [cycles]
+
+        Parameters
+        ----------
+        bucket_mass_kg   Actual catalogue bucket mass [kg]
+        fill_mass_kg     Material mass in loaded bucket = V × η × ρ / 1000  [kg]
+        n_bolts          Mounting bolts per bucket
+        bolt_grade       ISO grade string or "A325" / "A490"
+        n_rpm            Head shaft speed [rpm]
+        service_hours_yr Annual operating hours
+
+        Returns
+        -------
+        {
+            "F_max_N":             float   Peak centrifugal bolt load [N]
+            "sigma_mean_MPa":      float
+            "sigma_alt_MPa":       float
+            "S_e_MPa":             float   Endurance limit [MPa]
+            "S_ut_MPa":            float   Ultimate strength [MPa]
+            "goodman_ratio":       float   Must be ≤ 1.0 for infinite life
+            "fatigue_life_Mcyc":   float   Estimated fatigue life [million cycles]
+            "life_years":          float   At given rpm and hours/year
+            "pass_infinite_life":  bool
+            "recommendation":      str
+        }
+        """
+        GRADES = {
+            "8.8":  (800e6,  640e6),
+            "10.9": (1040e6, 940e6),
+            "12.9": (1220e6, 1100e6),
+            "A325": (830e6,  635e6),
+            "A490": (1040e6, 940e6),
+        }
+        Sut, Sy = GRADES.get(bolt_grade, GRADES["8.8"])
+
+        # Bolt shear area
+        A_bolt = math.pi / 4.0 * (bolt_diameter_mm / 1000.0) ** 2
+
+        # Peak centrifugal load
+        F_max = (bucket_mass_kg + fill_mass_kg) * (belt_speed_mps ** 2) / max(head_radius_m, 0.001)
+
+        # Stresses (single shear per bolt)
+        sigma_mean = F_max / (2.0 * n_bolts * A_bolt)  # fully reversed: mean = alt
+        sigma_alt  = sigma_mean
+
+        # Endurance limit with fatigue stress concentration Kf = 2.2 (threaded)
+        Kf = 2.2
+        Se = 0.5 * Sut / Kf
+
+        # Goodman damage ratio
+        goodman = sigma_alt / Se + sigma_mean / Sut
+        pass_inf = goodman <= 1.0
+
+        # Basquin fatigue life (b = −0.085 for grade 8.8 metric bolts)
+        b = -0.085
+        if sigma_alt > 0:
+            N_cycles = (Se / sigma_alt) ** (1.0 / b)
+        else:
+            N_cycles = float("inf")
+
+        # Convert to years
+        cycles_per_year = n_rpm * 60.0 * service_hours_yr
+        life_years = N_cycles / max(cycles_per_year, 1.0)
+
+        if pass_inf:
+            rec = (f"PASS — Goodman ratio {goodman:.3f} ≤ 1.0. "
+                   f"Infinite fatigue life predicted for grade {bolt_grade} bolts.")
+        elif life_years >= 10:
+            rec = (f"CAUTION — Finite life {life_years:.1f} years. "
+                   f"Increase bolt diameter or upgrade to grade 10.9.")
+        else:
+            rec = (f"FAIL — Fatigue life {life_years:.1f} years insufficient. "
+                   f"Increase bolt diameter to {bolt_diameter_mm*1.25:.0f} mm, "
+                   f"add bolts, or upgrade to grade 10.9/12.9.")
+
+        return {
+            "F_max_N":            round(F_max,       1),
+            "sigma_mean_MPa":     round(sigma_mean / 1e6, 1),
+            "sigma_alt_MPa":      round(sigma_alt  / 1e6, 1),
+            "S_e_MPa":            round(Se          / 1e6, 1),
+            "S_ut_MPa":           round(Sut         / 1e6, 0),
+            "goodman_ratio":      round(goodman,     3),
+            "fatigue_life_Mcyc":  round(N_cycles    / 1e6, 2) if N_cycles < 1e15 else None,
+            "life_years":         round(life_years,  1)        if life_years < 1e9  else None,
+            "pass_infinite_life": pass_inf,
+            "recommendation":     rec,
+            "bolt_grade":         bolt_grade,
+            "n_bolts":            n_bolts,
+            "bolt_dia_mm":        bolt_diameter_mm,
+        }
+
+    # ── 11. Take-Up Design ────────────────────────────────────────────────────
+
+    @staticmethod
+    def gravity_takeup(
+        T_slack_N:      float,
+        height_m:       float,
+        belt_width_mm:  float,
+        belt_Ekgm2:     float = 8.0,
+    ) -> dict:
+        """
+        CEMA 375 §4 — Gravity take-up counterweight and travel sizing.
+
+        The gravity take-up maintains constant T_slack by hanging a counterweight
+        on the take-up pulley carriage.  Two strands of belt carry the pulley,
+        so the counterweight must equal 2 × T_slack (net, minus carriage weight).
+
+        Counterweight:
+          W_cw = 2 × T_slack_N / g       [kg]  gross (add carriage tare ≈ 10%)
+
+        Take-up travel:
+          t_travel = t_thermal + t_elongation + t_minimum
+
+          Thermal expansion:
+            ΔL = α_steel × H_total × ΔT = 12e-6 × H_m × 80°C
+          Belt elastic elongation at rated tension:
+            ΔL_belt = T_slack / (E_belt × A_belt)  [m]
+            (A_belt ≈ belt_width_mm × E_rating/1000 for EP belt — simplified)
+          Minimum clearance: 300 mm (CEMA §4 minimum take-up travel)
+
+        Parameters
+        ----------
+        T_slack_N     Required slack-side tension from Euler check [N]
+        height_m      Elevator lift height [m]
+        belt_width_mm Belt width [mm]
+        belt_Ekgm2    Belt weight per m² [kg/m²] (default EP400 nominal)
+        """
+        g = _gravity()
+
+        # Counterweight mass (2 × T3, both belt strands carry take-up pulley)
+        W_cw_net  = 2.0 * T_slack_N / g          # kg net
+        W_cw_gross = W_cw_net * 1.10              # +10% for carriage tare
+
+        # Take-up travel
+        alpha_steel   = 12e-6           # steel thermal expansion [/°C]
+        delta_T       = 80.0            # °C temperature range
+        L_thermal     = alpha_steel * 2.0 * height_m * delta_T  # both strands
+
+        # Belt elongation approximation (EP belt: ε ≈ T/(E_rating × width))
+        E_belt_Nm     = 400_000 * (belt_width_mm / 1000.0)   # EP400 stiffness [N]
+        L_belt_elong  = T_slack_N / E_belt_Nm
+
+        travel_m = max(L_thermal + L_belt_elong + 0.300, 0.300)
+
+        return {
+            "W_counterweight_kg_net":   round(W_cw_net,   1),
+            "W_counterweight_kg_gross": round(W_cw_gross, 1),
+            "travel_m":                 round(travel_m,   3),
+            "travel_thermal_m":         round(L_thermal,  4),
+            "travel_elongation_m":      round(L_belt_elong, 4),
+            "travel_min_CEMA_m":        0.300,
+            "note": (
+                "Add 20% margin to travel for field adjustment headroom. "
+                "Verify counterweight weight against structural take-up frame capacity."
+            ),
+        }
+
+    @staticmethod
+    def screw_takeup(
+        T_slack_N:    float,
+        screw_pitch_mm: float = 6.0,
+        eta_screw:    float = 0.85,
+        travel_m:     float = 0.500,
+        screw_length_m: float = 0.600,
+    ) -> dict:
+        """
+        CEMA 375 §4 — Screw take-up thread load and buckling check.
+
+        Screw take-up is used for short elevators (H < 15 m) where gravity
+        take-up is impractical.  The screw carries the full take-up reaction.
+
+        Screw load (both belt strands):
+          F_screw = 2 × T_slack / η_screw
+
+        Euler column buckling (unsupported screw shank):
+          F_euler = π² × E × I / (K × L)²
+          where K = 1 (pinned-pinned) or 0.7 (fixed-free guide)
+
+        Minimum screw core diameter from direct compressive stress:
+          d_core = √(4 × F_screw / (π × σ_allow))
+          σ_allow = Sy / 4 = 60 MPa (A36 screw, conservative)
+
+        Parameters
+        ----------
+        T_slack_N     Required slack-side tension [N]
+        screw_pitch_mm Screw thread pitch [mm]
+        eta_screw     Screw thread efficiency (0.8–0.9 typical for ACME/Tr thread)
+        travel_m      Required take-up adjustment range [m]
+        screw_length_m Unsupported shank length for buckling check [m]
+        """
+        E = _shaft_E()
+
+        F_screw = 2.0 * T_slack_N / eta_screw
+
+        # Minimum core diameter from direct compressive stress (conservative)
+        sigma_allow = 60e6  # MPa, A36
+        d_core = math.sqrt(4.0 * F_screw / (math.pi * sigma_allow))
+
+        # Euler buckling check (pinned-pinned K=1)
+        r_core = d_core / 4.0                    # approx. radius of gyration
+        I_core = math.pi * d_core ** 4 / 64.0    # mm→m already in d_core
+        F_euler = (math.pi ** 2 * E * I_core) / (screw_length_m ** 2)
+        SF_buckling = F_euler / max(F_screw, 1.0)
+
+        turns_required = travel_m / (screw_pitch_mm / 1000.0)
+
+        return {
+            "F_screw_N":         round(F_screw,         0),
+            "d_core_min_mm":     round(d_core * 1000,   1),
+            "F_euler_N":         round(F_euler,          0),
+            "SF_buckling":       round(SF_buckling,      2),
+            "turns_required":    round(turns_required,   0),
+            "travel_m":          travel_m,
+            "buckling_safe":     SF_buckling >= 3.0,
+            "recommendation": (
+                f"PASS — buckling SF={SF_buckling:.1f} ≥ 3.0"
+                if SF_buckling >= 3.0 else
+                f"FAIL — buckling SF={SF_buckling:.1f} < 3.0. "
+                f"Increase screw diameter to ≥ {d_core*1000*1.25:.0f} mm "
+                f"or add intermediate guide support."
+            ),
+        }
+
+    # ── 12. Casing Panel Deflection and Stiffeners ────────────────────────────
+
+    @staticmethod
+    def casing_panel_deflection(
+        panel_width_m:  float,
+        panel_height_m: float,
+        plate_thickness_m: float,
+        wind_pressure_pa: float = 800.0,
+        internal_pressure_pa: float = 0.0,
+    ) -> dict:
+        """
+        Casing panel deflection check under wind + internal suction loading.
+
+        Casing panels are modelled as simply-supported rectangular plates.
+        Maximum deflection at centre (Timoshenko plate formula, square plate approx.):
+
+          δ_max = 0.0443 × q × a⁴ / (E × t³)   (for square panel, ν = 0.3)
+
+        where a = shorter panel dimension [m], q = total applied pressure [Pa].
+
+        Allowable deflection: L / 360  [AISC serviceability limit]
+
+        For a non-square panel, conservative approximation uses the shorter span.
+
+        Parameters
+        ----------
+        panel_width_m        Panel width between stiffeners [m]
+        panel_height_m       Panel height between stiffeners [m]
+        plate_thickness_m    Casing plate thickness from casing_plate_thickness() [m]
+        wind_pressure_pa     External wind pressure [Pa]. Typical: 600–1200 Pa
+                             (AS1170.2 / ASCE 7: industrial site, 50-yr wind)
+        internal_pressure_pa Boot section internal pressure/suction [Pa].
+                             Typically 0–500 Pa for sealed casings.
+        """
+        E    = _shaft_E()
+        q    = wind_pressure_pa + internal_pressure_pa
+        a    = min(panel_width_m, panel_height_m)     # shorter span governs
+        t    = max(plate_thickness_m, 0.001)
+
+        delta_actual = 0.0443 * q * a ** 4 / (E * t ** 3)
+        delta_allow  = a / 360.0                       # L/360 serviceability
+
+        sigma_max = 0.3078 * q * a ** 2 / t ** 2      # midspan bending stress [Pa]
+        sigma_yield = 250e6                             # A36 Sy
+        SF_stress = sigma_yield / max(sigma_max, 1.0)
+
+        status = "ok" if delta_actual <= delta_allow else "fail"
+
+        return {
+            "delta_actual_mm":  round(delta_actual * 1000, 2),
+            "delta_allow_mm":   round(delta_allow  * 1000, 2),
+            "sigma_max_MPa":    round(sigma_max / 1e6, 1),
+            "SF_yield":         round(SF_stress, 2),
+            "status":           status,
+            "a_mm":             round(a * 1000, 0),
+            "t_mm":             round(t * 1000, 1),
+            "q_Pa":             round(q, 0),
+            "recommendation": (
+                "Panel deflection within L/360 limit — stiffener spacing acceptable."
+                if status == "ok" else
+                f"Panel deflects {delta_actual*1000:.1f} mm > allowable {delta_allow*1000:.1f} mm. "
+                f"Reduce stiffener spacing or increase plate thickness."
+            ),
+        }
+
+    @staticmethod
+    def casing_stiffener_spacing(
+        plate_thickness_m: float,
+        wind_pressure_pa:  float = 800.0,
+        allowable_defl_ratio: float = 360.0,
+    ) -> dict:
+        """
+        Maximum stiffener spacing for a casing plate at given loading.
+
+        Inverts the Timoshenko plate deflection formula to find the maximum
+        panel dimension a such that δ_max ≤ a / allowable_defl_ratio.
+
+        Setting δ_allow = a / D:
+          a / D = 0.0443 × q × a⁴ / (E × t³)
+          a³ = E × t³ / (0.0443 × q × D)
+          a  = ∛(E × t³ / (0.0443 × q × D))
+
+        Parameters
+        ----------
+        plate_thickness_m    Casing plate thickness [m]
+        wind_pressure_pa     Applied lateral pressure [Pa]
+        allowable_defl_ratio L/n deflection limit (360 = L/360, 240 = L/240)
+
+        Returns
+        -------
+        {
+            "max_spacing_mm":  float   Maximum stiffener pitch [mm]
+            "recommended_mm":  float   max_spacing × 0.85 safety margin [mm]
+        }
+        """
+        E = _shaft_E()
+        t = max(plate_thickness_m, 0.001)
+        q = max(wind_pressure_pa,  0.001)
+        D = allowable_defl_ratio
+
+        a_max = (E * t ** 3 / (0.0443 * q * D)) ** (1.0 / 3.0)
+
+        return {
+            "max_spacing_mm":    round(a_max         * 1000, 0),
+            "recommended_mm":    round(a_max * 0.85  * 1000, 0),
+            "plate_thickness_mm":round(t              * 1000, 1),
+            "wind_pressure_Pa":  round(q,              0),
+            "defl_limit":        f"L / {D:.0f}",
+            "note": (
+                "Use recommended spacing (85% of maximum) to allow for "
+                "construction tolerance and combined wind + seismic loading."
+            ),
+        }
+
+    # ── 13. Design Recommendation Engine ─────────────────────────────────────
+
+    @staticmethod
+    def design_recommendations(results: dict, inputs: dict) -> list:
+        """
+        VECTRIX design recommendation engine — converts check failures into
+        specific corrective actions the engineer can take immediately.
+
+        For each failed or warned check in the solver results, generates one or
+        more concrete recommendations with estimated parameter values.
+
+        This is the 'Priority 3' item from the reviewer's structural audit:
+        'users won't just see a failure — they'll immediately see how to fix it.'
+
+        Parameters
+        ----------
+        results  dict from solve_elevator() — contains checks, Q, v, cr, etc.
+        inputs   dict from BucketElevatorInput — user design parameters
+
+        Returns
+        -------
+        list of dicts, each:
+            {
+                "check":    str    e.g. "CAPACITY", "SPEED", "CR"
+                "status":   str    "fail" | "warn"
+                "problem":  str    concise description
+                "actions":  list   ordered list of corrective actions (strings)
+            }
+        """
+        recs   = []
+        Q      = float(results.get("Q")      or results.get("Q_th") or 0)
+        v      = float(results.get("v")      or results.get("v_ms") or 0)
+        cr     = float(results.get("cr")     or results.get("centrifugal_ratio") or 0)
+        L10    = float(results.get("L10")    or results.get("L10_hours") or 0)
+        d_mm   = float(results.get("d_mm")   or results.get("shaft_d_mm") or 0)
+        P_tot  = float(results.get("P_total") or 0)
+        R_head = float(results.get("R_headshaft") or 0)
+        T3     = float(results.get("T3") or 0)
+        euler  = float(results.get("euler_ratio") or 0)
+        slip   = results.get("slip_safe")
+        bucket = results.get("bucket") or {}
+
+        Q_req  = float(inputs.get("Q_req",   100))
+        n_rpm  = float(inputs.get("n_rpm",    60))
+        D_mm   = float(inputs.get("D_mm",    500))
+        fill   = float(inputs.get("fill_pct", 75))
+        mu     = float(inputs.get("mu",      0.35))
+        wrap   = float(inputs.get("wrap_deg",180))
+
+        # ── Capacity ─────────────────────────────────────────────────────────
+        if Q < Q_req:
+            deficit_pct = (Q_req - Q) / Q_req * 100
+            n_needed    = n_rpm * (Q_req / max(Q, 0.01)) ** 0.5   # approx
+            fill_needed = min(fill * Q_req / max(Q, 0.01), 90)
+            recs.append({
+                "check":   "CAPACITY",
+                "status":  "fail",
+                "problem": f"Capacity {Q:.1f} t/h is {deficit_pct:.0f}% below {Q_req:.0f} t/h",
+                "actions": [
+                    f"Increase RPM from {n_rpm:.0f} to {n_needed:.0f} (within CEMA speed range for selected bucket)",
+                    f"Increase fill factor from {fill:.0f}% to {fill_needed:.0f}% (check material suitability)",
+                    "Select next larger bucket series (e.g. B → A → AA)",
+                    f"Increase head pulley diameter from {D_mm:.0f} mm to {D_mm*1.15:.0f} mm to raise belt speed",
+                ],
+            })
+
+        # ── Belt speed ────────────────────────────────────────────────────────
+        v_min = bucket.get("v_min", 1.0)
+        v_max = bucket.get("v_max", 3.0)
+        if v < v_min:
+            n_fix = n_rpm * v_min / max(v, 0.001) * 1.05
+            recs.append({
+                "check":   "SPEED",
+                "status":  "warn",
+                "problem": f"Belt speed {v:.2f} m/s below CEMA minimum {v_min:.2f} m/s — back-legging risk",
+                "actions": [
+                    f"Increase RPM from {n_rpm:.0f} to {n_fix:.0f} (minimum to reach v_min)",
+                    f"Increase head pulley diameter from {D_mm:.0f} mm to {D_mm*v_min/max(v,0.001)*1.05:.0f} mm",
+                    f"Switch to a bucket series with lower v_min than {v_min:.2f} m/s",
+                ],
+            })
+        elif v > v_max:
+            n_fix = n_rpm * v_max / max(v, 0.001) * 0.95
+            recs.append({
+                "check":   "SPEED",
+                "status":  "fail",
+                "problem": f"Belt speed {v:.2f} m/s exceeds CEMA maximum {v_max:.2f} m/s — scatter risk",
+                "actions": [
+                    f"Reduce RPM from {n_rpm:.0f} to {n_fix:.0f}",
+                    f"Reduce head pulley diameter from {D_mm:.0f} mm to {D_mm*v_max/max(v,0.001)*0.95:.0f} mm",
+                    f"Switch to bucket series with higher v_max (e.g. C or D series)",
+                ],
+            })
+
+        # ── Centrifugal ratio ─────────────────────────────────────────────────
+        if cr < 1.0:
+            recs.append({
+                "check":   "CR",
+                "status":  "warn",
+                "problem": f"CR = {cr:.3f} < 1.0 — mixed/gravity discharge, back-legging likely",
+                "actions": [
+                    "Increase belt speed (increase RPM or pulley diameter)",
+                    f"Target CR ≥ 1.2: requires v ≥ {1.2 * 9.81 * (D_mm/2000)**0.5:.2f} m/s",
+                    "Check material flowability — poor flow (flowability 4) needs higher CR",
+                ],
+            })
+        elif cr > 2.5:
+            recs.append({
+                "check":   "CR",
+                "status":  "warn",
+                "problem": f"CR = {cr:.3f} > 2.5 — excessive scatter at head discharge",
+                "actions": [
+                    "Reduce RPM or increase head pulley diameter to lower belt speed",
+                    "Install curved discharge hood to capture scattered material",
+                    f"Target CR ≤ 2.0: requires v ≤ {2.0 * 9.81 * (D_mm/2000)**0.5:.2f} m/s",
+                ],
+            })
+
+        # ── Belt slip ─────────────────────────────────────────────────────────
+        if slip is False:
+            euler_need = (R_head) / max(T3, 1.0)
+            mu_need    = math.log(euler_need) / max(math.radians(wrap), 0.01)
+            recs.append({
+                "check":   "SLIP",
+                "status":  "fail",
+                "problem": f"Belt slips at drive pulley (ratio {(R_head/max(T3,1)):.3f} > Euler limit {euler:.3f})",
+                "actions": [
+                    f"Upgrade lagging: current μ={mu:.2f} → need μ ≥ {mu_need:.2f} "
+                    f"(rubber→ceramic or add lagging)",
+                    f"Add snub pulley to increase wrap from {wrap:.0f}° to {wrap+20:.0f}°",
+                    f"Increase take-up tension T3 above {T3/1000:.1f} kN",
+                    "Check Euler-Eytelwein output for specific minimum T3 required",
+                ],
+            })
+
+        # ── Bearing life ──────────────────────────────────────────────────────
+        if L10 < 20_000:
+            recs.append({
+                "check":   "BEARING",
+                "status":  "fail",
+                "problem": f"Bearing L10 = {L10:.0f} h < 20,000 h minimum for industrial duty",
+                "actions": [
+                    "Upgrade to next bearing size (increase C — basic dynamic rating)",
+                    "Reduce shaft load: verify belt tensions and take-up setting",
+                    "Consider spherical roller bearings for combined load tolerance",
+                    f"Increase shaft diameter — reduces journal load concentration",
+                ],
+            })
+        elif L10 < 40_000:
+            recs.append({
+                "check":   "BEARING",
+                "status":  "warn",
+                "problem": f"Bearing L10 = {L10:.0f} h — marginal for continuous 24/7 duty",
+                "actions": [
+                    "Consider one bearing size larger for continuous service",
+                    "Ensure proper lubrication schedule and contamination control",
+                ],
+            })
+
+        # ── Headshaft load ────────────────────────────────────────────────────
+        if R_head > 80_000:
+            recs.append({
+                "check":   "HEADSHAFT",
+                "status":  "fail",
+                "problem": f"Headshaft radial load {R_head/1000:.1f} kN exceeds 80 kN — verify belt rating",
+                "actions": [
+                    "Increase belt class (PIW rating) to handle higher tensions",
+                    "Increase head pulley diameter to reduce belt tensions",
+                    "Split into two parallel elevators if load is structural not belt-limited",
+                    "Verify T3 take-up setting — over-tensioned take-up increases R unnecessarily",
+                ],
+            })
+
+        return recs

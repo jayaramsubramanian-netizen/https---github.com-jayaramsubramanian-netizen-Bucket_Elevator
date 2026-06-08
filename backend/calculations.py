@@ -749,10 +749,38 @@ def run_optimizer(req: OptimizerRequest) -> List[dict]:
                 motor   = select_motor(P_total, inp.sf)
                 cr_pen  = 1000 if (cr < 1.0 or cr > 2.5) else 0
 
-                if objective == "power":     score = P_total + cr_pen
-                elif objective == "tension": score = T_total / 1000 + cr_pen
-                elif objective == "motor":   score = motor + cr_pen
-                else: score = P_total / 10 + T_total / 100000 + motor / 5 + cr_pen
+                # ── Normalized objective score ────────────────────────────────
+                # v1.3.0 — Task 4: normalized scoring replaces arbitrary scaling.
+                #
+                # Old: P_total/10 + T_total/100000 + motor/5
+                #   Problem: weights were implicit and unit-biased. P_total in kW
+                #   contributed differently depending on its absolute magnitude;
+                #   no principled reason for /10, /100000, /5 divisors.
+                #
+                # New: each objective normalized to [0–1] over its expected range,
+                #   then combined with explicit documented weights (sum = 1.0).
+                #
+                # Normalization ranges (covering 95%+ of practical elevators):
+                #   Power:   0 – 400 kW   → /400
+                #   Tension: 0 – 400 kN   → /400000 (N)
+                #   Motor:   0 – 400 kW   → /400
+                #
+                # Balanced weights:
+                #   40% power (primary operating cost driver)
+                #   35% tension (belt and shaft cost / life)
+                #   25% motor (capital cost, switchgear sizing)
+                P_norm = P_total   / 400.0
+                T_norm = T_total   / 400_000.0
+                M_norm = motor     / 400.0
+
+                if objective == "power":
+                    score = P_norm + cr_pen
+                elif objective == "tension":
+                    score = T_norm + cr_pen
+                elif objective == "motor":
+                    score = M_norm + cr_pen
+                else:   # balanced
+                    score = (0.40 * P_norm + 0.35 * T_norm + 0.25 * M_norm) + cr_pen
 
                 candidates.append({
                     "rpm": rpm, "bucket_id": bucket["id"], "fill": fill,
