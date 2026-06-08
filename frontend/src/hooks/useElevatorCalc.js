@@ -2,6 +2,30 @@
 // Your original architecture preserved exactly.
 // Added: normaliseResult() maps any API response shape to the field contract
 // that KpiGrid, ComponentPanel, and all display components expect.
+//
+// v1.1.0 — Three fixes
+// ─────────────────────────────────────────────────────────────────
+// FIX 1  Q and v missing from return object.
+//        normaliseResult() renamed raw.Q → Q_th and raw.v → v_ms
+//        but never wrote Q or v back. Nav bar, ElevatorSchematic,
+//        and KpiGrid all read results.Q / results.v → always undefined
+//        → always "—". P_total worked because it was in pass-throughs.
+//        Fix: add  Q: Q_th  and  v: v_ms  to the return.
+//
+// FIX 2  Checks lost the `type` field after normalisation.
+//        The check map returned {status, code, msg} — dropping `type`.
+//        BucketElevatorPage reads c.type for fail/warn counts and for
+//        the colour of the inline check strip. After normalisation
+//        c.type === undefined so failCount was always 0 and the
+//        danger/warning colours never appeared.
+//        Fix: keep `type` in the normalised check object.
+//
+// FIX 3  New backend fields (Task 1 Euler, Task 3 power decomposition,
+//        v1.2.x shaft geometry) were not in pass-throughs, so
+//        ComponentPanel and generate_report.py couldn't read them.
+//        Fix: add them to the pass-throughs section.
+// ─────────────────────────────────────────────────────────────────
+
 import { useState, useEffect, useCallback, useRef } from "react";
 import { calculateElevator, saveDesign, getDesign } from "../api/client";
 import { v4 as uuidv4 } from "uuid";
@@ -39,9 +63,6 @@ export const DEFAULT_INPUTS = {
 function normaliseResult(raw) {
   if (!raw) return null;
 
-  // Detect which shape we received. FastAPI has Q_th; backend has Q.
-  const isOldShape = raw.Q_th === undefined && raw.Q !== undefined;
-
   // ── Performance ──────────────────────────────────────────────
   const Q_th = raw.Q_th ?? raw.Q;
   const v_ms = raw.v_ms ?? raw.v;
@@ -50,77 +71,71 @@ function normaliseResult(raw) {
   const release_angle_deg = raw.release_angle_deg ?? raw.theta_rel;
 
   // ── Power ─────────────────────────────────────────────────────
-  // Backend: P_lift, P_digging, P_drive_loss, P_total
-  const power_P_lift = raw.power_P_lift ?? raw.P_lift;
+  const power_P_lift  = raw.power_P_lift  ?? raw.P_lift;
   const power_P_frict = raw.power_P_frict ?? raw.P_drive_loss ?? raw.P_frict;
-  const power_P_dig = raw.power_P_dig ?? raw.P_digging ?? 0;
+  const power_P_dig   = raw.power_P_dig   ?? raw.P_digging ?? 0;
   const power_P_total = raw.power_P_total ?? raw.P_total;
 
   // ── Tension ───────────────────────────────────────────────────
-  // T1, T2, T3, F_eff, R_headshaft — same keys in backend ✓
   const tension_ratio =
     raw.tension_ratio ??
     raw.tensionRatio ??
     (raw.T1 && raw.T2 ? raw.T1 / raw.T2 : null);
+
+  // FIX 3: prefer euler_ratio from Task 1 backend; fall back to computed value
   const slip_limit =
     raw.slip_limit ??
+    raw.euler_ratio ??
     (raw.mu != null && raw.wrap_deg != null
       ? Math.exp((raw.mu * raw.wrap_deg * Math.PI) / 180)
       : null);
 
   // ── Shaft ─────────────────────────────────────────────────────
-  // Backend: T_Nm, d_mm
   const shaft_torque_Nm = raw.shaft_torque_Nm ?? raw.T_Nm;
-  const shaft_d_mm = raw.shaft_d_mm ?? raw.d_mm;
+  const shaft_d_mm      = raw.shaft_d_mm      ?? raw.d_mm;
 
   // ── Belt ──────────────────────────────────────────────────────
-  // Backend: belt_w (int mm), belt_ply
   const belt_width_mm = raw.belt_width_mm ?? raw.belt_w ?? raw.beltW;
-  const belt_class =
+  const belt_class    =
     raw.belt_class ?? (raw.belt_ply ? `${raw.belt_ply} PLY` : null);
 
   // ── Motor ─────────────────────────────────────────────────────
-  // Backend: motor_kw (lowercase)
   const motor_kW = raw.motor_kW ?? raw.motor_kw ?? raw.motorKW;
 
   // ── Bearing ───────────────────────────────────────────────────
-  // Backend: L10
   const L10_hours = raw.L10_hours ?? raw.L10;
 
   // ── Bucket sub-object ─────────────────────────────────────────
-  // Backend keys: id, W, H, P, V, type, name
-  // Normalised:   series, style, width_mm, depth_mm, projection_mm, volume_L
   let bucket = raw.bucket ?? null;
   if (bucket) {
     bucket = {
       ...bucket,
-      // Normalised names (used by display components)
-      series: bucket.series ?? bucket.id,
-      style: bucket.style ?? bucket.type ?? bucket.proj ?? "centrifugal",
-      width_mm: bucket.width_mm ?? bucket.W,
-      depth_mm: bucket.depth_mm ?? bucket.H,
-      projection_mm: bucket.projection_mm ?? bucket.P,
-      volume_L: bucket.volume_L ?? bucket.V,
-      // Keep originals so generate_report.py can read both naming conventions
-      id: bucket.id ?? bucket.series,
-      W: bucket.W ?? bucket.width_mm,
-      H: bucket.H ?? bucket.depth_mm,
-      P: bucket.P ?? bucket.projection_mm,
-      V: bucket.V ?? bucket.volume_L,
+      series:         bucket.series         ?? bucket.id,
+      style:          bucket.style          ?? bucket.type ?? "centrifugal",
+      width_mm:       bucket.width_mm       ?? bucket.W,
+      depth_mm:       bucket.depth_mm       ?? bucket.H,
+      projection_mm:  bucket.projection_mm  ?? bucket.P,
+      volume_L:       bucket.volume_L       ?? bucket.V,
+      id:             bucket.id             ?? bucket.series,
+      W:              bucket.W              ?? bucket.width_mm,
+      H:              bucket.H              ?? bucket.depth_mm,
+      P:              bucket.P              ?? bucket.projection_mm,
+      V:              bucket.V              ?? bucket.volume_L,
     };
   }
 
   // ── Material sub-object ───────────────────────────────────────
-  // Backend: results.mat   Normalised: results.material
   const material = raw.material ?? raw.mat ?? null;
 
   // ── Checks ────────────────────────────────────────────────────
-  // Backend uses { type:'ok'|'warn'|'fail'|'info', msg }
-  // Normalise to { status:'pass'|'warn'|'fail'|'info', code, msg }
+  // FIX 2: keep `type` in the normalised check object.
+  // BucketElevatorPage reads c.type for fail/warn counts and for the
+  // inline strip colour. Removing it caused failCount === 0 always.
   const checks = (raw.checks ?? []).map((c) => ({
     status: c.status ?? (c.type === "ok" ? "pass" : c.type) ?? "info",
-    code: c.code ?? "GEN",
-    msg: c.msg,
+    type:   c.type   ?? (c.status === "pass" ? "ok" : c.status) ?? "info",
+    code:   c.code   ?? "GEN",
+    msg:    c.msg,
   }));
 
   const has_fail = checks.some((c) => c.status === "fail");
@@ -130,9 +145,9 @@ function normaliseResult(raw) {
 
   return {
     // ── Meta ────────────────────────────────────────────────────
-    inputs: raw.inputs ?? null,
-    material, // normalised name
-    bucket, // both old + new keys present
+    inputs:   raw.inputs ?? null,
+    material,
+    bucket,
 
     // ── Performance ─────────────────────────────────────────────
     Q_th,
@@ -152,7 +167,7 @@ function normaliseResult(raw) {
     T1: raw.T1 ?? null,
     T2: raw.T2 ?? null,
     T3: raw.T3 ?? null,
-    F_eff: raw.F_eff ?? null,
+    F_eff:       raw.F_eff       ?? null,
     R_headshaft: raw.R_headshaft ?? null,
     tension_ratio,
     slip_limit,
@@ -160,9 +175,9 @@ function normaliseResult(raw) {
     // ── Shaft + motor ───────────────────────────────────────────
     shaft_torque_Nm,
     shaft_d_mm,
-    d_stress_mm: raw.d_stress_mm ?? null,
+    d_stress_mm:  raw.d_stress_mm  ?? null,
     d_deflect_mm: raw.d_deflect_mm ?? null,
-    governed_by: raw.governed_by ?? null,
+    governed_by:  raw.governed_by  ?? null,
     motor_kW,
 
     // ── Belt ────────────────────────────────────────────────────
@@ -174,38 +189,67 @@ function normaliseResult(raw) {
     L10_hours,
 
     // ── Component design ────────────────────────────────────────
-    inlet_chute: raw.inlet_chute ?? null,
-    casing_t_mm: raw.casing_t_mm ?? null,
+    inlet_chute:    raw.inlet_chute    ?? null,
+    casing_t_mm:    raw.casing_t_mm    ?? null,
     boot_vol_min_m3: raw.boot_vol_min_m3 ?? null,
     thermal_exp_mm: raw.thermal_exp_mm ?? null,
 
     // ── Chart sweep data ────────────────────────────────────────
-    // Backend returns speed_sweep / fill_sweep (snake_case).
-    // Keep all four names so ChartsPanel finds them regardless of shape.
     speed_sweep: raw.speed_sweep ?? raw.speedSweep ?? [],
-    fill_sweep: raw.fill_sweep ?? raw.fillSweep ?? [],
-    speedSweep: raw.speed_sweep ?? raw.speedSweep ?? [],
-    fillSweep: raw.fill_sweep ?? raw.fillSweep ?? [],
+    fill_sweep:  raw.fill_sweep  ?? raw.fillSweep  ?? [],
+    speedSweep:  raw.speed_sweep ?? raw.speedSweep ?? [],
+    fillSweep:   raw.fill_sweep  ?? raw.fillSweep  ?? [],
 
     // ── Backend alias pass-throughs ─────────────────────────────
-    // generate_report.py reads these original field names directly,
-    // so they must survive the normaliser unchanged.
-    rho: raw.rho ?? null,
-    mat: raw.mat ?? null,
-    Leq: raw.Leq ?? null,
-    Ceff: raw.Ceff ?? null,
-    P_total: raw.P_total ?? null,
-    P_lift: raw.P_lift ?? null,
-    P_digging: raw.P_digging ?? null,
+    // generate_report.py and KpiGrid read these original field names
+    // directly — they must survive the normaliser unchanged.
+    //
+    // FIX 1: Q and v were renamed to Q_th and v_ms but never written
+    // back under the original names. Nav bar, ElevatorSchematic, and
+    // KpiGrid all read results.Q / results.v → were always undefined.
+    Q: Q_th,   // ← FIX 1: nav bar, KpiGrid, ElevatorSchematic
+    v: v_ms,   // ← FIX 1: nav bar, KpiGrid, ElevatorSchematic
+
+    rho:          raw.rho         ?? null,
+    mat:          raw.mat         ?? null,
+    Leq:          raw.Leq         ?? null,
+    Ceff:         raw.Ceff        ?? null,
+    P_total:      raw.P_total     ?? null,
+    P_lift:       raw.P_lift      ?? null,
+    P_digging:    raw.P_digging   ?? null,
     P_drive_loss: raw.P_drive_loss ?? null,
-    T_Nm: raw.T_Nm ?? null,
-    d_mm: raw.d_mm ?? null,
-    motor_kw: raw.motor_kw ?? null,
-    belt_w: raw.belt_w ?? null,
-    L10: raw.L10 ?? null,
-    spacing: raw.spacing ?? null,
-    cr: raw.cr ?? null,
-    theta_rel: raw.theta_rel ?? null,
+    T_Nm:         raw.T_Nm        ?? null,
+    d_mm:         raw.d_mm        ?? null,
+    motor_kw:     raw.motor_kw    ?? null,
+    belt_w:       raw.belt_w      ?? null,
+    L10:          raw.L10         ?? null,
+    spacing:      raw.spacing     ?? null,
+    cr:           raw.cr          ?? null,
+    theta_rel:    raw.theta_rel   ?? null,
+
+    // FIX 3: New backend fields from v1.2.x — pass through for
+    // ComponentPanel, generate_report.py, and future KpiGrid cards.
+
+    // Task 3 — Power decomposition
+    P_shaft:   raw.P_shaft  ?? null,
+    H_equiv:   raw.H_equiv  ?? null,
+    H_total:   raw.H_total  ?? null,
+
+    // Task 1 — Euler-Eytelwein slip check
+    T3_ktakeup:   raw.T3_ktakeup   ?? null,
+    T3_euler_min: raw.T3_euler_min ?? null,
+    euler_ratio:  raw.euler_ratio  ?? null,
+    slip_safe:    raw.slip_safe    ?? null,
+    euler_check:  raw.euler_check  ?? null,
+
+    // v1.2.0 — Shaft geometry and material behaviour
+    shaft_span_mm:        raw.shaft_span_mm        ?? null,
+    shaft_A_mm:           raw.shaft_A_mm           ?? null,
+    shaft_B_mm:           raw.shaft_B_mm           ?? null,
+    bucket_mass_kg:       raw.bucket_mass_kg       ?? null,
+    stream_spread:        raw.stream_spread        ?? null,
+    mat_behavior:         raw.mat_behavior         ?? null,
+    recommended_fill_pct: raw.recommended_fill_pct ?? null,
 
     // ── Validation ──────────────────────────────────────────────
     checks,
@@ -217,19 +261,19 @@ function normaliseResult(raw) {
 // HOOK — your original structure, one line changed
 // ─────────────────────────────────────────────────────────────────
 export function useElevatorCalc() {
-  const [inputs, setInputs] = useState(DEFAULT_INPUTS);
-  const [results, setResults] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [designId] = useState(() => uuidv4());
-  const debounceRef = useRef(null);
+  const [inputs,   setInputs]  = useState(DEFAULT_INPUTS);
+  const [results,  setResults] = useState(null);
+  const [loading,  setLoading] = useState(false);
+  const [error,    setError]   = useState(null);
+  const [designId]             = useState(() => uuidv4());
+  const debounceRef            = useRef(null);
 
   const runCalc = useCallback(async (inp) => {
     setLoading(true);
     setError(null);
     try {
       const raw = await calculateElevator(inp);
-      setResults(normaliseResult(raw)); // ← only change from your original
+      setResults(normaliseResult(raw));   // ← only change from original hook
     } catch (e) {
       setError(e.message);
       setResults(null);
@@ -251,10 +295,10 @@ export function useElevatorCalc() {
   const applyOptimizer = useCallback(({ rpm, bucket_id, fill }) => {
     setInputs((prev) => ({
       ...prev,
-      n_rpm: rpm,
+      n_rpm:       rpm,
       bucket_id,
       auto_bucket: false,
-      fill_pct: fill,
+      fill_pct:    fill,
     }));
   }, []);
 
@@ -262,13 +306,13 @@ export function useElevatorCalc() {
     async (name, project, notes) => {
       if (!results) return;
       await saveDesign({
-        id: designId,
-        module: "bucket_elevator",
+        id:           designId,
+        module:       "bucket_elevator",
         name,
-        project: project || null,
-        inputs_json: JSON.stringify(inputs),
+        project:      project || null,
+        inputs_json:  JSON.stringify(inputs),
         results_json: JSON.stringify(results),
-        notes: notes || null,
+        notes:        notes || null,
       });
     },
     [designId, inputs, results],
@@ -277,7 +321,6 @@ export function useElevatorCalc() {
   const loadDesign = useCallback(async (id) => {
     const record = await getDesign(id);
     setInputs(JSON.parse(record.inputs_json));
-    // Normalise on load too — handles designs saved in old field-name format
     setResults(normaliseResult(JSON.parse(record.results_json)));
   }, []);
 

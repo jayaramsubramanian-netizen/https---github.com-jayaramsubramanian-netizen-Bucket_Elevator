@@ -232,20 +232,85 @@ def calc_capacity(v_ms: float, spacing_m: float, V_bucket_L: float,
 def calc_power_cema375(Q_th: float, H_m: float, D_boot_m: float,
                        Leq: float, Ceff: float) -> Dict:
     """
-    CEMA 375 §4 power method [kW].
-    P_lift    = G·g·H / 1000
-    P_digging = G·g·(D_boot·Leq) / 1000
-    P_total   = (P_lift + P_digging) × Ceff
+    CEMA 375 §4 — Bucket elevator shaft and drive power [kW].
+
+    CEMA LEQ (Length Equivalency) Method — validated decomposition
+    ───────────────────────────────────────────────────────────────
+    CEMA 375 §4 defines total equivalent lift height as:
+
+        H_total = H_lift + H_equiv
+        H_equiv = D_boot × Leq   [m]
+
+    H_equiv is the equivalent extra lift height accounting for boot loading
+    losses (scooping, digging, material acceleration in the boot section).
+    It is NOT a drive loss — it is a shaft load, just like lifting material.
+
+        G [kg/s] = Q_th × 1000 / 3600
+        P_shaft  = G × g × H_total / 1000   [kW]  — required at head shaft
+
+    The drive efficiency factor Ceff then covers losses between motor shaft
+    and head shaft:
+        P_total  = P_shaft × Ceff   [kW]  — required at motor shaft
+
+    What Ceff covers (CEMA 375 §4 Table 4-x):
+        • Gearbox / shaft-mount reducer losses  (~3–5%)
+        • Head shaft bearing friction           (~1–2%)
+        • Belt flexure around pulleys           (~1–2%)
+        • Seal drag, minor incidentals          (~1–2%)
+    Typical values: 1.10–1.15 belt / 1.20–1.30 chain
+
+    ⚠ Double-counting note (from audit):
+    P_digging is a SHAFT load (material being scooped from boot).
+    Ceff is a DRIVE loss (motor-to-shaft efficiency).
+    They act on different parts of the power chain — no double-counting.
+    The old formula (P_lift + P_digging) × Ceff is mathematically identical
+    to P_shaft × Ceff since P_shaft = G×g×H_total and H_total = H_lift + H_equiv.
+
+    Leq values by elevator type (CEMA 375 §4):
+        Spaced centrifugal (most common):   6–8
+        Continuous bucket:                  4–5
+        Very low-speed / gravity discharge: 3–4
+        High-speed, abrasive material:      10–12
+        Per material: use mat["Leq_default"] for DB-sourced value.
+
+    Parameters
+    ----------
+    Q_th      Design capacity [t/h]
+    H_m       Elevator lift height [m]
+    D_boot_m  Boot pulley diameter [m]
+    Leq       CEMA length equivalency factor (dimensionless)
+    Ceff      Drive efficiency factor (≥ 1.0)
+
+    Returns
+    -------
+    {
+        "H_equiv":      float  Equivalent boot lift height = D_boot × Leq [m]
+        "H_total":      float  H_lift + H_equiv [m]
+        "P_shaft":      float  Shaft power = G×g×H_total / 1000 [kW]
+        "P_lift":       float  Lift component only [kW]
+        "P_digging":    float  Boot loading component [kW]
+        "P_drive_loss": float  Motor-to-shaft losses = P_shaft × (Ceff−1) [kW]
+        "P_total":      float  Total motor input power [kW]
+    }
     """
-    G_kgs     = Q_th / 3.6
-    P_lift    = G_kgs * 9.81 * H_m / 1000.0
-    P_digging = G_kgs * 9.81 * (D_boot_m * Leq) / 1000.0
-    P_total   = (P_lift + P_digging) * Ceff
+    G_kgs    = Q_th / 3.6                              # mass flow [kg/s]
+    H_equiv  = D_boot_m * Leq                          # equivalent boot height [m]
+    H_total  = H_m + H_equiv                           # total equivalent height [m]
+
+    # Component breakdown (for report and UI display)
+    P_lift    = G_kgs * 9.81 * H_m     / 1000.0       # lift component [kW]
+    P_digging = G_kgs * 9.81 * H_equiv / 1000.0       # boot component [kW]
+    P_shaft   = P_lift + P_digging                     # = G×g×H_total/1000 [kW]
+    P_total   = P_shaft * Ceff                         # motor input [kW]
+
     return {
-        "P_lift":       round(P_lift, 3),
+        "H_equiv":      round(H_equiv,   3),
+        "H_total":      round(H_total,   3),
+        "P_shaft":      round(P_shaft,   3),
+        "P_lift":       round(P_lift,    3),
         "P_digging":    round(P_digging, 3),
-        "P_drive_loss": round(P_total - P_lift - P_digging, 3),
-        "P_total":      round(P_total, 3),
+        "P_drive_loss": round(P_total - P_shaft, 3),   # = P_shaft × (Ceff − 1)
+        "P_total":      round(P_total,   3),
     }
 
 
@@ -255,24 +320,53 @@ def calc_power_cema375(Q_th: float, H_m: float, D_boot_m: float,
 
 def calc_headshaft_tensions(Q_th: float, H_m: float, v_ms: float,
                              bw_kg: float, bs_m: float,
-                             BW_mm: float, K_takeup: float = 0.7) -> Dict:
+                             BW_mm: float, K_takeup: float = 0.7,
+                             mu: float = 0.35, wrap_deg: float = 180.0) -> Dict:
     """
     CEMA 375 §4 head shaft tension breakdown [N].
-    Delegates to DynamicLoadEngine.
 
-    v1.2.0 FIX: PIW parameter removed — now reads BELT_WEIGHT_DEFAULT directly.
-                Old default 1.5 kg/m² was 5–10× below real belt weights.
+    v1.2.0 FIX: PIW uses BELT_WEIGHT_DEFAULT (8.0 kg/m²); old default was 1.5.
+    v1.2.1 FIX: mu and wrap_deg now actively drive T3 via Euler-Eytelwein.
+                Previously collected in models.py but never used in calculation.
+
+    Tension path
+    ────────────
+    T1          material_tension()          G·g·H / v               [N]
+    T2          belt_catenary_tension()     (belt + bucket) × H × g [N]
+    T3_prelim   slack_side_tension()        (T1+T2) × K_takeup      [N]  preliminary
+    T3_euler    euler_eytelwein_check()     T_eff / (e^μθ − 1)      [N]  minimum for no-slip
+    T3          max(T3_prelim, T3_euler)                             [N]  governing
+
+    The Euler minimum ensures the drive pulley cannot slip even if the take-up
+    tension is set too low.  For most correctly-designed elevators with gravity
+    take-up (K=0.7) and rubber lagging (μ=0.35, 180°), K_takeup governs.
     """
-    PIW_kgm2 = BELT_WEIGHT_DEFAULT   # 8.0 kg/m²  (EP400-EP500 representative)
+    PIW_kgm2  = BELT_WEIGHT_DEFAULT   # 8.0 kg/m²
 
-    T1 = DynamicLoadEngine.material_tension(Q_th, H_m, v_ms)
-    T2 = DynamicLoadEngine.belt_catenary_tension(BW_mm, bw_kg, bs_m, H_m, PIW_kgm2)
-    T3 = DynamicLoadEngine.slack_side_tension(T1, T2, K_takeup)
+    T1        = DynamicLoadEngine.material_tension(Q_th, H_m, v_ms)
+    T2        = DynamicLoadEngine.belt_catenary_tension(BW_mm, bw_kg, bs_m, H_m, PIW_kgm2)
+    T_eff     = T1 + T2
+    T3_prelim = DynamicLoadEngine.slack_side_tension(T1, T2, K_takeup)
+
+    # Euler-Eytelwein: minimum T3 to prevent drive pulley slip (CEMA 375 §4)
+    euler = DynamicLoadEngine.euler_eytelwein_check(
+        T_effective    = T_eff,
+        T_slack        = T3_prelim,
+        wrap_angle_deg = wrap_deg,
+        mu             = mu,
+    )
+
+    T3 = max(T3_prelim, euler["T2_minimum"])   # governing slack-side tension
 
     return {
-        "T1": T1, "T2": T2, "T3": T3,
-        "F_eff":       T1 + T2,
-        "R_headshaft": T1 + T2 + T3,
+        "T1":            round(T1,          1),
+        "T2":            round(T2,          1),
+        "T3":            round(T3,          1),
+        "T3_ktakeup":    round(T3_prelim,   1),
+        "T3_euler_min":  round(euler["T2_minimum"], 1),
+        "F_eff":         round(T_eff,       1),
+        "R_headshaft":   round(T_eff + T3,  1),
+        "euler_check":   euler,
     }
 
 
@@ -354,12 +448,17 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
 
     # ── Tensions ──────────────────────────────────────────────────────────────
     # v1.2.0 FIX: actual catalogue bucket mass (not V × 1.5)
+    # v1.2.1 FIX: mu and wrap_deg now passed through to Euler check
     bw_kg = bucket.get("bucket_mass_kg", bucket["V"] * 1.5)
     BW_mm = select_belt_width(bucket["W"])
-    tens  = calc_headshaft_tensions(Q, inp.H_m, v, bw_kg, spacing, BW_mm, inp.K_takeup)
+    tens  = calc_headshaft_tensions(
+        Q, inp.H_m, v, bw_kg, spacing, BW_mm, inp.K_takeup,
+        mu=inp.mu, wrap_deg=inp.wrap_deg,
+    )
     T1, T2, T3 = tens["T1"], tens["T2"], tens["T3"]
-    F_eff  = tens["F_eff"]
-    R_head = tens["R_headshaft"]
+    F_eff      = tens["F_eff"]
+    R_head     = tens["R_headshaft"]
+    euler_chk  = tens["euler_check"]
 
     # ── Shaft sizing ──────────────────────────────────────────────────────────
     T_Nm = calc_torsional_moment(P_total, inp.n_rpm)
@@ -394,7 +493,8 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     # ── Engineering checks ─────────────────────────────────────────────────────
     checks = _build_checks(
         inp, mat, mat_behavior, bucket, Q, v, cr, T1, T2, T3, F_eff,
-        R_head, d_mm, d_stress_mm, d_deflect_mm, governed_by, L10, Ceff
+        R_head, d_mm, d_stress_mm, d_deflect_mm, governed_by, L10, Ceff,
+        euler_chk=euler_chk,
     )
 
     # ── Sweep data ────────────────────────────────────────────────────────────
@@ -418,13 +518,26 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     return {
         # Capacity
         "Q": round(Q, 2), "v": round(v, 4), "spacing": round(spacing, 4),
-        # Power
-        "P_lift": pwr["P_lift"], "P_digging": pwr["P_digging"],
-        "P_drive_loss": pwr["P_drive_loss"], "P_total": round(P_total, 3),
+        # Frontend aliases — some components reference these names
+        "Q_th": round(Q, 2), "capacity": round(Q, 2),
+        "v_ms": round(v, 4), "belt_speed": round(v, 4),
+        # Power — CEMA 375 §4 LEQ method (Task 3 validated decomposition)
+        "P_lift":       pwr["P_lift"],
+        "P_digging":    pwr["P_digging"],
+        "P_shaft":      pwr["P_shaft"],
+        "P_drive_loss": pwr["P_drive_loss"],
+        "P_total":      round(P_total, 3),
+        "H_equiv":      pwr["H_equiv"],
+        "H_total":      pwr["H_total"],
         "Leq": Leq, "Ceff": Ceff, "motor_kw": motor_kw,
         # Tensions
         "T1": round(T1, 1), "T2": round(T2, 1), "T3": round(T3, 1),
+        "T3_ktakeup":   tens["T3_ktakeup"],
+        "T3_euler_min": tens["T3_euler_min"],
         "F_eff": round(F_eff, 1), "R_headshaft": round(R_head, 1),
+        "euler_ratio":  euler_chk["euler_ratio"],
+        "slip_safe":    euler_chk["slip_safe"],
+        "mu":           inp.mu, "wrap_deg": inp.wrap_deg,
         # Shaft
         "T_Nm": round(T_Nm, 2), "d_mm": round(d_mm, 1),
         "d_stress_mm": round(d_stress_mm, 1), "d_deflect_mm": round(d_deflect_mm, 1),
@@ -457,7 +570,8 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
 
 def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   T1, T2, T3, F_eff, R_head,
-                  d_mm, d_stress_mm, d_deflect_mm, governed_by, L10, Ceff) -> list:
+                  d_mm, d_stress_mm, d_deflect_mm, governed_by, L10, Ceff,
+                  euler_chk: dict = None) -> list:
     checks = []
     ok   = lambda msg: {"type": "ok",   "msg": msg}
     warn = lambda msg: {"type": "warn", "msg": msg}
@@ -532,6 +646,20 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
     else:
         checks.append(ok(
             f"Headshaft load {T_total/1000:.1f} kN — within standard belt capacity [CEMA 375 §4]"))
+
+    # 6b — Belt slip (Euler-Eytelwein) — v1.2.1: mu and wrap_deg now active
+    if euler_chk is not None:
+        e_ratio = euler_chk["euler_ratio"]
+        t3_min  = euler_chk["T2_minimum"]
+        if euler_chk.get("slip_safe") is True:
+            checks.append(ok(
+                f"Belt slip check: T3={T3:.0f} N ≥ Euler min {t3_min:.0f} N "
+                f"(e^μθ={e_ratio:.3f}, μ={inp.mu}, wrap={inp.wrap_deg}°) — no slip [CEMA 375 §4]"))
+        else:
+            checks.append(fail(
+                f"BELT SLIP RISK: T3={T3:.0f} N < Euler min {t3_min:.0f} N "
+                f"(e^μθ={e_ratio:.3f}, μ={inp.mu}, wrap={inp.wrap_deg}°). "
+                f"Increase take-up tension, add snub pulley, or upgrade lagging [CEMA 375 §4]"))
 
     # 7 — Shaft sizing
     checks.append(info(
