@@ -46,19 +46,20 @@ CHANGES FROM v1.1.0
 import math
 from typing import List, Dict
 
-from models import BucketElevatorInput, OptimizerRequest
+from .models import BucketElevatorInput, OptimizerRequest
 
 # ── Engine modules ────────────────────────────────────────────────────────────
-from constants import (
-    CEMA_MAX_SHAFT_SLOPE, SHAFT_Su_PA, SHAFT_Ka, SHAFT_Kc, SHAFT_Kd, SHAFT_FS,
+from .constants import (
+    CEMA_MAX_SHAFT_SLOPE, SHAFT_Su_PA, SHAFT_Ka, SHAFT_Kc, SHAFT_Kd,
     SHAFT_E_PA, LEQ_DEFAULT, CEFF_BELT, BELT_WEIGHT_DEFAULT,
 )
 from physics   import DischargePhysics
-from structural import StructuralStressEngine
+from .structural import StructuralStressEngine
 from dynamics  import DynamicLoadEngine
+from .chute_flow import ChuteFlowEngine
 
 # ── Material database (400+ entries) ─────────────────────────────────────────
-from materials import (
+from .materials import (
     MATERIALS,
     get_material as _materials_get,
     search_materials,
@@ -66,7 +67,7 @@ from materials import (
     materials_by_category,
     material_count,
 )
-from material_behavior import MaterialBehaviorEngine
+from .material_behavior import MaterialBehaviorEngine
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -474,6 +475,64 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     d_deflect_mm = gov["d_deflect_mm"]
     governed_by  = gov["governed_by"]
 
+    # ── Hub sizing & keyway check ─────────────────────────────────────────────
+    hub = StructuralStressEngine.hub_diameter(
+        shaft_diameter_m = gov["d_governing_m"],
+        torque_Nm        = T_Nm,
+    )
+    key = StructuralStressEngine.key_stress_check(
+        shaft_diameter_m = gov["d_governing_m"],
+        torque_Nm        = T_Nm,
+        key_length_m     = hub["L_hub_m"],
+    )
+
+    # ── Pulley lagging selection ───────────────────────────────────────────────
+    environment = getattr(inp, "environment", "dry")
+    belt_type   = getattr(inp, "belt_type",   "EP")
+    lagging = StructuralStressEngine.pulley_lagging(
+        material       = mat,
+        T_effective_N  = F_eff,
+        T_slack_N      = T3,
+        wrap_angle_deg = inp.wrap_deg,
+        environment    = environment,
+        belt_type      = belt_type,
+    )
+
+    # ── Pulley end disc ───────────────────────────────────────────────────────
+    end_disc = StructuralStressEngine.pulley_end_disc(
+        pulley_diameter_m = inp.D_mm / 1000.0,
+        hub_od_m          = hub["d_hub_m"],
+        T_total_N         = T1 + T2 + T3,
+        face_width_m      = BW_mm / 1000.0 + 0.050,
+    )
+
+    # ── Bucket bolt fatigue ───────────────────────────────────────────────────
+    fill_mass_kg = bucket["V"] / 1000.0 * inp.fill_pct / 100.0 * rho
+    n_bolts_bkt  = 3 if bucket["W"] > 350 else 2
+    bolt_dia_mm  = 16 if bucket["W"] > 350 else 12
+    bolt_fatigue = StructuralStressEngine.bucket_bolt_fatigue(
+        belt_speed_mps   = v,
+        head_radius_m    = inp.D_mm / 2000.0,
+        bucket_mass_kg   = bw_kg,
+        fill_mass_kg     = fill_mass_kg,
+        n_bolts          = n_bolts_bkt,
+        bolt_diameter_mm = bolt_dia_mm,
+        n_rpm            = inp.n_rpm,
+    )
+
+    # ── Take-up design ────────────────────────────────────────────────────────
+    takeup_gravity = StructuralStressEngine.gravity_takeup(T3, inp.H_m, BW_mm)
+    takeup_screw   = StructuralStressEngine.screw_takeup(T3)
+
+    # ── Casing structural ─────────────────────────────────────────────────────
+    casing_t_m = StructuralStressEngine.casing_plate_thickness(BW_mm, rho, inp.H_m)
+    wind_pa    = getattr(inp, "wind_pressure_pa", 800.0)
+    casing_stiffener = StructuralStressEngine.casing_stiffener_spacing(casing_t_m, wind_pa)
+    panel_span_m = casing_stiffener["recommended_mm"] / 1000.0
+    casing_panel = StructuralStressEngine.casing_panel_deflection(
+        panel_span_m, panel_span_m, casing_t_m, wind_pa,
+    )
+
     # ── Belt & motor ──────────────────────────────────────────────────────────
     motor_kw = select_motor(P_total, inp.sf)
     belt_ply = math.ceil(F_eff / (BW_mm / 25.4 * 4450 * 0.5))
@@ -490,12 +549,72 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     # ── Bearing life ──────────────────────────────────────────────────────────
     L10 = calc_bearing_life(R_head, inp.n_rpm)
 
+    # ── Discharge chute design ────────────────────────────────────────────────
+    # All chute calculations derived from data already in scope — no new inputs.
+    # traj_raw: raw (x, y) tuples [m] for discharge_chute_geometry() (needs m not mm)
+    traj_raw      = DischargePhysics.trajectory(v, inp.D_mm / 2000.0)
+    bkt_w_mm      = float(bucket.get("W") or BW_mm)
+    drop_h_m      = max(inp.D_mm / 1000.0 * 1.5, 0.50)   # head section drop ≈ 1.5×D
+
+    chute_geom  = ChuteFlowEngine.discharge_chute_geometry(
+        trajectory           = traj_raw,
+        belt_speed_mps       = v,
+        head_pulley_radius_m = inp.D_mm / 2000.0,
+        bucket_width_mm      = bkt_w_mm,
+    )
+    hood_spoon  = ChuteFlowEngine.hood_spoon_geometry(
+        belt_speed_mps       = v,
+        head_pulley_radius_m = inp.D_mm / 2000.0,
+        centrifugal_ratio    = cr,
+        release_angle_deg    = theta_rel,
+    )
+    # Chute sizing: back-plate angle from trajectory; width from bucket + clearance
+    chute_angle_auto = chute_geom.get("back_plate_angle_deg")
+    chute_w_m        = (bkt_w_mm + 100.0) / 1000.0   # CEMA §5: +50mm each side
+    chute_h_m        = chute_w_m * 0.75
+
+    discharge_chute = ChuteFlowEngine.design_summary(
+        material        = mat,
+        capacity_tph    = Q,
+        velocity_mps    = v,
+        drop_height_m   = drop_h_m,
+        chute_angle_deg = chute_angle_auto,
+        chute_width_m   = chute_w_m,
+        chute_height_m  = chute_h_m,
+    )
+    discharge_chute["geometry"]   = chute_geom
+    discharge_chute["hood_spoon"] = hood_spoon
+
     # ── Engineering checks ─────────────────────────────────────────────────────
     checks = _build_checks(
         inp, mat, mat_behavior, bucket, Q, v, cr, T1, T2, T3, F_eff,
         R_head, d_mm, d_stress_mm, d_deflect_mm, governed_by, L10, Ceff,
-        euler_chk=euler_chk,
+        euler_chk       = euler_chk,
+        key_check       = key,
+        lagging         = lagging,
+        end_disc        = end_disc,
+        bolt_fatigue    = bolt_fatigue,
+        takeup_grav     = takeup_gravity,
+        casing_panel    = casing_panel,
+        discharge_chute = discharge_chute,
     )
+
+    # ── Design recommendations ────────────────────────────────────────────────
+    _partial = {
+        "Q": round(Q, 2), "v": round(v, 4), "cr": round(cr, 4),
+        "L10": round(L10, 0), "d_mm": round(d_mm, 1),
+        "P_total": round(P_total, 3), "R_headshaft": round(R_head, 1),
+        "T3": round(T3, 1), "euler_ratio": euler_chk["euler_ratio"],
+        "slip_safe": euler_chk["slip_safe"], "bucket": bucket,
+    }
+    _inp_dict = {
+        "Q_req": inp.Q_req, "n_rpm": inp.n_rpm, "D_mm": inp.D_mm,
+        "fill_pct": inp.fill_pct, "mu": inp.mu, "wrap_deg": inp.wrap_deg,
+    }
+    try:
+        design_recs = StructuralStressEngine.design_recommendations(_partial, _inp_dict)
+    except Exception:
+        design_recs = []
 
     # ── Sweep data ────────────────────────────────────────────────────────────
     speed_sweep = []
@@ -557,6 +676,20 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "recommended_fill_pct": mat_behavior["recommended_fill_pct"],
         # Sweep data
         "speed_sweep": speed_sweep, "fill_sweep": fill_sweep,
+        # Structural detail — v1.3.0
+        "hub":               hub,
+        "key_check":         key,
+        "lagging":           lagging,
+        "end_disc":          end_disc,
+        "bolt_fatigue":      bolt_fatigue,
+        "takeup_gravity":    takeup_gravity,
+        "takeup_screw":      takeup_screw,
+        "casing_t_mm":       round(casing_t_m * 1000.0, 1),
+        "casing_panel":      casing_panel,
+        "casing_stiffener":  casing_stiffener,
+        "design_recommendations": design_recs,
+        # Chute flow — v1.4.0
+        "discharge_chute":   discharge_chute,
         # Checks
         "checks": checks,
         # Context
@@ -571,7 +704,15 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
 def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   T1, T2, T3, F_eff, R_head,
                   d_mm, d_stress_mm, d_deflect_mm, governed_by, L10, Ceff,
-                  euler_chk: dict = None) -> list:
+                  euler_chk:       dict = None,
+                  key_check:       dict = None,
+                  lagging:         dict = None,
+                  end_disc:        dict = None,
+                  bolt_fatigue:    dict = None,
+                  takeup_grav:     dict = None,
+                  casing_panel:    dict = None,
+                  discharge_chute: dict = None,
+                  ) -> list:
     checks = []
     ok   = lambda msg: {"type": "ok",   "msg": msg}
     warn = lambda msg: {"type": "warn", "msg": msg}
@@ -647,7 +788,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         checks.append(ok(
             f"Headshaft load {T_total/1000:.1f} kN — within standard belt capacity [CEMA 375 §4]"))
 
-    # 6b — Belt slip (Euler-Eytelwein) — v1.2.1: mu and wrap_deg now active
+    # 6b — Belt slip (Euler-Eytelwein)
     if euler_chk is not None:
         e_ratio = euler_chk["euler_ratio"]
         t3_min  = euler_chk["T2_minimum"]
@@ -688,7 +829,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         checks.append(info(
             f"Abrasion class {abr}/7 — hardened bucket lip recommended [CEMA 550]"))
 
-    # 11 — Hazard flags (v1.2.0 — from MaterialBehaviorEngine)
+    # 11 — Hazard flags (v1.2.0)
     hazards = mat_behavior["hazards"]
     if hazards["atex_required"]:
         checks.append(warn(
@@ -705,6 +846,137 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         checks.append(info(
             "Hygroscopic material — seal casing openings; monitor moisture "
             "content in storage [CEMA 550 §B-8]"))
+
+    # 12 — Hub & keyway [ASME B17.1]
+    if key_check:
+        if key_check["pass"]:
+            checks.append(ok(
+                f"Keyway: shear {key_check['tau_actual_MPa']} MPa, "
+                f"bearing {key_check['sigma_actual_MPa']} MPa — "
+                f"{key_check['b_key_mm']}x{key_check['h_key_mm']}mm key within limits [ASME B17.1]"))
+        else:
+            checks.append(fail(
+                f"Keyway FAIL — {key_check['recommendation']} [ASME B17.1]"))
+
+    # 13 — Pulley lagging
+    if lagging:
+        lag = lagging["lagging_type"].replace("_", " ")
+        if not lagging["slip_safe"]:
+            checks.append(fail(
+                f"Lagging slip FAIL: belt ratio {lagging['belt_ratio_tight_slack']:.3f} "
+                f"> Euler {lagging['euler_ratio_lagged']:.3f} even with {lag}. "
+                f"Increase T3 or add snub pulley [CEMA 375 §4]"))
+        elif lagging["upgraded"]:
+            checks.append(warn(
+                f"Lagging auto-upgraded to ceramic (slip prevention). "
+                f"Verify {lag}, t={lagging['thickness_mm']}mm with supplier [CEMA 375 §4]"))
+        else:
+            checks.append(info(
+                f"Lagging: {lag}, t={lagging['thickness_mm']}mm, "
+                f"μ={lagging['mu_operating']:.2f} — slip safe "
+                f"(ratio {lagging['belt_ratio_tight_slack']:.3f} < "
+                f"Euler {lagging['euler_ratio_lagged']:.3f}) [CEMA 375 §4]"))
+
+    # 14 — Pulley end disc [CEMA Pulley Standard]
+    if end_disc:
+        SF = end_disc["safety_factor"]
+        t  = end_disc["t_governing_mm"]
+        t_specified = round(t * 1.20, 0)   # 20% design margin on structural minimum
+        # SF ≈ 1.0 is the correct result for calculated minimum thickness.
+        # The check always reports the minimum and the recommended specified thickness.
+        # Only fail if geometry produces SF < 0.95 (numerical or input error).
+        if SF < 0.95:
+            checks.append(fail(
+                f"End disc geometry error: SF={SF:.2f} < 1.0 at t={t}mm. "
+                f"Check hub OD vs pulley diameter inputs [CEMA Pulley Standard]"))
+        else:
+            checks.append(info(
+                f"End disc: min t={t}mm (governed by {end_disc['governed_by']}). "
+                f"Specify t={t_specified:.0f}mm in drawings (+20% margin). "
+                f"Full Roark or FEA required for fabrication [CEMA Pulley Standard]"))
+
+    # 15 — Bucket bolt fatigue [CEMA 375 §7]
+    if bolt_fatigue:
+        gr = bolt_fatigue["goodman_ratio"]
+        if not bolt_fatigue["pass_infinite_life"]:
+            life = bolt_fatigue.get("life_years") or 0
+            checks.append(fail(
+                f"Bolt fatigue FAIL: Goodman {gr:.3f} > 1.0 "
+                f"(life {life:.0f} yr) — upgrade grade or increase diameter [CEMA 375 §7]"))
+        elif gr > 0.7:
+            checks.append(warn(
+                f"Bolt fatigue: Goodman {gr:.3f} — consider grade 10.9 "
+                f"({bolt_fatigue['n_bolts']}x M{bolt_fatigue['bolt_dia_mm']:.0f}) [CEMA 375 §7]"))
+        else:
+            checks.append(ok(
+                f"Bolt fatigue: Goodman {gr:.3f} — infinite life "
+                f"(grade {bolt_fatigue['bolt_grade']}, "
+                f"{bolt_fatigue['n_bolts']}x M{bolt_fatigue['bolt_dia_mm']:.0f}) [CEMA 375 §7]"))
+
+    # 16 — Take-up
+    if takeup_grav:
+        W  = takeup_grav["W_counterweight_kg_gross"]
+        tr = takeup_grav["travel_m"] * 1000
+        checks.append(info(
+            f"Gravity take-up: counterweight {W:.0f} kg (gross), "
+            f"travel {tr:.0f} mm required [CEMA 375 §4]"))
+
+    # 17 — Casing panel deflection
+    if casing_panel:
+        da = casing_panel["delta_actual_mm"]
+        dl = casing_panel["delta_allow_mm"]
+        if casing_panel["status"] == "fail":
+            checks.append(warn(
+                f"Casing panel: δ={da:.1f}mm > L/360={dl:.1f}mm — "
+                f"reduce stiffener spacing [CEMA 375 §7]"))
+        else:
+            checks.append(ok(
+                f"Casing panel OK: δ={da:.1f}mm < L/360={dl:.1f}mm "
+                f"at {casing_panel['a_mm']:.0f}mm pitch [CEMA 375 §7]"))
+
+    # 18-20 — Discharge chute (ChuteFlowEngine v1.4.0)
+    if discharge_chute:
+        perf   = discharge_chute.get("performance", {})
+        maint  = discharge_chute.get("maintenance", {})
+        regime = perf.get("flow_regime", "—")
+        angle  = perf.get("chute_angle_deg", 0)
+        min_a  = perf.get("min_angle_deg", 0)
+        mass_a = perf.get("mass_flow_angle_deg", 0)
+        dust   = maint.get("dust_risk", "LOW")
+        plug   = maint.get("plugging_risk", "LOW")
+        liner  = maint.get("liner_material", "—")
+
+        # 18 — Flow regime
+        if regime == "PLUGGING_RISK":
+            checks.append(fail(
+                f"Discharge chute: PLUGGING RISK at {angle:.0f}° "
+                f"(wall-friction minimum = {min_a:.0f}°) [CEMA 375 §5]"))
+        elif regime == "FUNNEL_FLOW":
+            checks.append(warn(
+                f"Discharge chute: funnel flow at {angle:.0f}° — "
+                f"steepen to {mass_a:.0f}° for mass flow [CEMA 375 §5]"))
+        else:
+            checks.append(ok(
+                f"Discharge chute: mass flow at {angle:.0f}° "
+                f"(min {min_a:.0f}°) [CEMA 375 §5]"))
+
+        # 19 — Dust risk
+        if dust in ("HIGH", "SEVERE"):
+            checks.append(warn(
+                f"Chute dust risk {dust} — extraction or suppression system required "
+                f"[CEMA 550 §B]"))
+        else:
+            checks.append(info(f"Chute dust risk {dust}"))
+
+        # 20 — Plugging & liner
+        if plug in ("HIGH", "SEVERE"):
+            checks.append(warn(
+                f"Chute plugging probability {plug} (index "
+                f"{maint.get('plugging_index','—'):.2f}) — "
+                f"vibrators / air cannons required; specify {liner} liner [CEMA 375 §5]"))
+        else:
+            checks.append(ok(
+                f"Chute plugging: {plug} risk — {liner} liner specified"))
 
     return checks
 

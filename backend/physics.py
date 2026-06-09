@@ -42,7 +42,7 @@ import warnings
 from dataclasses import dataclass
 from typing import Literal
 
-from constants import GRAVITY
+from .constants import GRAVITY
 
 
 # ── CEMA 375 §3 centrifugal ratio boundary values ─────────────────────────────

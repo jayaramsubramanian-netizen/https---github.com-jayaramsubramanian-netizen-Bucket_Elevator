@@ -1,173 +1,133 @@
 """
-VECTRIX™ Bucket Elevator — Engineering Report Generator
-Produces an A4 portrait PDF from a results dict (FastAPI /be/solve shape).
+VECTRIX™ Bucket Elevator — Engineering Report Generator  v2.0.0
+Produces an A4 portrait PDF from a solve_elevator() results dict.
 
-v1.1.0 — Task 2 fixes
+SECTION STRUCTURE
+─────────────────
+ 1. Input Specifications          Customer-provided requirements & site conditions
+ 2. Performance Summary           KPI cards (capacity, speed, power, motor, CR, L10)
+ 3. Process Level Outputs         Elevator schematic + speed-sweep chart + trajectory
+ 4. Power Breakdown               CEMA LEQ decomposition table
+ 5. Component Design Outputs      Shaft / Belt / Pulley / Take-Up / Casing sub-tables
+ 6. Engineering Verification      5-column checks table with safety factors
+ 7. Design Notes                  Plain-English engineering narrative (no formulae)
+
+v2.0.0 changes from v1.1.0
 ─────────────────────────────────────────────────────────────────────────────
-FIX 1  Tension kN conversion.
-       T1, T2, T3, F_eff, R_headshaft are returned in N.
-       v1.0.0 labelled them "kN" without dividing by 1000 — values were
-       displayed as e.g. "13420.0 kN" (should be "13.4 kN").
-       Added rkn() helper that reads the field and divides by 1000.
-
-FIX 2  Tension label meaning.
-       "Tight side T₁" / "Slack side T₂" were wrong.  In the VECTRIX backend:
-         T1 = material tension component (not tight-side)
-         T2 = belt + bucket self-weight  (not slack-side)
-         T3 = slack-side (take-up) tension
-         F_eff = T1 + T2 = effective tension
-         R_headshaft = T1+T2+T3 = total headshaft radial load = belt tight side
-       Corrected labels and added belt tension ratio (R_headshaft / T3) vs
-       Euler limit (e^μθ) for the slip check row.
-
-FIX 3  Slip display.
-       rv("slip_limit") always returned "—" — that field never existed.
-       Now reads euler_ratio (added in Task 1 backend update) and shows
-       belt tension ratio vs Euler limit alongside slip_safe flag.
-
-FIX 4  Allowable shear stress.
-       "55 MPa (mild steel)" → "42 MPa (keyed shaft, ASME B17.1 §6 000 psi)".
-       55 MPa is the no-keyway value; all bucket elevator head shafts carry
-       a keyway — the correct value is 42 MPa (corrected in constants.py).
-       Updated in shaft table and in the notes disclaimer.
-
-FIX 5  New backend fields from Task 1 (Euler) and Task 3 (power).
-       Task 3 power decomposition: P_shaft, H_equiv, H_total now displayed
-       in the power breakdown table with full CEMA LEQ derivation shown.
-       Task 1 Euler fields: T3_ktakeup, T3_euler_min, euler_ratio, slip_safe.
-       v1.2.x shaft geometry: shaft_span_mm, shaft_A_mm, shaft_B_mm.
-       v1.2.x material advisory: recommended_fill_pct, bucket_mass_kg.
-─────────────────────────────────────────────────────────────────────────────
-
-Usage (from FastAPI route or React download handler):
-    from generate_report import build_report
-    pdf_bytes = build_report(results, inputs)
+• Complete section restructure matching user specification
+• Elevator schematic drawn with ReportLab shapes (no external library)
+• Speed-sweep and trajectory charts using ReportLab built-in drawing
+• All structural.py v1.3.0 fields shown (hub, lagging, end disc, take-up, casing)
+• Engineering checks extended to 5-column format with explicit safety factors
+• Design Notes written as professional plain-English narrative — no formulae,
+  no standard citations, no calculation steps
+• ASCII-only labels throughout (no Unicode subscripts → no render boxes)
+• four_col_table used for all two-column sections (fixes v1.0 margin overflow)
 """
 
-import io
-import math
+import io, math
 from datetime import datetime
-
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import mm
-from reportlab.lib.colors import HexColor, white, black, Color
-from reportlab.platypus import (
+from reportlab.lib.pagesizes      import A4
+from reportlab.lib.units          import mm
+from reportlab.lib.colors         import HexColor, white, black
+from reportlab.platypus           import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
     HRFlowable, KeepTogether,
 )
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
-from reportlab.platypus import Flowable
+from reportlab.lib.styles         import ParagraphStyle
+from reportlab.lib.enums          import TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.platypus           import Flowable
+from reportlab.graphics.shapes    import (
+    Drawing, Rect, Circle, Line, String as GString,
+    Ellipse, PolyLine, Polygon,
+)
 
-# ─── Brand colours ────────────────────────────────────────────────
-NAVY      = HexColor("#07111e")
-NAVY2     = HexColor("#0d1c2e")
-NAVY3     = HexColor("#132238")
-BORDER    = HexColor("#1c3050")
-CRIMSON   = HexColor("#c8192e")
-BLUE      = HexColor("#4a9eff")
-GREEN     = HexColor("#1fb86e")
-AMBER     = HexColor("#d98e00")
-RED       = HexColor("#e05252")
-TEAL      = HexColor("#2dd4bf")
-TEXT      = HexColor("#ddeaf6")
-MUTED     = HexColor("#5a7a9a")
-MUTED2    = HexColor("#7a9ab8")
-LIGHT_BG  = HexColor("#f0f4f8")
-MID_BG    = HexColor("#dde6ef")
-DARK_TEXT = HexColor("#0d1c2e")
+# ─── Page geometry ───────────────────────────────────────────────────────────
+W, H   = A4
+ML = MR = 18 * mm
+MT      = 15 * mm
+MB      = 18 * mm
+AVAIL   = W - ML - MR          # 493 pt
 
-W, H = A4   # 595.27 × 841.89 pt
-ML = 18*mm
-MR = 18*mm
-MT = 15*mm
-MB = 18*mm
+# ─── Colours ─────────────────────────────────────────────────────────────────
+NAVY     = HexColor("#07111e")
+NAVY2    = HexColor("#0d1c2e")
+BORDER   = HexColor("#1c3050")
+CRIMSON  = HexColor("#c8192e")
+BLUE     = HexColor("#4a9eff")
+GREEN    = HexColor("#1fb86e")
+AMBER    = HexColor("#d98e00")
+RED      = HexColor("#e05252")
+TEAL     = HexColor("#2dd4bf")
+TEXT     = HexColor("#ddeaf6")
+MUTED    = HexColor("#5a7a9a")
+MUTED2   = HexColor("#7a9ab8")
+LIGHT_BG = HexColor("#f0f4f8")
+MID_BG   = HexColor("#dde6ef")
+DK_TEXT  = HexColor("#0d1c2e")
+PANEL2   = HexColor("#e8edf2")
 
-
-# ─── Paragraph styles ─────────────────────────────────────────────
-def styles():
+# ─── Paragraph styles ────────────────────────────────────────────────────────
+def _styles():
     return {
-        "h1": ParagraphStyle("h1",
-            fontName="Helvetica-Bold", fontSize=18, textColor=white,
-            spaceAfter=2, leading=22),
-        "h2": ParagraphStyle("h2",
-            fontName="Helvetica-Bold", fontSize=10, textColor=CRIMSON,
-            spaceBefore=6, spaceAfter=3, leading=13),
-        "h3": ParagraphStyle("h3",
-            fontName="Helvetica-Bold", fontSize=8, textColor=DARK_TEXT,
-            spaceAfter=2, leading=10),
-        "body": ParagraphStyle("body",
-            fontName="Helvetica", fontSize=8, textColor=DARK_TEXT,
-            spaceAfter=2, leading=11),
-        "mono": ParagraphStyle("mono",
-            fontName="Courier", fontSize=7.5, textColor=DARK_TEXT,
-            spaceAfter=1, leading=10),
-        "caption": ParagraphStyle("caption",
-            fontName="Helvetica", fontSize=6.5, textColor=MUTED,
-            spaceAfter=1, leading=9),
-        "kpi_val": ParagraphStyle("kpi_val",
-            fontName="Helvetica-Bold", fontSize=16, textColor=DARK_TEXT,
-            leading=18, alignment=TA_CENTER),
-        "kpi_unit": ParagraphStyle("kpi_unit",
-            fontName="Helvetica", fontSize=7, textColor=MUTED,
-            leading=9, alignment=TA_CENTER),
-        "kpi_label": ParagraphStyle("kpi_label",
-            fontName="Helvetica-Bold", fontSize=6.5, textColor=MUTED,
-            leading=8, alignment=TA_CENTER),
-        "footer": ParagraphStyle("footer",
-            fontName="Helvetica", fontSize=6.5, textColor=MUTED,
-            alignment=TA_CENTER),
-        "tag_ok":   ParagraphStyle("tag_ok",   fontName="Helvetica-Bold",
-            fontSize=7, textColor=GREEN, leading=9),
-        "tag_warn": ParagraphStyle("tag_warn", fontName="Helvetica-Bold",
-            fontSize=7, textColor=AMBER, leading=9),
-        "tag_fail": ParagraphStyle("tag_fail", fontName="Helvetica-Bold",
-            fontSize=7, textColor=RED, leading=9),
-        "check_msg": ParagraphStyle("check_msg", fontName="Helvetica",
-            fontSize=7.5, textColor=DARK_TEXT, leading=10),
+        "h2":   ParagraphStyle("h2",   fontName="Helvetica-Bold",  fontSize=10,
+                    textColor=CRIMSON, spaceBefore=6, spaceAfter=3, leading=13),
+        "h3":   ParagraphStyle("h3",   fontName="Helvetica-Bold",  fontSize=8,
+                    textColor=DK_TEXT, spaceAfter=2, leading=10),
+        "body": ParagraphStyle("body", fontName="Helvetica",       fontSize=8,
+                    textColor=DK_TEXT, spaceAfter=2, leading=11),
+        "note": ParagraphStyle("note", fontName="Helvetica",       fontSize=8,
+                    textColor=DK_TEXT, spaceAfter=4, leading=12),
+        "mono": ParagraphStyle("mono", fontName="Courier",         fontSize=7.5,
+                    textColor=DK_TEXT, spaceAfter=1, leading=10),
+        "cap":  ParagraphStyle("cap",  fontName="Helvetica",       fontSize=6.5,
+                    textColor=MUTED,   spaceAfter=1, leading=9),
+        "kv":   ParagraphStyle("kv",   fontName="Helvetica-Bold",  fontSize=16,
+                    textColor=DK_TEXT, leading=18, alignment=TA_CENTER),
+        "ku":   ParagraphStyle("ku",   fontName="Helvetica",       fontSize=7,
+                    textColor=MUTED,   leading=9,  alignment=TA_CENTER),
+        "kl":   ParagraphStyle("kl",   fontName="Helvetica-Bold",  fontSize=6.5,
+                    textColor=MUTED,   leading=8,  alignment=TA_CENTER),
+        "ftr":  ParagraphStyle("ftr",  fontName="Helvetica",       fontSize=6.5,
+                    textColor=MUTED,   alignment=TA_CENTER),
+        "tok":  ParagraphStyle("tok",  fontName="Helvetica-Bold",  fontSize=7,
+                    textColor=GREEN,   leading=9),
+        "twn":  ParagraphStyle("twn",  fontName="Helvetica-Bold",  fontSize=7,
+                    textColor=AMBER,   leading=9),
+        "tfl":  ParagraphStyle("tfl",  fontName="Helvetica-Bold",  fontSize=7,
+                    textColor=RED,     leading=9),
+        "cmsg": ParagraphStyle("cmsg", fontName="Helvetica",       fontSize=7.5,
+                    textColor=DK_TEXT, leading=10),
     }
 
-ST = styles()
+ST = _styles()
 
 
-# ─── Helpers ──────────────────────────────────────────────────────
+# ─── Value formatters ─────────────────────────────────────────────────────────
 def fmt(v, dp=2, fb="—"):
     try:
         f = float(v)
-        if not math.isfinite(f):
-            return fb
-        return f"{f:.{dp}f}"
+        return fb if not math.isfinite(f) else f"{f:.{dp}f}"
     except (TypeError, ValueError):
         return fb if v is None else str(v)
 
-def safe(d, *keys, fb="—"):
-    cur = d
+def _rv(r, *keys, dp=2, fb="—"):
     for k in keys:
-        if not isinstance(cur, dict):
-            return fb
-        cur = cur.get(k)
-        if cur is None:
-            return fb
-    return cur if cur != "" else fb
+        v = r.get(k)
+        if v is not None:
+            return fmt(v, dp, fb)
+    return fb
+
+def _rkn(r, *keys, dp=2, fb="—"):
+    for k in keys:
+        v = r.get(k)
+        if v is not None:
+            try: return fmt(float(v) / 1000.0, dp, fb)
+            except: pass
+    return fb
 
 
-class ColorRect(Flowable):
-    def __init__(self, w, h, color, radius=0):
-        super().__init__()
-        self.w, self.h, self.color, self.r = w, h, color, radius
-
-    def draw(self):
-        self.canv.setFillColor(self.color)
-        if self.r:
-            self.canv.roundRect(0, 0, self.w, self.h, self.r, fill=1, stroke=0)
-        else:
-            self.canv.rect(0, 0, self.w, self.h, fill=1, stroke=0)
-
-    def wrap(self, aW=0, aH=0):
-        return self.w, self.h
-
-
-# ─── Section title ────────────────────────────────────────────────
+# ─── Section heading ─────────────────────────────────────────────────────────
 def section(title):
     return [
         Spacer(1, 5),
@@ -175,32 +135,66 @@ def section(title):
         Paragraph(title.upper(), ST["h2"]),
     ]
 
+def sub_section(title):
+    return [
+        Spacer(1, 3),
+        Paragraph(title, ST["h3"]),
+    ]
 
-# ─── Four-column table (replaces two_col + data_table nesting) ────
-#
-# ROOT CAUSE of v1.0 layout bug:
-#   two_col() created a container ~243pt wide per side.
-#   data_table() inside used default col_widths=[(W-ML-MR)*0.52, *0.48]
-#   = 256pt + 237pt = 493pt total — 2× the available space.
-#   Result: right column always overflowed the page margin.
-#
-# FIX: flat single Table with 4 columns across the full page width.
-#   No nesting → no width mismatch → no overflow.
-#   Col widths: 30% label | 20% value | 30% label | 20% value.
-#
-def four_col_table(left_rows, right_rows):
-    """
-    Flat 4-column table: left_label | left_value | right_label | right_value.
-    Replaces two_col(data_table(), data_table()) entirely.
-    Uses full available page width — no nested containers.
-    """
-    avail = W - ML - MR          # e.g. 493 pt
-    c_lab = avail * 0.30         # label column:  148 pt each side
-    c_val = avail * 0.20         # value column:  99 pt each side
 
-    max_rows = max(len(left_rows), len(right_rows))
+# ─── KPI card row ─────────────────────────────────────────────────────────────
+def kpi_row(cards):
+    cw = AVAIL / len(cards)
+    cells = [[
+        Paragraph(lbl, ST["kl"]),
+        Paragraph(str(val), ST["kv"]),
+        Paragraph(str(unit), ST["ku"]),
+    ] for lbl, val, unit, _ in cards]
+    t = Table([cells], colWidths=[cw] * len(cards))
+    cmds = [
+        ("BACKGROUND",    (0,0), (-1,-1), LIGHT_BG),
+        ("GRID",          (0,0), (-1,-1), 0.3, BORDER),
+        ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING",    (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ("LEFTPADDING",   (0,0), (-1,-1), 3),
+        ("RIGHTPADDING",  (0,0), (-1,-1), 3),
+    ]
+    scol = {
+        "ok":   GREEN, "warn": AMBER, "fail": RED, "info": BLUE,
+    }
+    for i, (_, _, _, st) in enumerate(cards):
+        cmds.append(("LINEABOVE", (i,0), (i,0), 2.5, scol.get(st, BLUE)))
+    t.setStyle(TableStyle(cmds))
+    return [t, Spacer(1, 4)]
+
+
+# ─── 2-column data table (full-width) ────────────────────────────────────────
+def data_table(rows, col_widths=None):
+    cw = col_widths or [AVAIL * 0.55, AVAIL * 0.45]
+    data = [[Paragraph(str(r[0]), ST["body"]),
+             Paragraph(str(r[1]), ST["mono"])] for r in rows]
+    t = Table(data, colWidths=cw)
+    cmds = [
+        ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING",    (0,0), (-1,-1), 2.5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 2.5),
+        ("LEFTPADDING",   (0,0), (-1,-1), 4),
+        ("RIGHTPADDING",  (0,0), (-1,-1), 4),
+        ("GRID",          (0,0), (-1,-1), 0.3, BORDER),
+    ]
+    for i in range(len(data)):
+        cmds.append(("BACKGROUND", (0,i), (-1,i), LIGHT_BG if i%2==0 else white))
+    t.setStyle(TableStyle(cmds))
+    return [t, Spacer(1, 4)]
+
+
+# ─── 4-column flat table (replaces two_col + nested data_table) ──────────────
+def four_col_table(left_rows, right_rows, ratios=(0.30, 0.20, 0.30, 0.20)):
+    c = [AVAIL * r for r in ratios]
+    n = max(len(left_rows), len(right_rows))
     data = []
-    for i in range(max_rows):
+    for i in range(n):
         L = left_rows[i]  if i < len(left_rows)  else ("", "")
         R = right_rows[i] if i < len(right_rows) else ("", "")
         data.append([
@@ -209,497 +203,1091 @@ def four_col_table(left_rows, right_rows):
             Paragraph(str(R[0]), ST["body"]),
             Paragraph(str(R[1]), ST["mono"]),
         ])
-
-    t = Table(data, colWidths=[c_lab, c_val, c_lab, c_val])
-    style_cmds = [
-        ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",   (0, 0), (-1, -1), 2.5),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 2.5),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 4),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-        ("GRID",         (0, 0), (-1, -1), 0.3, BORDER),
-        # Vertical divider between left and right sections
-        ("LINEAFTER",    (1, 0), (1, -1), 1.2, MUTED),
+    t = Table(data, colWidths=c)
+    cmds = [
+        ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING",    (0,0), (-1,-1), 2.5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 2.5),
+        ("LEFTPADDING",   (0,0), (-1,-1), 4),
+        ("RIGHTPADDING",  (0,0), (-1,-1), 4),
+        ("GRID",          (0,0), (-1,-1), 0.3, BORDER),
+        ("LINEAFTER",     (1,0), (1,-1), 1.2, MUTED),
     ]
-    for i in range(max_rows):
-        bg = LIGHT_BG if i % 2 == 0 else white
-        style_cmds.append(("BACKGROUND", (0, i), (-1, i), bg))
-    t.setStyle(TableStyle(style_cmds))
-    return [t, Spacer(1, 6)]
-
-
-# ─── KPI card table ───────────────────────────────────────────────
-def kpi_row(cards):
-    col_w = (W - ML - MR) / len(cards)
-    status_colors = {"ok": GREEN, "warn": AMBER, "fail": RED, "info": BLUE}
-    cells = []
-    for label, value, unit, status in cards:
-        cell = [
-            Paragraph(str(label), ST["kpi_label"]),
-            Paragraph(str(value), ST["kpi_val"]),
-            Paragraph(str(unit),  ST["kpi_unit"]),
-        ]
-        cells.append(cell)
-    t = Table([cells], colWidths=[col_w] * len(cards))
-    style_cmds = [
-        ("BACKGROUND",   (0, 0), (-1, -1), LIGHT_BG),
-        ("GRID",         (0, 0), (-1, -1), 0.3, BORDER),
-        ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",   (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 5),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 3),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-    ]
-    for i, (_, _, _, status) in enumerate(cards):
-        c = status_colors.get(status, BLUE)
-        style_cmds.append(("LINEABOVE", (i, 0), (i, 0), 2.5, c))
-    t.setStyle(TableStyle(style_cmds))
+    for i in range(n):
+        cmds.append(("BACKGROUND", (0,i), (-1,i), LIGHT_BG if i%2==0 else white))
+    t.setStyle(TableStyle(cmds))
     return [t, Spacer(1, 4)]
 
 
-# ─── 2-column data table ──────────────────────────────────────────
-def data_table(rows, col_widths=None):
-    cw = col_widths or [(W - ML - MR) * 0.52, (W - ML - MR) * 0.48]
-    table_data = []
-    for row in rows:
-        table_data.append([
-            Paragraph(row[0], ST["body"]),
-            Paragraph(str(row[1]), ST["mono"]),
+# ─── 5-column engineering checks table (with SF) ─────────────────────────────
+def sf_checks_table(check_rows):
+    """
+    check_rows: list of (check_name, actual, limit, sf_str, status)
+    status: "ok" | "warn" | "fail" | "info"
+    """
+    hdr = [
+        Paragraph("Check",     ST["h3"]),
+        Paragraph("Actual",    ST["h3"]),
+        Paragraph("Limit",     ST["h3"]),
+        Paragraph("SF",        ST["h3"]),
+        Paragraph("Result",    ST["h3"]),
+    ]
+    cw = [AVAIL*0.32, AVAIL*0.19, AVAIL*0.19, AVAIL*0.10, AVAIL*0.20]
+    icon = {"ok":"✓", "warn":"⚠", "fail":"✗", "info":"i"}
+    sty  = {"ok":"tok", "warn":"twn", "fail":"tfl", "info":"tok"}
+    data = [hdr]
+    for name, actual, limit, sf, status in check_rows:
+        ic = icon.get(status, "i")
+        data.append([
+            Paragraph(str(name),   ST["cmsg"]),
+            Paragraph(str(actual), ST["mono"]),
+            Paragraph(str(limit),  ST["mono"]),
+            Paragraph(str(sf),     ST["mono"]),
+            Paragraph(f"{ic}  {status.upper()}", ST[sty.get(status,"tok")]),
         ])
-    t = Table(table_data, colWidths=cw)
-    style_cmds = [
-        ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",   (0, 0), (-1, -1), 2.5),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 2.5),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 4),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-        ("GRID",         (0, 0), (-1, -1), 0.3, BORDER),
+    t = Table(data, colWidths=cw, repeatRows=1)
+    cmds = [
+        ("BACKGROUND",    (0,0), (-1, 0), NAVY),
+        ("TEXTCOLOR",     (0,0), (-1, 0), TEXT),
+        ("FONTNAME",      (0,0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE",      (0,0), (-1, 0), 7.5),
+        ("GRID",          (0,0), (-1,-1), 0.3, BORDER),
+        ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING",    (0,0), (-1,-1), 3),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 3),
+        ("LEFTPADDING",   (0,0), (-1,-1), 4),
+        ("RIGHTPADDING",  (0,0), (-1,-1), 4),
     ]
-    for i in range(len(table_data)):
-        bg = LIGHT_BG if i % 2 == 0 else white
-        style_cmds.append(("BACKGROUND", (0, i), (-1, i), bg))
-    t.setStyle(TableStyle(style_cmds))
+    for i in range(1, len(data)):
+        cmds.append(("BACKGROUND", (0,i), (-1,i), LIGHT_BG if i%2==1 else white))
+    t.setStyle(TableStyle(cmds))
     return [t, Spacer(1, 4)]
 
 
-# ─── Two-column layout helper ─────────────────────────────────────
-def two_col(left_flowables, right_flowables):
-    cw = (W - ML - MR - 4*mm) / 2
-    ldata = [[f] for f in left_flowables]
-    rdata = [[f] for f in right_flowables]
-    lt = Table(ldata, colWidths=[cw])
-    lt.setStyle(TableStyle([
-        ("TOPPADDING",   (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 0),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    rt = Table(rdata, colWidths=[cw])
-    rt.setStyle(TableStyle([
-        ("TOPPADDING",   (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 0),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    outer = Table([[lt, rt]], colWidths=[cw + 2*mm, cw + 2*mm])
-    outer.setStyle(TableStyle([
-        ("VALIGN",       (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING",   (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 0),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 2*mm),
-    ]))
-    return outer
-
-
-# ─── Checks table ────────────────────────────────────────────────
-def checks_table(checks):
-    icons   = {"pass": "✓", "ok": "✓", "warn": "⚠", "fail": "✗", "info": "ℹ"}
-    styles_ = {"pass":"tag_ok","ok":"tag_ok","warn":"tag_warn","fail":"tag_fail","info":"tag_ok"}
-    status_colors = {"pass": GREEN, "ok": GREEN, "warn": AMBER, "fail": RED, "info": BLUE}
-    rows = []
-    for c in checks:
-        st   = c.get("status") or c.get("type", "info")
-        if st == "ok": st = "pass"
-        icon = icons.get(st, "ℹ")
-        sty  = styles_.get(st, "tag_ok")
-        rows.append([
-            Paragraph(icon, ST[sty]),
-            Paragraph(c.get("code", ""), ST["caption"]),
-            Paragraph(c.get("msg", ""), ST["check_msg"]),
-        ])
-    cw = [8*mm, 14*mm, W - ML - MR - 22*mm]
-    t = Table(rows, colWidths=cw)
-    style_cmds = [
-        ("VALIGN",       (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING",   (0, 0), (-1, -1), 2),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 2),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 3),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-        ("GRID",         (0, 0), (-1, -1), 0.2, BORDER),
-    ]
-    for i in range(len(rows)):
-        bg = LIGHT_BG if i % 2 == 0 else white
-        style_cmds.append(("BACKGROUND", (0, i), (-1, i), bg))
-    t.setStyle(TableStyle(style_cmds))
-    return [t, Spacer(1, 4)]
-
-
-# ─── Header band ─────────────────────────────────────────────────
+# ─── Header flowable ─────────────────────────────────────────────────────────
 def header_flowables(inp, res, project="", doc_ref=""):
     now    = datetime.now().strftime("%d %b %Y  %H:%M")
-    mat    = res.get("material") or {}
-    status = res.get("status", "—").upper()
-    status_color = {"PASS": GREEN, "WARNING": AMBER, "FAIL": RED}.get(status, BLUE)
-    content_w = W - ML - MR
+    mat    = (res.get("mat") or res.get("material") or {})
+    status = str(res.get("status", "—")).upper()
+    sc     = {"PASS": GREEN, "WARNING": AMBER, "FAIL": RED}.get(status, BLUE)
+    mat_name = mat.get("name") or inp.get("mat_id","Custom")
+
     logo_col = [
-        Paragraph("<b>VECTRIX™</b>", ParagraphStyle("logo",
-            fontName="Helvetica-Bold", fontSize=16, textColor=white, leading=18)),
-        Paragraph("BUCKET ELEVATOR", ParagraphStyle("sub",
-            fontName="Helvetica", fontSize=7, textColor=MUTED2, leading=9, spaceBefore=1)),
-        Paragraph("Engineering Design Report", ParagraphStyle("sub2",
-            fontName="Helvetica", fontSize=6.5, textColor=MUTED, leading=8)),
+        Paragraph("<b>VECTRIX™</b>",
+            ParagraphStyle("lg", fontName="Helvetica-Bold", fontSize=16,
+                           textColor=white, leading=18)),
+        Paragraph("BUCKET ELEVATOR",
+            ParagraphStyle("s1", fontName="Helvetica", fontSize=7,
+                           textColor=MUTED2, leading=9)),
+        Paragraph("Engineering Design Report",
+            ParagraphStyle("s2", fontName="Helvetica", fontSize=6.5,
+                           textColor=MUTED, leading=8)),
     ]
-    proj_col = [
-        Paragraph(f"<b>Project:</b> {project or 'Unspecified'}", ParagraphStyle("pi",
-            fontName="Helvetica", fontSize=8, textColor=white, leading=10)),
-        Paragraph(f"<b>Ref:</b> {doc_ref or 'VX-BE-001'}", ParagraphStyle("pi",
-            fontName="Helvetica", fontSize=8, textColor=white, leading=10)),
-        Paragraph(f"<b>Date:</b> {now}", ParagraphStyle("pi",
-            fontName="Helvetica", fontSize=8, textColor=white, leading=10)),
-        Paragraph(
-            f"<b>Material:</b> {mat.get('name') or inp.get('mat_id','Custom')}",
-            ParagraphStyle("pi", fontName="Helvetica", fontSize=8, textColor=white, leading=10)),
+    info_col = [
+        Paragraph(f"<b>Project:</b> {project or 'Unspecified'}",
+            ParagraphStyle("pi", fontName="Helvetica", fontSize=8,
+                           textColor=white, leading=10)),
+        Paragraph(f"<b>Ref:</b> {doc_ref or 'VX-BE-001'}",
+            ParagraphStyle("pi", fontName="Helvetica", fontSize=8,
+                           textColor=white, leading=10)),
+        Paragraph(f"<b>Date:</b> {now}",
+            ParagraphStyle("pi", fontName="Helvetica", fontSize=8,
+                           textColor=white, leading=10)),
+        Paragraph(f"<b>Material:</b> {mat_name}",
+            ParagraphStyle("pi", fontName="Helvetica", fontSize=8,
+                           textColor=white, leading=10)),
     ]
-    status_col = [
-        Paragraph(f"<b>{status}</b>", ParagraphStyle("st",
-            fontName="Helvetica-Bold", fontSize=14, textColor=status_color,
-            alignment=TA_CENTER, leading=16)),
-        Paragraph("Design Status", ParagraphStyle("stl",
-            fontName="Helvetica", fontSize=6.5, textColor=MUTED,
-            alignment=TA_CENTER, leading=8)),
+    stat_col = [
+        Paragraph(f"<b>{status}</b>",
+            ParagraphStyle("st", fontName="Helvetica-Bold", fontSize=14,
+                           textColor=sc, alignment=TA_CENTER, leading=16)),
+        Paragraph("Design Status",
+            ParagraphStyle("sl", fontName="Helvetica", fontSize=6.5,
+                           textColor=MUTED, alignment=TA_CENTER, leading=8)),
         Spacer(1, 2),
-        Paragraph("JAYVEECONS<br/>Engineering &amp; Design", ParagraphStyle("jv",
-            fontName="Helvetica", fontSize=6, textColor=MUTED2,
-            alignment=TA_CENTER, leading=8)),
+        Paragraph("JAYVEECONS<br/>Engineering &amp; Design",
+            ParagraphStyle("jv", fontName="Helvetica", fontSize=6,
+                           textColor=MUTED2, alignment=TA_CENTER, leading=8)),
     ]
     hdr = Table(
-        [[logo_col, proj_col, status_col]],
-        colWidths=[content_w * 0.28, content_w * 0.46, content_w * 0.26],
+        [[logo_col, info_col, stat_col]],
+        colWidths=[AVAIL*0.28, AVAIL*0.46, AVAIL*0.26],
     )
     hdr.setStyle(TableStyle([
-        ("BACKGROUND",   (0, 0), (-1, -1), NAVY),
-        ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",   (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 8),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("LINEBELOW",    (0, 0), (-1, 0), 2.5, CRIMSON),
+        ("BACKGROUND",    (0,0), (-1,-1), NAVY),
+        ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING",    (0,0), (-1,-1), 8),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+        ("LEFTPADDING",   (0,0), (-1,-1), 6),
+        ("RIGHTPADDING",  (0,0), (-1,-1), 6),
+        ("LINEBELOW",     (0,0), (-1, 0), 2.5, CRIMSON),
     ]))
     return [hdr, Spacer(1, 6)]
 
 
-# ─── Main builder ─────────────────────────────────────────────────
-def build_report(results: dict, inputs: dict,
-                 project: str = "", doc_ref: str = "",
-                 output_path: "str | None" = None) -> bytes:
-    """
-    Build A4 portrait PDF. Returns bytes (for FastAPI StreamingResponse)
-    and optionally writes to output_path.
-    """
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=A4,
-        leftMargin=ML, rightMargin=MR, topMargin=MT, bottomMargin=MB,
-        title="VECTRIX™ Bucket Elevator Report",
-        author="Jayveecons Engineering & Design",
+# ─── Elevator schematic (ReportLab Drawing) ───────────────────────────────────
+def _elevator_schematic(results, inputs, W_draw, H_draw):
+    d   = Drawing(W_draw, H_draw)
+    r   = results or {}
+    inp = inputs  or {}
+
+    # Fixed anchors — derived so every label, dimension, and arrow
+    # stays within [0, H_draw].
+    #
+    # Labels at top:  "HEAD SECTION" at top_y + r_head + 28
+    #                 BW dimension   at top_y + r_head + 14
+    # → top_y = H_draw - r_head - 30   guarantees HEAD SECTION < H_draw
+    #
+    # Labels at bot:  "BOOT SECTION" at bot_y - r_boot - 14
+    #                 FEED arrow     at bot_y
+    # → bot_y = r_boot + 18           guarantees BOOT SECTION > 0
+
+    r_head  = 24.0
+    r_boot  = 18.0
+    top_y   = H_draw - r_head - 30    # head pulley centre — was H_draw*0.87
+    bot_y   = r_boot + 18             # boot pulley centre — was H_draw*0.10
+    h_elev  = top_y - bot_y
+    cx      = W_draw * 0.42
+    blt_hw  = 14.0
+    cas_hw  = blt_hw + 12.0
+    col_cas = HexColor("#c8d4e0")
+    col_blt = HexColor("#c8a060")
+    col_bkt = HexColor("#dde6ef")
+    col_pul = HexColor("#4a9eff")
+    col_dim = HexColor("#5a7a9a")
+    col_dk  = HexColor("#0d1c2e")
+    col_mtr = HexColor("#1fb86e")
+    col_arr = HexColor("#4a9eff")
+    col_trj = HexColor("#c8192e")
+
+    # Casing background
+    d.add(Rect(cx - cas_hw - 2, bot_y - r_boot,
+               (cas_hw + 2) * 2, h_elev + r_head + r_boot,
+               fillColor=col_cas, strokeColor=HexColor("#8aa0b8"),
+               strokeWidth=1.5))
+
+    # Belt lines
+    for sx in (-blt_hw, blt_hw):
+        d.add(Line(cx + sx, bot_y, cx + sx, top_y,
+                   strokeColor=col_blt, strokeWidth=2.5))
+
+    # Buckets on ascending (left) side — 7 evenly spaced
+    for i in range(7):
+        by = bot_y + (i + 0.4) * h_elev / 7
+        bw, bh = 14, 9
+        d.add(Rect(cx - blt_hw - bw, by - bh/2, bw, bh,
+                   fillColor=col_bkt,
+                   strokeColor=HexColor("#7a90a8"), strokeWidth=0.8))
+
+    # Boot pulley
+    d.add(Circle(cx, bot_y, r_boot,
+                 fillColor=col_pul, strokeColor=col_dk, strokeWidth=1.5))
+    d.add(Circle(cx, bot_y, r_boot * 0.32, fillColor=col_dk, strokeColor=None))
+
+    # Head pulley
+    d.add(Circle(cx, top_y, r_head,
+                 fillColor=col_pul, strokeColor=col_dk, strokeWidth=1.5))
+    d.add(Circle(cx, top_y, r_head * 0.28, fillColor=col_dk, strokeColor=None))
+
+    # Motor block
+    mx, my = cx + cas_hw + 40, top_y
+    mw, mh = 38, 24
+    d.add(Rect(mx, my - mh/2, mw, mh,
+               fillColor=col_mtr, strokeColor=HexColor("#0a7040"), strokeWidth=1))
+    d.add(Line(cx + r_head, my, mx, my,
+               strokeColor=col_dim, strokeWidth=1.5, strokeDashArray=[4,2]))
+    motor_kw = r.get("motor_kw") or r.get("motor_kW") or "—"
+    d.add(GString(mx + mw/2, my + 4, f"{motor_kw} kW",
+                  fontSize=6.5, fillColor=white, textAnchor="middle",
+                  fontName="Helvetica-Bold"))
+    d.add(GString(mx + mw/2, my - 10, "MOTOR",
+                  fontSize=6, fillColor=white, textAnchor="middle",
+                  fontName="Helvetica"))
+
+    # Discharge trajectory (small arc)
+    traj = r.get("trajectory", [])
+    if traj and len(traj) >= 3:
+        pts = traj[:18]
+        xs  = [p.get("x", 0) for p in pts]
+        ys  = [p.get("y", 0) for p in pts]
+        xr  = max(max(xs) - min(xs), 1)
+        yr  = max(max(ys) - min(ys), 1)
+        sc_x = 70 / xr
+        sc_y = 55 / yr
+        base_x = cx + r_head
+        base_y = top_y
+        tx_pts = [(base_x + (x - min(xs)) * sc_x,
+                   base_y - (max(ys) - y) * sc_y) for x, y in zip(xs, ys)]
+        for i in range(len(tx_pts) - 1):
+            d.add(Line(tx_pts[i][0], tx_pts[i][1],
+                       tx_pts[i+1][0], tx_pts[i+1][1],
+                       strokeColor=col_trj, strokeWidth=1.3,
+                       strokeDashArray=[3,3]))
+
+    # Dimension: height
+    dx = cx - cas_hw - 22
+    H_m = inp.get("H_m", "?")
+    d.add(Line(dx, bot_y, dx, top_y, strokeColor=col_dim, strokeWidth=0.8))
+    for ay, sign in ((bot_y, 1), (top_y, -1)):
+        d.add(Line(dx-4, ay+sign*5, dx, ay, strokeColor=col_dim, strokeWidth=0.8))
+        d.add(Line(dx+4, ay+sign*5, dx, ay, strokeColor=col_dim, strokeWidth=0.8))
+    d.add(GString(dx - 5, (bot_y + top_y)/2 - 4, f"H = {H_m} m",
+                  fontSize=7.5, fillColor=col_dk, textAnchor="end",
+                  fontName="Helvetica-Bold"))
+
+    # Belt width dimension at head
+    BW = r.get("belt_w") or r.get("belt_width_mm") or "?"
+    yw = top_y + r_head + 14
+    d.add(Line(cx - blt_hw, yw, cx + blt_hw, yw, strokeColor=col_dim, strokeWidth=0.7))
+    d.add(GString(cx, yw + 7, f"BW = {BW} mm",
+                  fontSize=6.5, fillColor=col_dim, textAnchor="middle",
+                  fontName="Helvetica"))
+
+    # Pulley dia label
+    D_mm = inp.get("D_mm", "?")
+    d.add(GString(cx + r_head + 10, top_y + 3, f"D = {D_mm} mm",
+                  fontSize=6.5, fillColor=col_dk, textAnchor="start",
+                  fontName="Helvetica"))
+
+    # Section labels
+    d.add(GString(cx, top_y + r_head + 28, "HEAD SECTION",
+                  fontSize=7.5, fillColor=col_dk, textAnchor="middle",
+                  fontName="Helvetica-Bold"))
+    d.add(GString(cx, bot_y - r_boot - 14, "BOOT SECTION",
+                  fontSize=7.5, fillColor=col_dk, textAnchor="middle",
+                  fontName="Helvetica-Bold"))
+
+    # Feed arrow
+    fx = cx - cas_hw - 4
+    d.add(Line(fx - 28, bot_y, fx, bot_y, strokeColor=col_arr, strokeWidth=2.0))
+    d.add(Line(fx - 9, bot_y+5, fx, bot_y, strokeColor=col_arr, strokeWidth=2.0))
+    d.add(Line(fx - 9, bot_y-5, fx, bot_y, strokeColor=col_arr, strokeWidth=2.0))
+    d.add(GString(fx - 32, bot_y + 6, "FEED",
+                  fontSize=7, fillColor=col_arr, textAnchor="end",
+                  fontName="Helvetica-Bold"))
+
+    # Discharge label
+    d.add(GString(cx + r_head + 12, top_y + 20, "DISCHARGE",
+                  fontSize=7, fillColor=col_arr, textAnchor="start",
+                  fontName="Helvetica-Bold"))
+
+    return d
+
+
+# ─── Speed-sweep chart ────────────────────────────────────────────────────────
+def _speed_chart(results, inputs, W_draw, H_draw):
+    r   = results or {}
+    inp = inputs  or {}
+    sweep = r.get("speed_sweep") or r.get("speedSweep") or []
+    if len(sweep) < 2:
+        return None
+    d = Drawing(W_draw, H_draw)
+    d.add(Rect(0, 0, W_draw, H_draw, fillColor=LIGHT_BG, strokeColor=None))
+
+    rpms = [p["rpm"]      for p in sweep]
+    caps = [p["capacity"] for p in sweep]
+    Q_req = float(inp.get("Q_req") or 0)
+
+    cl  = 38; cb = 24; cr = W_draw - 12; ct = H_draw - 20
+    cw  = cr - cl;     ch = ct - cb
+
+    cap_max = max(max(caps), Q_req * 1.05, 1)
+    rpm_min = min(rpms); rpm_max = max(rpms)
+
+    def px(rpm): return cl + (rpm - rpm_min) / max(rpm_max - rpm_min, 1) * cw
+    def py(cap): return cb + cap / cap_max * ch
+
+    # Grid
+    for i in range(5):
+        gy = cb + i * ch / 4
+        d.add(Line(cl, gy, cr, gy, strokeColor=HexColor("#c0ccd8"),
+                   strokeWidth=0.5, strokeDashArray=[3,3]))
+
+    # Q_req line
+    qy = py(Q_req)
+    if cb <= qy <= ct:
+        d.add(Line(cl, qy, cr, qy, strokeColor=CRIMSON, strokeWidth=1.2,
+                   strokeDashArray=[5,3]))
+        d.add(GString(cr - 2, qy + 3, f"Req {Q_req:.0f}",
+                      fontSize=5.5, fillColor=CRIMSON, textAnchor="end",
+                      fontName="Helvetica"))
+
+    # Capacity line
+    for i in range(len(rpms) - 1):
+        d.add(Line(px(rpms[i]), py(caps[i]), px(rpms[i+1]), py(caps[i+1]),
+                   strokeColor=BLUE, strokeWidth=2.0))
+
+    # Axes
+    d.add(Line(cl, cb, cl, ct, strokeColor=MUTED, strokeWidth=1.0))
+    d.add(Line(cl, cb, cr, cb, strokeColor=MUTED, strokeWidth=1.0))
+
+    # Axis labels
+    d.add(GString(cl + cw/2, 5, "Head shaft speed (rpm)",
+                  fontSize=6, fillColor=MUTED, textAnchor="middle", fontName="Helvetica"))
+    d.add(GString(12, cb + ch/2, "t/h",
+                  fontSize=6, fillColor=MUTED, textAnchor="middle", fontName="Helvetica"))
+
+    # Ticks
+    for q in [0, cap_max/2, cap_max]:
+        ty = py(q)
+        d.add(GString(cl - 3, ty - 3, f"{q:.0f}",
+                      fontSize=5.5, fillColor=MUTED, textAnchor="end", fontName="Helvetica"))
+    for r2 in [rpm_min, (rpm_min+rpm_max)//2, rpm_max]:
+        tx = px(r2)
+        d.add(GString(tx, cb - 13, str(int(r2)),
+                      fontSize=5.5, fillColor=MUTED, textAnchor="middle", fontName="Helvetica"))
+
+    # Title
+    d.add(GString(cl + cw/2, H_draw - 12, "Capacity vs Belt Speed",
+                  fontSize=7.5, fillColor=DK_TEXT, textAnchor="middle",
+                  fontName="Helvetica-Bold"))
+    return d
+
+
+# ─── Discharge trajectory chart ───────────────────────────────────────────────
+def _trajectory_chart(results, W_draw, H_draw):
+    r    = results or {}
+    traj = r.get("trajectory", [])
+    if len(traj) < 3:
+        return None
+    d = Drawing(W_draw, H_draw)
+    d.add(Rect(0, 0, W_draw, H_draw, fillColor=LIGHT_BG, strokeColor=None))
+
+    xs = [p.get("x",0) for p in traj]
+    ys = [p.get("y",0) for p in traj]
+    cl  = 38; cb = 24; cr = W_draw - 12; ct = H_draw - 20
+    cw  = cr - cl;     ch = ct - cb
+    xr  = max(max(xs) - min(xs), 1)
+    yr  = max(max(ys) - min(ys), 1)
+
+    def px(x): return cl + (x - min(xs)) / xr * cw
+    def py(y): return cb + (y - min(ys)) / yr * ch
+
+    # Grid
+    for i in range(5):
+        gx = cl + i * cw / 4
+        d.add(Line(gx, cb, gx, ct, strokeColor=HexColor("#c0ccd8"),
+                   strokeWidth=0.5, strokeDashArray=[3,3]))
+
+    # Trajectory line
+    for i in range(len(traj) - 1):
+        d.add(Line(px(xs[i]), py(ys[i]), px(xs[i+1]), py(ys[i+1]),
+                   strokeColor=CRIMSON, strokeWidth=2.0))
+
+    # Axes
+    d.add(Line(cl, cb, cl, ct, strokeColor=MUTED, strokeWidth=1.0))
+    d.add(Line(cl, cb, cr, cb, strokeColor=MUTED, strokeWidth=1.0))
+
+    # Labels
+    d.add(GString(cl + cw/2, 5, "x [mm]",
+                  fontSize=6, fillColor=MUTED, textAnchor="middle", fontName="Helvetica"))
+    d.add(GString(12, cb + ch/2, "y [mm]",
+                  fontSize=6, fillColor=MUTED, textAnchor="middle", fontName="Helvetica"))
+    d.add(GString(cl + cw/2, H_draw - 12, "Discharge Trajectory",
+                  fontSize=7.5, fillColor=DK_TEXT, textAnchor="middle",
+                  fontName="Helvetica-Bold"))
+
+    # Axis ticks
+    for xt in [min(xs), (min(xs)+max(xs))/2, max(xs)]:
+        d.add(GString(px(xt), cb - 13, f"{xt:.0f}",
+                      fontSize=5.5, fillColor=MUTED, textAnchor="middle", fontName="Helvetica"))
+
+    return d
+
+
+# ─── Design notes generator (plain English, no formulae) ─────────────────────
+def _design_notes(r, inp):
+    notes = []
+    mat    = r.get("mat") or r.get("material") or {}
+    bucket = r.get("bucket") or {}
+
+    Q      = float(r.get("Q") or r.get("Q_th") or 0)
+    Q_req  = float(inp.get("Q_req") or 0)
+    v      = float(r.get("v") or r.get("v_ms") or 0)
+    cr     = float(r.get("cr") or r.get("centrifugal_ratio") or 0)
+    H_m    = float(inp.get("H_m") or 0)
+    d_mm   = float(r.get("d_mm") or 0)
+    gov    = r.get("governed_by") or "stress"
+    P_tot  = float(r.get("P_total") or 0)
+    sf     = float(inp.get("sf") or 1.25)
+    motor  = r.get("motor_kw") or r.get("motor_kW") or "—"
+    L10    = float(r.get("L10") or r.get("L10_hours") or 0)
+    D_mm   = float(inp.get("D_mm") or 500)
+    BW     = r.get("belt_w") or r.get("belt_width_mm") or "—"
+    lag    = r.get("lagging") or {}
+    ed     = r.get("end_disc") or {}
+    hub    = r.get("hub") or {}
+    tg     = r.get("takeup_gravity") or {}
+    ts     = r.get("takeup_screw") or {}
+    cs     = r.get("casing_stiffener") or {}
+    cp     = r.get("casing_panel") or {}
+    ct_mm  = r.get("casing_t_mm") or "—"
+    bf     = r.get("bolt_fatigue") or {}
+    kc     = r.get("key_check") or {}
+    span   = r.get("shaft_span_mm") or "—"
+
+    # 1. Capacity & selection
+    margin = (Q / Q_req - 1) * 100 if Q_req else 0
+    bkt_id = bucket.get("id") or "—"
+    mat_nm = mat.get("name") or inp.get("mat_id", "the specified material")
+    notes.append(
+        f"The elevator is configured with Series {bkt_id} buckets and achieves a throughput "
+        f"of {Q:.1f} t/h against the {Q_req:.0f} t/h requirement, providing a capacity margin "
+        f"of {margin:.0f}%. Belt speed is {v:.2f} m/s at the specified head shaft speed, "
+        f"which is within the acceptable range for the selected bucket geometry. "
+        f"The centrifugal discharge ratio of {cr:.3f} is "
+        f"{'within the optimal range for clean centrifugal discharge' if 1.0 <= cr <= 1.8 else 'outside the ideal centrifugal range and should be reviewed'}."
     )
 
-    r   = results
-    inp = inputs
-    bkt = r.get("bucket") or {}
+    # 2. Shaft
+    notes.append(
+        f"The head shaft minimum diameter is {d_mm:.0f} mm, governed by {gov}. "
+        f"The shaft spans {span} mm between bearing centrelines. "
+        f"The hub outer diameter is {hub.get('d_hub_mm','—')} mm with a hub engagement length of "
+        f"{hub.get('L_hub_mm','—')} mm. "
+        f"{'The keyway stress check passes at the selected shaft and hub dimensions.' if kc.get('pass') else 'The keyway stress check requires review — consider a larger shaft or splined connection.'}"
+    )
+
+    # 3. Lagging
+    lag_type = (lag.get("lagging_type") or "rubber herringbone").replace("_", " ")
+    lag_t    = lag.get("thickness_mm") or "—"
+    mu_op    = lag.get("mu_operating") or "—"
+    slip_ok  = lag.get("slip_safe", True)
+    notes.append(
+        f"{lag_type.capitalize()} lagging, {lag_t} mm thick, is specified for the head pulley. "
+        f"This provides a belt-to-pulley traction coefficient of {mu_op} under "
+        f"{inp.get('environment','dry')} service conditions. "
+        f"{'Belt slip analysis confirms the lagging selection is adequate at operating tensions.' if slip_ok else 'Belt slip analysis indicates the lagging selection should be reviewed — consider ceramic lagging or increased take-up tension.'}"
+    )
+
+    # 4. Pulley end disc
+    t_min = ed.get("t_governing_mm") or "—"
+    t_spec = int(float(t_min) * 1.20) if t_min != "—" else "—"
+    notes.append(
+        f"Pulley end discs require a structural minimum thickness of {t_min} mm "
+        f"(governed by {ed.get('governed_by','plate bending')}). "
+        f"A specified thickness of {t_spec} mm is recommended in fabrication drawings to provide "
+        f"adequate construction tolerance and weld preparation allowance. "
+        f"Full finite element analysis or detailed annular plate calculation is recommended prior to fabrication."
+    )
+
+    # 5. Take-up
+    W_cw   = tg.get("W_counterweight_kg_gross") or "—"
+    travel = round(tg.get("travel_m", 0) * 1000) if tg else "—"
+    notes.append(
+        f"The gravity take-up counterweight gross mass is {W_cw} kg. "
+        f"The take-up frame must accommodate a minimum carriage travel of {travel} mm, "
+        f"combining thermal expansion, belt elastic elongation, and installation clearance components. "
+        f"A 20% allowance above this minimum is recommended for field adjustment headroom. "
+        f"As an alternative for short elevators, a screw take-up requires a minimum screw core "
+        f"diameter of {ts.get('d_core_min_mm','—')} mm. "
+        f"{'The screw buckling safety factor is adequate.' if ts.get('buckling_safe') else 'The screw take-up requires an intermediate guide support to satisfy the Euler buckling criterion.'}"
+    )
+
+    # 6. Casing
+    pitch = cs.get("recommended_mm") or "—"
+    wind  = cs.get("wind_pressure_Pa") or inp.get("wind_pressure_pa") or "—"
+    p_ok  = cp.get("status") == "ok" if cp else True
+    notes.append(
+        f"The casing plate thickness of {ct_mm} mm is determined by material bulk density and elevator height. "
+        f"Structural stiffeners at {pitch} mm centres limit panel deflection to within acceptable serviceability limits "
+        f"under the {wind} Pa design wind load. "
+        f"{'Panel deflection analysis confirms the stiffener layout is adequate.' if p_ok else 'Panel deflection exceeds the L/360 serviceability limit at the current stiffener pitch — reduce stiffener spacing.'}"
+    )
+
+    # 7. Power & motor
+    P_des = P_tot * sf
+    notes.append(
+        f"The calculated shaft power is {r.get('P_shaft','—')} kW. Total motor input power "
+        f"including drive losses is {P_tot:.1f} kW. A {motor} kW motor has been selected, "
+        f"representing a {(float(motor)/P_tot - 1)*100:.0f}% power margin above the design requirement at the specified service factor. "
+        f"The gearbox reduction ratio should be confirmed with the selected motor supplier based on motor synchronous speed."
+    )
+
+    # 8. Bearing
+    L10_qual = (
+        "exceeds standard requirements"         if L10 >= 80000 else
+        "suitable for continuous 24/7 service"  if L10 >= 40000 else
+        "acceptable for up to 16 hours per day" if L10 >= 20000 else
+        "below the minimum recommended threshold"
+    )
+    notes.append(
+        f"Head shaft bearing life is calculated at {L10:,.0f} hours, which {L10_qual}. "
+        f"Bearing selection should be confirmed from the manufacturer catalogue using the equivalent dynamic load "
+        f"at the specified shaft speed. Lubrication interval and replacement schedule should be established "
+        f"based on the supplier's rated life data for the selected bearing series."
+    )
+
+    # 9. Bolt fatigue
+    GR = bf.get("goodman_ratio") or "—"
+    inf_life = bf.get("pass_infinite_life", True)
+    notes.append(
+        f"Bucket mounting bolt fatigue has been assessed using the Goodman diagram method. "
+        f"The fatigue utilization ratio is {GR}, which is "
+        f"{'well within the infinite life threshold — bolt fatigue is not a design concern at the specified operating conditions' if inf_life else 'above the infinite life threshold — a higher bolt grade or increased bolt diameter is required'}."
+    )
+
+    # 10. Discharge chute
+    dc   = r.get("discharge_chute") or {}
+    perf = dc.get("performance") or {}
+    mnt  = dc.get("maintenance") or {}
+    geom = dc.get("geometry") or {}
+    regime = perf.get("flow_regime", "mass flow")
+    chute_ang = perf.get("chute_angle_deg") or "—"
+    liner_mat = mnt.get("liner_material") or "mild steel"
+    plug_risk = mnt.get("plugging_risk") or "LOW"
+    dust_risk = mnt.get("dust_risk") or "LOW"
+    throw_m   = geom.get("throw_distance_m") or "—"
+    notes.append(
+        f"The discharge chute back-plate angle of {chute_ang} degrees is set by the material trajectory. "
+        f"Flow analysis indicates {regime.lower().replace('_',' ')} conditions at the specified belt speed. "
+        f"{mnt.get('liner_material','Mild steel')} liner, {mnt.get('liner_thickness_mm','—')} mm thick, "
+        f"is specified based on the calculated wear index. "
+        f"Plugging probability is {plug_risk.lower()} and dust generation risk is {dust_risk.lower()} for this material. "
+        f"The material throw distance is {throw_m} m from the pulley centreline, "
+        f"which should be verified against the physical head section geometry."
+    )
+
+    return notes
+
+
+# ─── SF check rows builder ────────────────────────────────────────────────────
+def _build_sf_rows(r, inp):
+    rows = []
+    fb   = "—"
+
+    def sf_str(num, den, invert=False):
+        try:
+            n, d = float(num), float(den)
+            if d == 0: return fb
+            ratio = d / n if invert else n / d
+            return f"{ratio:.2f}"
+        except:
+            return fb
+
+    # 1 Capacity
+    Q = float(r.get("Q") or r.get("Q_th") or 0)
+    Q_req = float(inp.get("Q_req") or 0)
+    cap_ok = Q >= Q_req
+    rows.append(("Capacity",
+                 f"{Q:.1f} t/h",
+                 f"{Q_req:.1f} t/h",
+                 sf_str(Q, Q_req),
+                 "ok" if cap_ok else "fail"))
+
+    # 2 Belt speed
+    v    = float(r.get("v") or r.get("v_ms") or 0)
+    bkt  = r.get("bucket") or {}
+    vmin = float(bkt.get("v_min") or 0.5)
+    vmax = float(bkt.get("v_max") or 9.9)
+    spd_ok = vmin <= v <= vmax
+    rows.append(("Belt speed",
+                 f"{v:.2f} m/s",
+                 f"{vmin:.2f} – {vmax:.2f} m/s",
+                 sf_str(v, vmin),
+                 "ok" if spd_ok else ("warn" if v < vmin else "fail")))
+
+    # 3 Centrifugal ratio
+    cr = float(r.get("cr") or r.get("centrifugal_ratio") or 0)
+    cr_ok = 1.0 <= cr <= 2.5
+    rows.append(("Centrifugal ratio",
+                 f"{cr:.3f}",
+                 "1.00 – 2.50",
+                 fb,
+                 "ok" if cr_ok else "warn"))
+
+    # 4 Belt slip (Euler)
+    T3     = float(r.get("T3") or 0)
+    T3_min = float(r.get("T3_euler_min") or 0)
+    slip_ok = (r.get("slip_safe") is True) or (T3 >= T3_min > 0)
+    rows.append(("Belt slip  T3 / T3_min",
+                 f"{T3/1000:.2f} kN",
+                 f"{T3_min/1000:.2f} kN min",
+                 sf_str(T3, T3_min) if T3_min > 0 else fb,
+                 "ok" if slip_ok else "fail"))
+
+    # 5 Headshaft load
+    R = float(r.get("R_headshaft") or 0)
+    R_lim = 80000.0
+    rows.append(("Headshaft radial load",
+                 f"{R/1000:.2f} kN",
+                 f"{R_lim/1000:.0f} kN",
+                 sf_str(R_lim, R),
+                 "ok" if R <= 50000 else ("warn" if R <= 80000 else "fail")))
+
+    # 6 Shaft (stress vs deflection)
+    d_stress  = float(r.get("d_stress_mm") or 0)
+    d_deflect = float(r.get("d_deflect_mm") or 0)
+    d_gov     = float(r.get("d_mm") or 0)
+    gov_by    = r.get("governed_by") or "—"
+    sf_shaft  = fb
+    if d_stress > 0 and d_gov > 0:
+        sf_shaft = f"{(d_gov / d_stress)**3:.2f}"
+    rows.append(("Shaft diameter (stress)",
+                 f"{d_stress:.1f} mm calc",
+                 f"{d_gov:.1f} mm governing",
+                 sf_shaft,
+                 "info"))
+
+    # 7 Bearing L10
+    L10   = float(r.get("L10") or r.get("L10_hours") or 0)
+    L_min = 20000.0
+    rows.append(("Bearing L10 life",
+                 f"{L10:,.0f} h",
+                 f"{L_min:,.0f} h min",
+                 sf_str(L10, L_min),
+                 "ok" if L10 >= L_min else "warn"))
+
+    # 8 & 9 Key check
+    kc = r.get("key_check") or {}
+    if kc:
+        rows.append(("Keyway shear stress",
+                     f"{kc.get('tau_actual_MPa','—')} MPa",
+                     f"{kc.get('tau_allow_MPa','—')} MPa",
+                     sf_str(float(kc.get('tau_allow_MPa') or 0),
+                            float(kc.get('tau_actual_MPa') or 1)),
+                     "ok" if kc.get("shear_pass") else "fail"))
+        rows.append(("Keyway bearing stress",
+                     f"{kc.get('sigma_actual_MPa','—')} MPa",
+                     f"{kc.get('sigma_allow_MPa','—')} MPa",
+                     sf_str(float(kc.get('sigma_allow_MPa') or 0),
+                            float(kc.get('sigma_actual_MPa') or 1)),
+                     "ok" if kc.get("bearing_pass") else "fail"))
+
+    # 10 Bolt fatigue
+    bf = r.get("bolt_fatigue") or {}
+    if bf:
+        GR = float(bf.get("goodman_ratio") or 0)
+        rows.append(("Bolt fatigue  Goodman ratio",
+                     f"{GR:.3f}",
+                     "< 1.000  (infinite life)",
+                     f"{1/GR:.2f}" if GR > 0 else fb,
+                     "ok" if bf.get("pass_infinite_life") else "fail"))
+
+    # 11 Lagging slip
+    lag = r.get("lagging") or {}
+    if lag:
+        ratio  = float(lag.get("belt_ratio_tight_slack") or 0)
+        euler  = float(lag.get("euler_ratio_lagged") or 0)
+        rows.append(("Lagging belt slip ratio",
+                     f"{ratio:.3f}",
+                     f"{euler:.3f}  (e^mu.theta)",
+                     sf_str(euler, ratio),
+                     "ok" if lag.get("slip_safe") else "fail"))
+
+    # 12 Casing panel deflection
+    cp = r.get("casing_panel") or {}
+    if cp:
+        da = float(cp.get("delta_actual_mm") or 0)
+        dl = float(cp.get("delta_allow_mm") or 0)
+        rows.append(("Casing panel deflection",
+                     f"{da:.2f} mm",
+                     f"{dl:.2f} mm  (L/360)",
+                     sf_str(dl, da),
+                     "ok" if cp.get("status") == "ok" else "warn"))
+
+    return rows
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MAIN BUILDER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def build_report(results: dict, inputs: dict,
+                 project: str = "", doc_ref: str = "",
+                 output_path=None) -> bytes:
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+        leftMargin=ML, rightMargin=MR, topMargin=MT, bottomMargin=MB,
+        title="VECTRIX™ Bucket Elevator Report",
+        author="Jayveecons Engineering & Design")
+
+    r   = results or {}
+    inp = inputs  or {}
     mat = r.get("mat") or r.get("material") or {}
+    bkt = r.get("bucket") or {}
+    hub = r.get("hub") or {}
+    lag = r.get("lagging") or {}
+    ed  = r.get("end_disc") or {}
+    bf  = r.get("bolt_fatigue") or {}
+    tg  = r.get("takeup_gravity") or {}
+    ts  = r.get("takeup_screw") or {}
+    cp  = r.get("casing_panel") or {}
+    cs  = r.get("casing_stiffener") or {}
+    kc  = r.get("key_check") or {}
 
-    # ── Field readers ──────────────────────────────────────────────────────────
-    def rv(*keys, dp=2, fb="—"):
-        """Read scalar field, return formatted string."""
-        for k in keys:
-            v = r.get(k)
-            if v is not None:
-                return fmt(v, dp, fb)
-        return fb
+    def rv(*keys, dp=2, fb="—"): return _rv(r, *keys, dp=dp, fb=fb)
+    def rkn(*keys, dp=2, fb="—"): return _rkn(r, *keys, dp=dp, fb=fb)
 
-    # FIX 1 — tensions are stored in N; report labels them kN
-    def rkn(*keys, dp=2, fb="—"):
-        """Read tension field [N] and return formatted kN string."""
-        for k in keys:
-            v = r.get(k)
-            if v is not None:
-                try:
-                    return fmt(float(v) / 1000.0, dp, fb)
-                except (TypeError, ValueError):
-                    return fb
-        return fb
-
-    # ── Performance ────────────────────────────────────────────────────────────
-    Q_th = rv("Q_th",  "Q",        dp=1)
-    v_ms = rv("v_ms",  "v",        dp=2)
-
-    # ── Power (Task 3 decomposition fields) ────────────────────────────────────
-    P_total  = rv("P_total",     "power_P_total",  dp=2)
-    P_lift   = rv("P_lift",      "power_P_lift",   dp=2)
-    P_dig    = rv("P_digging",   "P_dig",          dp=2)
-    P_frict  = rv("P_drive_loss","power_P_frict",  dp=2)
-    # FIX 5 — new Task 3 fields
-    P_shaft  = rv("P_shaft",     dp=2)
-    H_equiv  = rv("H_equiv",     dp=2)
-    H_total  = rv("H_total",     dp=2)
-
-    # ── Motor ──────────────────────────────────────────────────────────────────
-    motor = r.get("motor_kw") or r.get("motor_kW") or r.get("motorKW") or "—"
-
-    # ── Tensions — FIX 1: divide by 1000 for kN display ───────────────────────
-    T1_kn      = rkn("T1",           dp=2)
-    T2_kn      = rkn("T2",           dp=2)
-    T3_kn      = rkn("T3",           dp=2)
-    F_eff_kn   = rkn("F_eff",        dp=2)
-    R_head_kn  = rkn("R_headshaft",  dp=2)
-
-    # FIX 5 — Task 1 Euler fields
-    T3_ktakeup_kn   = rkn("T3_ktakeup",   dp=2)
-    T3_euler_min_kn = rkn("T3_euler_min", dp=2)
-    euler_ratio     = rv("euler_ratio",   dp=3)
-    slip_safe       = r.get("slip_safe")
-    mu_val          = r.get("mu")   or inp.get("mu",   "—")
-    wrap_val        = r.get("wrap_deg") or inp.get("wrap_deg", "—")
-
-    # FIX 2 — meaningful belt tension ratio: R_headshaft / T3 (tight/slack)
-    r_head_raw = float(r.get("R_headshaft") or 0)
-    t3_raw     = float(r.get("T3") or 1)
-    belt_ratio = fmt(r_head_raw / t3_raw if t3_raw else 0, 3)
-    slip_label = "✓ PASS" if slip_safe is True else ("✗ FAIL" if slip_safe is False else "—")
-
-    # ── Shaft ──────────────────────────────────────────────────────────────────
-    shaft_T     = rv("shaft_torque_Nm","T_Nm",  dp=1)
-    shaft_d     = rv("shaft_d_mm",    "d_mm",   dp=1)
-    governed_by = r.get("governed_by") or "—"
-    # FIX 5 — new v1.2.x shaft geometry fields
-    shaft_span  = rv("shaft_span_mm",            dp=0)
-    shaft_A     = rv("shaft_A_mm",               dp=0)
-    shaft_B     = rv("shaft_B_mm",               dp=0)
-
-    # ── Belt ───────────────────────────────────────────────────────────────────
-    belt_w_raw = r.get("belt_width_mm") or r.get("belt_w") or "—"
-    belt_w     = str(belt_w_raw)
-    belt_cls   = r.get("belt_class") or f"{r.get('belt_ply','—')} PLY"
-
-    # ── Bearing ────────────────────────────────────────────────────────────────
-    L10 = rv("L10_hours","L10", dp=0)
-
-    # ── Discharge ──────────────────────────────────────────────────────────────
-    cr    = rv("centrifugal_ratio","cr",        dp=3)
-    theta = rv("release_angle_deg","theta_rel", dp=1)
-
-    # ── Spacing ────────────────────────────────────────────────────────────────
-    spacing    = r.get("spacing_m") or r.get("spacing")
-    spacing_mm = f"{spacing*1000:.0f}" if spacing else "—"
-
-    # ── Material behaviour (v1.2.x advisory) ───────────────────────────────────
-    rec_fill = rv("recommended_fill_pct", dp=1)
-    bkt_mass = rv("bucket_mass_kg",       dp=2)
-
-    # ── Component design ───────────────────────────────────────────────────────
-    casing_t = rv("casing_t_mm",     dp=1)
-    therm    = rv("thermal_exp_mm",  dp=1)
-    boot_v   = rv("boot_vol_min_m3", dp=4)
-
-    # ── Bucket sub-object ──────────────────────────────────────────────────────
-    bkt_ser = bkt.get("series") or bkt.get("id") or "—"
-    bkt_w   = bkt.get("width_mm")      or bkt.get("W") or "—"
-    bkt_d   = bkt.get("depth_mm")      or bkt.get("H") or "—"
-    bkt_p   = bkt.get("projection_mm") or bkt.get("P") or "—"
-    bkt_v   = bkt.get("volume_L")      or bkt.get("V") or "—"
-    bkt_st  = bkt.get("style")         or bkt.get("type") or "centrifugal"
-
-    # ── Material ───────────────────────────────────────────────────────────────
-    mat_name    = mat.get("name") or inp.get("mat_id", "Custom")
-    mat_density = mat.get("rho_loose") or mat.get("rho") or r.get("rho") or inp.get("rho_kgm3","—")
-
-    # ── Status booleans ────────────────────────────────────────────────────────
-    cap_ok  = float(r.get("Q_th") or r.get("Q") or 0) >= float(inp.get("Q_req", 0))
-    v_raw   = float(r.get("v_ms") or r.get("v") or 0)
-    spd_ok  = v_raw >= 0.5
-    cr_val  = float(r.get("centrifugal_ratio") or r.get("cr") or 0)
-    cr_ok   = 1.0 <= cr_val <= 2.5
-    l10_raw = float(r.get("L10_hours") or r.get("L10") or 0)
-    l10_ok  = l10_raw >= 20000
-    belt_ok = r_head_raw <= 50000
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # STORY BUILD
-    # ──────────────────────────────────────────────────────────────────────────
     story = []
 
-    # 1. Header
+    # ── HEADER ────────────────────────────────────────────────────────────────
     story += header_flowables(inp, r, project, doc_ref)
 
-    # 2. Key KPIs
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 1  INPUT SPECIFICATIONS
+    # ══════════════════════════════════════════════════════════════════════════
+    story += section("1.  Input Specifications")
+
+    mat_name = mat.get("name") or inp.get("mat_id", "Custom")
+    rho      = rv("rho", dp=0)
+
+    # Customer specifications only — engineering parameters go to Section 3
+    story += data_table([
+        ("Required capacity",   f"{inp.get('Q_req','—')} t/h"),
+        ("Lift height",         f"{inp.get('H_m','—')} m"),
+        ("Material",            mat_name),
+        ("Bulk density",        f"{rho} kg/m3"),
+        ("Service environment", inp.get("environment","dry").capitalize()),
+        ("Site wind pressure",  f"{inp.get('wind_pressure_pa',800)} Pa"),
+    ], col_widths=[AVAIL * 0.45, AVAIL * 0.55])
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 2  PERFORMANCE SUMMARY — KPI CARDS
+    # ══════════════════════════════════════════════════════════════════════════
+    story += section("2.  Performance Summary")
+
+    Q    = float(r.get("Q") or r.get("Q_th") or 0)
+    Q_req = float(inp.get("Q_req") or 0)
+    cap_pass = Q >= Q_req
+    cr_val = float(r.get("cr") or 0)
+    L10    = float(r.get("L10") or 0)
+
     story += kpi_row([
-        ("Capacity",          Q_th,        "t/h",  "ok" if cap_ok else "fail"),
-        ("Belt Speed",         v_ms,        "m/s",  "ok" if spd_ok else "warn"),
-        ("Total Power",        P_total,     "kW",   "info"),
-        ("Motor Selected",     str(motor),  "kW",   "info"),
-        ("Centrifugal Ratio",  cr,          "—",    "ok" if cr_ok else "warn"),
-        ("Bearing L10",        L10,         "h",    "ok" if l10_ok else "warn"),
+        ("Capacity",         rv("Q","Q_th",dp=1),       "t/h",
+         "ok" if cap_pass else "fail"),
+        ("Belt Speed",        rv("v","v_ms",dp=2),       "m/s",  "info"),
+        ("Total Power",       rv("P_total",dp=1),        "kW",   "info"),
+        ("Motor Selected",    str(r.get("motor_kw") or r.get("motor_kW") or "—"), "kW", "info"),
+        ("Centrifugal Ratio", rv("cr","centrifugal_ratio",dp=3), "—",
+         "ok" if 1.0 <= cr_val <= 1.8 else "warn"),
+        ("Bearing L10",       f"{L10:,.0f}" if L10 else "—",     "h",
+         "ok" if L10 >= 40000 else ("warn" if L10 >= 20000 else "fail")),
     ])
 
-    # 3. Two-column: Process inputs | Belt tensions
-    # FIX: four_col_table() — flat 4-column layout, no overflow
-    # FIX: ASCII-only labels — Unicode subscripts (T1 not T_subscript) render in Helvetica
-    left_rows = [
-        ("Required capacity",      f"{inp.get('Q_req','—')} t/h"),
-        ("Lift height",            f"{inp.get('H_m','—')} m"),
-        ("Material",               mat_name),
-        ("Bulk density",           f"{mat_density} kg/m3"),
-        ("Head pulley dia.",       f"{inp.get('D_mm','—')} mm"),
-        ("Head shaft speed",       f"{inp.get('n_rpm','—')} rpm"),
-        ("Fill factor (user)",     f"{inp.get('fill_pct','—')}%"),
-        ("Fill (material DB)",     f"{rec_fill}%  advisory"),
-        ("Service factor",         f"{inp.get('sf','—')}"),
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 3  PROCESS LEVEL OUTPUTS — SCHEMATIC + CHARTS
+    # ══════════════════════════════════════════════════════════════════════════
+    story += section("3.  Process Level Outputs")
+
+    # Design configuration sub-table (parameters removed from Section 1)
+    story += sub_section("Design Configuration")
+    story += four_col_table([
+        ("Head pulley dia.",   f"{inp.get('D_mm','—')} mm"),
+        ("Head shaft speed",   f"{inp.get('n_rpm','—')} rpm"),
+        ("Boot pulley dia.",   f"{inp.get('boot_pulley_D_mm','—')} mm"),
+        ("Fill factor",        f"{inp.get('fill_pct','—')}%"),
+    ], [
+        ("Belt type",          inp.get("belt_type","EP")),
+        ("Belt friction  mu",  str(inp.get("mu","—"))),
+        ("Wrap angle",         f"{inp.get('wrap_deg','—')} deg"),
+        ("Service factor",     str(inp.get("sf","—"))),
+    ])
+
+    story += sub_section("System Schematic & Performance Charts")
+
+    schem_w  = AVAIL * 0.54
+    chart_w  = AVAIL * 0.44
+    schem_h  = 270          # was 220 — increased to hold HEAD SECTION + BW labels
+    chart_h  = 104
+
+    schem = _elevator_schematic(r, inp, schem_w, schem_h)
+    ch1   = _speed_chart(r, inp, chart_w, chart_h)
+    ch2   = _trajectory_chart(r, chart_w, chart_h)
+
+    # Chart column: stack speed chart + trajectory
+    chart_col_items = []
+    if ch1: chart_col_items.append(ch1)
+    if ch2:
+        chart_col_items.append(Spacer(1, 6))
+        chart_col_items.append(ch2)
+
+    # Side-by-side table: schematic | charts
+    if chart_col_items:
+        chart_inner = Table(
+            [[item] for item in chart_col_items],
+            colWidths=[chart_w],
+        )
+        chart_inner.setStyle(TableStyle([
+            ("TOPPADDING",    (0,0), (-1,-1), 0),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 0),
+            ("LEFTPADDING",   (0,0), (-1,-1), 0),
+            ("RIGHTPADDING",  (0,0), (-1,-1), 0),
+        ]))
+        side = Table(
+            [[schem, chart_inner]],
+            colWidths=[schem_w, chart_w + AVAIL * 0.02],
+        )
+        side.setStyle(TableStyle([
+            ("VALIGN",        (0,0), (-1,-1), "TOP"),
+            ("TOPPADDING",    (0,0), (-1,-1), 0),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 0),
+            ("LEFTPADDING",   (0,0), (-1,-1), 0),
+            ("RIGHTPADDING",  (0,0), (-1,-1), 0),
+            ("BACKGROUND",    (0,0), (-1,-1), LIGHT_BG),
+            ("BOX",           (0,0), (-1,-1), 0.5, BORDER),
+        ]))
+        story.append(side)
+    else:
+        story.append(schem)
+
+    story.append(Spacer(1, 6))
+
+    # Process data table below charts
+    disc_angle = rv("theta_rel","release_angle_deg", dp=1)
+    story += four_col_table([
+        ("Achieved capacity",  f"{rv('Q','Q_th',dp=1)} t/h"),
+        ("Belt speed",         f"{rv('v','v_ms',dp=2)} m/s"),
+        ("Bucket spacing",     f"{rv('spacing',dp=3)} m"),
+        ("Centrifugal ratio",  rv("cr","centrifugal_ratio",dp=3)),
+    ], [
+        ("Discharge angle",    f"{disc_angle} deg from vertical"),
+        ("Belt width",         f"{r.get('belt_w') or '—'} mm"),
+        ("Recommended fill",   f"{rv('recommended_fill_pct',dp=1)}%"),
+        ("Stream spread",      rv("stream_spread",dp=3)),
+    ])
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 4  POWER BREAKDOWN
+    # ══════════════════════════════════════════════════════════════════════════
+    story += section("4.  Power Breakdown")
+
+    sf_val = float(inp.get("sf") or 1.25)
+    P_tot  = float(r.get("P_total") or 0)
+    motor  = r.get("motor_kw") or r.get("motor_kW") or "—"
+
+    story += data_table([
+        ("Boot equivalent height  (D_boot x Leq)",       f"{rv('H_equiv',dp=2)} m"),
+        ("Total equivalent height (H + H_equiv)",         f"{rv('H_total',dp=2)} m"),
+        ("Lift power  (material only)",                   f"{rv('P_lift',dp=2)} kW"),
+        ("Boot scooping power  (boot loading)",           f"{rv('P_digging',dp=2)} kW"),
+        ("Shaft power  (total load at head shaft)",        f"{rv('P_shaft',dp=2)} kW"),
+        ("Drive losses  (gearbox + bearings + belt flex)", f"{rv('P_drive_loss',dp=2)} kW"),
+        ("Total motor power  (shaft x Ceff)",             f"{rv('P_total',dp=2)} kW"),
+        (f"Design power  (x service factor {sf_val})",   f"{fmt(P_tot * sf_val, 2)} kW"),
+        ("Selected motor",                                f"{motor} kW"),
+        ("Gearbox ratio  (at 1450 rpm input)",
+         f"{1450/float(inp.get('n_rpm',60)):.1f} : 1"),
+        ("Drive efficiency factor  Ceff",                 rv("Ceff",dp=3)),
+        ("CEMA LEQ factor",                               rv("Leq",dp=1)),
+    ], col_widths=[AVAIL * 0.62, AVAIL * 0.38])
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 5  COMPONENT DESIGN OUTPUTS
+    # ══════════════════════════════════════════════════════════════════════════
+    story += section("5.  Component Design Outputs")
+
+    # 5a — Head shaft & drive
+    story += sub_section("5a.  Head Shaft & Drive")
+    story += four_col_table([
+        ("Shaft torque",      f"{rv('T_Nm',dp=1)} Nm"),
+        ("Min shaft dia.",    f"{rv('d_mm',dp=1)} mm"),
+        ("Governed by",       r.get("governed_by") or "—"),
+        ("Allowable shear",   "42 MPa  (keyed shaft)"),
+        ("Bearing span",      f"{rv('shaft_span_mm',dp=0)} mm"),
+        ("Drive arm A",       f"{rv('shaft_A_mm',dp=0)} mm"),
+        ("Tail arm B",        f"{rv('shaft_B_mm',dp=0)} mm"),
+    ], [
+        ("Hub OD",            f"{hub.get('d_hub_mm','—')} mm"),
+        ("Hub length",        f"{hub.get('L_hub_mm','—')} mm"),
+        ("Key  b x h",
+         f"{hub.get('b_key_mm','—')} x {hub.get('h_key_mm','—')} mm"),
+        ("Key shear",
+         f"{kc.get('tau_actual_MPa','—')} / {kc.get('tau_allow_MPa','—')} MPa"),
+        ("Key bearing",
+         f"{kc.get('sigma_actual_MPa','—')} / {kc.get('sigma_allow_MPa','—')} MPa"),
+        ("Key result",
+         "PASS" if kc.get("pass") else ("FAIL" if kc else "—")),
+        ("Bearing L10",       f"{fmt(L10, 0)} h"),
+    ])
+
+    # 5b — Belt & Bucket
+    story += sub_section("5b.  Belt & Bucket Selection")
+    bkt_w = bkt.get("W") or bkt.get("width_mm") or "—"
+    bkt_h = bkt.get("H") or bkt.get("depth_mm") or "—"
+    bkt_p = bkt.get("P") or bkt.get("projection_mm") or "—"
+    bkt_v = bkt.get("V") or bkt.get("volume_L") or "—"
+    story += four_col_table([
+        ("Bucket series",     bkt.get("id") or "—"),
+        ("Style",             bkt.get("type") or bkt.get("style") or "—"),
+        ("Width x depth",     f"{bkt_w} x {bkt_h} mm"),
+        ("Projection",        f"{bkt_p} mm"),
+        ("Volume (struck)",   f"{bkt_v} L"),
+        ("Bucket mass",       f"{rv('bucket_mass_kg',dp=2)} kg"),
+    ], [
+        ("Belt width",        f"{r.get('belt_w','—')} mm"),
+        ("Belt class",        str(r.get("belt_class") or
+                               f"{r.get('belt_ply','—')} PLY")),
+        ("Bucket spacing",    f"{rv('spacing',dp=3)} m"),
+        ("Buckets per metre", f"{1/float(r.get('spacing',1)):.2f}"
+                               if r.get("spacing") else "—"),
+        ("Fill factor",       f"{inp.get('fill_pct','—')}%"),
+        ("Material DB fill",  f"{rv('recommended_fill_pct',dp=1)}%  advisory"),
+    ])
+
+    # 5c — Pulley design
+    story += sub_section("5c.  Pulley Design")
+    t_min  = ed.get("t_governing_mm") or "—"
+    t_spec = int(float(t_min) * 1.20) if t_min != "—" else "—"
+    story += four_col_table([
+        ("Lagging type",       (lag.get("lagging_type") or "—").replace("_"," ")),
+        ("Lagging thickness",  f"{lag.get('thickness_mm','—')} mm"),
+        ("mu dry / wet",       f"{lag.get('mu_dry','—')} / {lag.get('mu_wet','—')}"),
+        ("mu operating",       str(lag.get("mu_operating","—"))),
+        ("Euler limit",        str(lag.get("euler_ratio_lagged","—"))),
+        ("Belt ratio R/T3",    str(lag.get("belt_ratio_tight_slack","—"))),
+        ("Slip check",         "PASS" if lag.get("slip_safe") else
+                               ("FAIL" if lag else "—")),
+    ], [
+        ("Shell thickness",    rv("shell_t_mm","casing_t_mm",dp=1) + " mm"),
+        ("End disc min t",     f"{t_min} mm"),
+        ("End disc specify",   f"{t_spec} mm  (+20%)"),
+        ("Disc governed by",   ed.get("governed_by") or "—"),
+        ("Disc sigma bend",    f"{ed.get('sigma_bending_MPa','—')} MPa"),
+        ("Disc sigma mem",     f"{ed.get('sigma_membrane_MPa','—')} MPa"),
+        ("Force per disc",
+         f"{ed.get('F_per_disc_N', 0)/1000:.2f} kN"
+         if ed.get("F_per_disc_N") else "—"),
+    ])
+
+    # 5d — Take-Up
+    story += sub_section("5d.  Take-Up Design")
+    W_net   = tg.get("W_counterweight_kg_net") or "—"
+    W_gross = tg.get("W_counterweight_kg_gross") or "—"
+    travel  = round(tg.get("travel_m", 0) * 1000) if tg else "—"
+    F_screw_kn = f"{ts.get('F_screw_N', 0)/1000:.2f} kN" if ts.get("F_screw_N") else "—"
+    story += four_col_table([
+        ("Type",                    "Gravity (primary)"),
+        ("Counterweight  net",      f"{W_net} kg"),
+        ("Counterweight  gross",    f"{W_gross} kg"),
+        ("Travel required",         f"{travel} mm"),
+        ("  — thermal",             f"{round(tg.get('travel_thermal_m',0)*1000)} mm"
+                                      if tg else "—"),
+        ("  — elongation",          f"{round(tg.get('travel_elongation_m',0)*1000)} mm"
+                                      if tg else "—"),
+    ], [
+        ("Alt type",                "Screw (alternative)"),
+        ("Screw load",              F_screw_kn),
+        ("Min core dia.",           f"{ts.get('d_core_min_mm','—')} mm"),
+        ("Turns required",          f"{ts.get('turns_required','—')}"),
+        ("Buckling SF",             f"{ts.get('SF_buckling','—')}"),
+        ("Buckling check",          "PASS" if ts.get("buckling_safe") else
+                                    ("FAIL" if ts else "—")),
+    ])
+
+    # 5e — Casing
+    story += sub_section("5e.  Casing & Structural")
+    story += four_col_table([
+        ("Plate thickness",         f"{r.get('casing_t_mm','—')} mm"),
+        ("Max stiffener pitch",     f"{cs.get('max_spacing_mm','—')} mm"),
+        ("Recommended pitch",       f"{cs.get('recommended_mm','—')} mm"),
+        ("Deflection limit",        cs.get("defl_limit") or "L / 360"),
+        ("Wind pressure",           f"{cs.get('wind_pressure_Pa',800)} Pa"),
+    ], [
+        ("Panel delta actual",      f"{cp.get('delta_actual_mm','—')} mm"),
+        ("Panel delta allowed",     f"{cp.get('delta_allow_mm','—')} mm"),
+        ("Panel sigma max",         f"{cp.get('sigma_max_MPa','—')} MPa"),
+        ("Panel check",             "PASS" if cp.get("status")=="ok" else
+                                    ("FAIL" if cp else "—")),
+        ("Bolt fatigue  Goodman",   f"{bf.get('goodman_ratio','—')}"),
+    ])
+
+    # 5f — Discharge Chute
+    dc   = r.get("discharge_chute") or {}
+    perf = dc.get("performance")    or {}
+    mnt  = dc.get("maintenance")    or {}
+    geom = dc.get("geometry")       or {}
+    hs   = dc.get("hood_spoon")     or {}
+    tele = dc.get("telemetry")      or {}
+    chute_recs = dc.get("recommendations") or []
+
+    if dc:
+        story += sub_section("5f.  Discharge Chute Design")
+        story += four_col_table([
+            ("Back-plate angle",       f"{perf.get('chute_angle_deg','—')} deg"),
+            ("Min angle (wall fric.)", f"{perf.get('min_angle_deg','—')} deg"),
+            ("Angle adequate",         "YES" if perf.get("angle_adequate") else "NO"),
+            ("Flow regime",            perf.get("flow_regime","—")),
+            ("Mass-flow threshold",    f"{perf.get('mass_flow_angle_deg','—')} deg"),
+            ("Governed by",            perf.get("governed_by","—")),
+        ], [
+            ("Spout width",            f"{geom.get('spout_width_mm','—')} mm"),
+            ("Throw distance",         f"{geom.get('throw_distance_m','—')} m"),
+            ("Throat velocity",        f"{geom.get('throat_velocity_mps','—')} m/s"),
+            ("Geom plugging risk",     geom.get("plugging_risk","—")),
+            ("Hood radius",            f"{hs.get('hood_radius_m','—')} m"),
+            ("Capture efficiency",     str(hs.get("capture_efficiency","—"))),
+        ])
+        story += four_col_table([
+            ("Wear index",             f"{mnt.get('wear_index','—')}  ({mnt.get('wear_rating','—')})"),
+            ("Liner material",         mnt.get("liner_material","—")),
+            ("Liner thickness",        f"{mnt.get('liner_thickness_mm','—')} mm"),
+            ("Liner grade",            mnt.get("liner_grade","—")),
+        ], [
+            ("Plugging risk",          mnt.get("plugging_risk","—")),
+            ("Plugging index",         f"{mnt.get('plugging_index','—')}"),
+            ("Dust risk",              mnt.get("dust_risk","—")),
+            ("Recommended sensors",    ", ".join(tele.get("recommended_sensors",[]) or ["None"])),
+        ])
+        if chute_recs:
+            story += sub_section("Chute Recommendations")
+            for cr_txt in chute_recs:
+                story.append(Paragraph(f"*  {cr_txt}", ST["body"]))
+                story.append(Spacer(1, 2))
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 6  ENGINEERING VERIFICATION  (with Safety Factors)
+    # ══════════════════════════════════════════════════════════════════════════
+    story += section("6.  Engineering Verification")
+    sf_rows = _build_sf_rows(r, inp)
+    story  += sf_checks_table(sf_rows)
+
+    # Design Recommendations (if any failures)
+    design_recs = r.get("design_recommendations") or []
+    if design_recs:
+        story += sub_section("Corrective Actions")
+        for rec in sorted(design_recs, key=lambda x: 0 if x.get("status")=="fail" else 1):
+            ic  = "✗" if rec["status"]=="fail" else "⚠"
+            hdr = f"{ic}  {rec['check'].upper()}  —  {rec['problem']}"
+            story.append(Paragraph(hdr, ST["h3"]))
+            for j, act in enumerate(rec.get("actions", [])):
+                story.append(Paragraph(f"    {j+1}.  {act}", ST["body"]))
+            story.append(Spacer(1, 3))
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 7  DESIGN NOTES  (plain English — no formulae)
+    # ══════════════════════════════════════════════════════════════════════════
+    story += section("7.  Design Notes")
+    note_labels = [
+        "Capacity & Selection",
+        "Head Shaft & Hub",
+        "Pulley Lagging",
+        "Pulley End Disc",
+        "Take-Up System",
+        "Casing & Structural",
+        "Power & Motor",
+        "Bearing Life",
+        "Bucket Bolt Fatigue",
+        "Discharge Chute",
     ]
-    right_rows = [
-        # ASCII labels — subscripts 1/2/3 rendered as regular digits
-        ("Material tension T1",        f"{T1_kn} kN"),
-        ("Self-weight tension T2",     f"{T2_kn} kN"),
-        ("Effective tension F=T1+T2",  f"{F_eff_kn} kN"),
-        ("Slack-side tension T3",      f"{T3_kn} kN"),
-        ("Belt tight side R=F+T3",     f"{R_head_kn} kN"),
-        ("Belt ratio R/T3",            belt_ratio),
-        ("Euler limit e^(mu*theta)",   euler_ratio),
-        ("Belt slip check",            slip_label),
-        ("Belt class",                 str(belt_cls)),
-        ("Belt width",                 f"{belt_w} mm"),
-        ("Friction mu / wrap",         f"{mu_val} / {wrap_val} deg"),
-    ]
+    try:
+        notes = _design_notes(r, inp)
+    except Exception:
+        notes = []
 
-    story += section("1. Design Parameters & Belt Tensions")
-    story += four_col_table(left_rows, right_rows)
+    for label, note in zip(note_labels, notes):
+        story.append(Paragraph(f"<b>{label}:</b>  {note}", ST["note"]))
+        story.append(Spacer(1, 3))
 
-    # 4. Two-column: Bucket geometry | Shaft & drive
-    bkt_rows = [
-        ("Series / style",          f"{bkt_ser}  {bkt_st}"),
-        ("Width x depth",           f"{bkt_w} x {bkt_d} mm"),
-        ("Projection (P)",          f"{bkt_p} mm"),
-        ("Volume (struck)",         f"{bkt_v} L"),
-        ("Bucket mass (catalogue)", f"{bkt_mass} kg"),
-        ("Spacing",                 f"{spacing_mm} mm"),
-        ("Buckets per metre",       f"{1/spacing:.2f}" if spacing else "—"),
-        ("Active vol / bucket",
-            f"{float(bkt_v or 0)*inp.get('fill_pct',75)/100:.3f} L"
-            if bkt_v != "—" else "—"),
-    ]
-
-    # FIX 4 — 42 MPa (keyed shaft) in plain ASCII; value shortened to fit column
-    shaft_rows = [
-        ("Shaft torque",            f"{shaft_T} Nm"),
-        ("Min shaft dia.",          f"{shaft_d} mm"),
-        ("Governed by",             governed_by),
-        ("Allowable shear (keyed)", "42 MPa — ASME B17.1"),
-        ("Bearing span L",          f"{shaft_span} mm"),
-        ("Drive arm A",             f"{shaft_A} mm"),
-        ("Tail arm B",              f"{shaft_B} mm"),
-        ("Bearing L10 life",        f"{L10} h"),
-        ("Discharge angle",         f"{theta} deg from vertical"),
-        ("Recommended fill",        f"{rec_fill}% (material DB)"),
-        ("Casing thickness",        f"{casing_t} mm"),
-        ("Boot min. volume",        f"{boot_v} m3"),
-    ]
-
-    story += section("2. Bucket Geometry & Mechanical Design")
-    story += four_col_table(bkt_rows, shaft_rows)
-
-    # 5. Power breakdown — full-width single table with wider label column
-    sf      = float(inp.get("sf", 1.25))
-    P_tot_raw = float(r.get("P_total") or 0)
-    story += section("3. Power Breakdown  (CEMA 375 §4 LEQ Method)")
-    avail = W - ML - MR
-    pw_rows = [
-        ("Boot equiv. height  H_equiv = D_boot x Leq", f"{H_equiv} m"),
-        ("Total equiv. height H_total = H + H_equiv",  f"{H_total} m"),
-        ("Lift power   P_lift = G x g x H_lift / 1000",f"{P_lift} kW"),
-        ("Boot power   P_dig  = G x g x H_equiv / 1000",f"{P_dig} kW"),
-        ("Shaft power  P_shaft = G x g x H_total / 1000",f"{P_shaft} kW"),
-        ("Drive losses = P_shaft x (Ceff - 1)",        f"{P_frict} kW"),
-        ("Total power  P_total = P_shaft x Ceff",      f"{P_total} kW"),
-        (f"Design power  (x SF {sf})",                 f"{fmt(P_tot_raw * sf, 2)} kW"),
-        ("Selected motor",                             f"{motor} kW"),
-        ("Gearbox ratio (@ 1450 rpm input)",           f"{1450/inp.get('n_rpm',60):.1f} : 1"),
-    ]
-    story += data_table(pw_rows, col_widths=[avail * 0.60, avail * 0.40])
-
-    # 6. Inlet chute (unchanged)
-    ic = r.get("inlet_chute") or {}
-    if ic:
-        story += section("4. Inlet Chute Design")
-        chute_rows = [
-            ("Inlet area required",  f"{fmt(ic.get('area_m2'),4)} m²"),
-            ("Chute width",          f"{fmt(ic.get('width_mm'),0)} mm"),
-            ("Chute slope angle",    f"{fmt(ic.get('chute_angle'),1)}°"),
-            ("Feed velocity",        f"{fmt(ic.get('feed_v_ms'),2)} m/s"),
-            ("Liner recommendation", ic.get("liner","—")),
-        ]
-        story += data_table(chute_rows)
-
-    # 7. Engineering checks
-    checks = r.get("checks") or []
-    if checks:
-        story += section("5. Engineering Validation Checks")
-        story += checks_table(checks)
-
-    # 8. Notes — plain ASCII throughout (no Unicode special chars)
-    story += section("6. Notes")
-    notes = [
-        "Shaft sizing per ASME B17.1 / CEMA 375 §4.  Allowable shear = 42 MPa "
-        "(keyed shaft, 6000 psi, A36 mild steel).  Use 55 MPa only for keyway-free shafts.  "
-        "Add 10-15% diameter margin in detailed design for keyway stress concentration.",
-
-        "Belt tension ratio (R/T3) must remain below the Euler limit e^(mu x theta) for "
-        "no-slip operation.  Increase take-up tension, add snub pulley, or upgrade to "
-        "ceramic lagging if slip check fails.",
-
-        "Power decomposition: P_shaft = G x g x H_total / 1000 where "
-        "H_total = H_lift + D_boot x Leq.  Ceff covers gearbox, bearing, and belt-flexure "
-        "losses.  P_digging is a shaft load (boot scooping), NOT a drive loss — no "
-        "double-counting with Ceff.",
-
-        "Belt ply rating requires verification against manufacturer catalogue using working "
-        "tension per mm belt width with SF >= 6.  Confirm EP or ST class with belt supplier.",
-
-        "Bearing L10 life computed from combined head-shaft radial load R = T1+T2+T3.  "
-        "Consult bearing manufacturer for actual catalogue selection.",
-
-        "Recommended fill % is an advisory from the VECTRIX material database (CEMA §6 "
-        "fill factor adjusted for cohesion and moisture).  It does not override the "
-        "user-entered fill factor used in capacity calculation.",
-
-        "This report is a preliminary engineering estimate.  Full detailed design, "
-        "structural analysis, and CEMA 375-2017 compliance verification are required "
-        "before fabrication.",
-    ]
-    for n in notes:
-        story.append(Paragraph(f"*  {n}", ST["caption"]))
-        story.append(Spacer(1, 2))
-
-    # 9. Footer
-    story.append(Spacer(1, 4))
+    # ── FOOTER ───────────────────────────────────────────────────────────────
+    story.append(Spacer(1, 6))
     story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER))
     story.append(Spacer(1, 2))
     story.append(Paragraph(
         f"VECTRIX™ Bucket Elevator Module  •  Jayveecons Engineering &amp; Design  "
         f"•  Generated {datetime.now().strftime('%d %b %Y %H:%M')}  "
         f"•  AkshayVipra EL-MEC PVT. LTD.",
-        ST["footer"]
-    ))
+        ST["ftr"]))
 
     doc.build(story)
     pdf_bytes = buf.getvalue()
@@ -711,238 +1299,29 @@ def build_report(results: dict, inputs: dict,
 
 # ─── CLI test ──────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Sample data uses actual backend field names (rv() handles fallbacks)
-    sample_inputs = {
-        "Q_req": 120, "H_m": 30, "mat_id": "limestone",
-        "rho_kgm3": 1450, "D_mm": 500, "n_rpm": 65,
-        "fill_pct": 75, "bucket_gap": 20,
-        "mu": 0.35, "wrap_deg": 180, "sf": 1.25,
-    }
-    sample_results = {
-        # Performance — backend uses Q and v (not Q_th / v_ms)
-        "Q": 123.4, "v": 1.70, "spacing": 0.275,
-        "cr": 1.19, "theta_rel": 33.2,
-        # Power — Task 3 fields
-        "P_lift": 9.82, "P_drive_loss": 0.59, "P_digging": 0.41,
-        "P_shaft": 10.23, "P_total": 12.79,
-        "H_equiv": 2.45, "H_total": 32.45,
-        # Tensions — in N (rkn() divides by 1000 for kN display)
-        "T1":  4010, "T2":  7220, "T3":  7876,
-        "F_eff": 11230, "R_headshaft": 19106,
-        "T3_ktakeup": 7876, "T3_euler_min": 5621,
-        # Task 1 Euler
-        "euler_ratio": 3.003, "slip_safe": True,
-        # Motor / belt
-        "motor_kw": 15, "belt_w": 330, "belt_ply": 4,
-        # Shaft — v1.2.x geometry
-        "T_Nm": 1878, "d_mm": 55.2, "d_stress_mm": 52.1, "d_deflect_mm": 55.2,
-        "governed_by": "deflection",
-        "shaft_span_mm": 635, "shaft_A_mm": 286, "shaft_B_mm": 349,
-        # Bearing
-        "L10": 38200,
-        # Material advisory
-        "recommended_fill_pct": 72.5,
-        "bucket_mass_kg": 3.9,
-        # Bucket
-        "bucket": {
-            "id": "A", "type": "centrifugal",
-            "W": 254, "H": 178, "P": 165, "V": 5.0,
-        },
-        "mat": {
-            "name": "Limestone (crushed)", "rho_loose": 1442,
-            "abr_code": 6, "flowability": 3, "Km": 1.2,
-        },
-        "rho": 1442,
-        "checks": [
-            {"type": "ok",   "msg": "Capacity 123.4 t/h ≥ required 120 t/h [CEMA 375 §4]"},
-            {"type": "ok",   "msg": "Speed 1.70 m/s within CEMA range 1.14–1.91 m/s [CEMA 375 §6]"},
-            {"type": "ok",   "msg": "CR=1.190 — optimal centrifugal range 1.0–1.8 [CEMA 375 §3]"},
-            {"type": "ok",   "msg": "Belt slip check: T3=7876 N ≥ Euler min 5621 N (e^μθ=3.003) [CEMA 375 §4]"},
-            {"type": "warn", "msg": "Abrasion class 6/7 — AR400/AR500 buckets and casing liners strongly recommended [CEMA 550]"},
-            {"type": "ok",   "msg": "Bearing L10=38200 h — excellent [CEMA 375 §4]"},
-        ],
-        "status": "warning",
-        "Leq": 9, "Ceff": 1.25,
-    }
+    import sys, types
+    sys.path.insert(0, ".")
+    models_s = types.ModuleType("models")
+    class BEI:
+        Q_req=120; H_m=25; mat_id="wheat"; custom_rho=0
+        D_mm=500; n_rpm=65; boot_pulley_D_mm=300
+        fill_pct=75; bucket_gap=25; auto_bucket=True; bucket_id="AA"
+        Leq=0; Ceff=0; K_takeup=0.7; mu=0.35; wrap_deg=180; sf=1.25
+        environment="dry"; belt_type="EP"; wind_pressure_pa=800
+    class OR:
+        base_input=BEI(); objective="balanced"
+    models_s.BucketElevatorInput=BEI; models_s.OptimizerRequest=OR
+    sys.modules["models"] = models_s
 
+    from calculations import solve_elevator
+    r = solve_elevator(BEI())
+    inp = {
+        "Q_req":120,"H_m":25,"mat_id":"wheat","D_mm":500,"n_rpm":65,
+        "boot_pulley_D_mm":300,"fill_pct":75,"bucket_gap":25,"auto_bucket":True,
+        "Leq":0,"Ceff":0,"K_takeup":0.7,"mu":0.35,"wrap_deg":180,"sf":1.25,
+        "environment":"dry","belt_type":"EP","wind_pressure_pa":800,
+    }
     out = "/mnt/user-data/outputs/bucket_elevator_report.pdf"
-    build_report(sample_results, sample_inputs,
-                 project="Cement Plant SC-101",
-                 doc_ref="VX-BE-2024-001",
-                 output_path=out)
-    print(f"Report written → {out}")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# VARIANT COMPARISON REPORT
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def build_variant_report(candidates: list, inputs: dict,
-                         project: str = "", doc_ref: str = "",
-                         output_path: "str | None" = None) -> bytes:
-    """
-    Build A4 portrait PDF comparing multiple optimizer candidates.
-    candidates: list of optimizer result dicts (from run_optimizer).
-    """
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=A4,
-        leftMargin=ML, rightMargin=MR, topMargin=MT, bottomMargin=MB,
-        title="VECTRIX™ Design Variants Comparison",
-        author="Jayveecons Engineering & Design",
-    )
-    inp = inputs
-    now = datetime.now().strftime("%d %b %Y  %H:%M")
-    n   = len(candidates)
-    story = []
-
-    # Header
-    hdr = Table([[
-        [
-            Paragraph("<b>VECTRIX™</b>", ParagraphStyle("logo",
-                fontName="Helvetica-Bold", fontSize=16, textColor=white, leading=18)),
-            Paragraph("BUCKET ELEVATOR", ParagraphStyle("sub",
-                fontName="Helvetica", fontSize=7, textColor=MUTED2, leading=9)),
-            Paragraph("Design Variant Comparison", ParagraphStyle("sub2",
-                fontName="Helvetica", fontSize=6.5, textColor=MUTED, leading=8)),
-        ],
-        [
-            Paragraph(f"<b>Project:</b> {project or 'Unspecified'}", ParagraphStyle("pi",
-                fontName="Helvetica", fontSize=8, textColor=white, leading=10)),
-            Paragraph(f"<b>Ref:</b> {doc_ref or 'VX-BE-VAR'}", ParagraphStyle("pi",
-                fontName="Helvetica", fontSize=8, textColor=white, leading=10)),
-            Paragraph(f"<b>Date:</b> {now}", ParagraphStyle("pi",
-                fontName="Helvetica", fontSize=8, textColor=white, leading=10)),
-            Paragraph(f"<b>Variants:</b> {n} selected", ParagraphStyle("pi",
-                fontName="Helvetica", fontSize=8, textColor=white, leading=10)),
-        ],
-        [
-            Paragraph(f"<b>{n} VARIANTS</b>", ParagraphStyle("st",
-                fontName="Helvetica-Bold", fontSize=14, textColor=BLUE,
-                alignment=TA_CENTER, leading=16)),
-            Paragraph("Comparison Report", ParagraphStyle("stl",
-                fontName="Helvetica", fontSize=6.5, textColor=MUTED,
-                alignment=TA_CENTER, leading=8)),
-        ],
-    ]], colWidths=[(W - ML - MR) * 0.28, (W - ML - MR) * 0.46, (W - ML - MR) * 0.26])
-    hdr.setStyle(TableStyle([
-        ("BACKGROUND",   (0,0), (-1,-1), NAVY),
-        ("VALIGN",       (0,0), (-1,-1), "MIDDLE"),
-        ("TOPPADDING",   (0,0), (-1,-1), 8),
-        ("BOTTOMPADDING",(0,0), (-1,-1), 8),
-        ("LEFTPADDING",  (0,0), (-1,-1), 6),
-        ("RIGHTPADDING", (0,0), (-1,-1), 6),
-        ("LINEBELOW",    (0,0), (-1, 0), 2.5, CRIMSON),
-    ]))
-    story += [hdr, Spacer(1, 8)]
-
-    # Design basis
-    story += section("Design Basis")
-    basis = [
-        ("Required capacity", f"{inp.get('Q_req','—')} t/h"),
-        ("Lift height",       f"{inp.get('H_m','—')} m"),
-        ("Material",          inp.get('mat_id','—')),
-        ("Head pulley dia.",  f"{inp.get('D_mm','—')} mm"),
-        ("Service factor",    str(inp.get('sf','—'))),
-        ("Fill target",       f"{inp.get('fill_pct','—')}%"),
-    ]
-    story += data_table(basis, col_widths=[(W-ML-MR)*0.4, (W-ML-MR)*0.6])
-
-    # Variant comparison table
-    story += section("Variant Comparison")
-    col_w_first = 42*mm
-    col_w_unit  = 14*mm
-    col_w_var   = (W - ML - MR - col_w_first - col_w_unit) / max(n, 1)
-    col_widths  = [col_w_first, col_w_unit] + [col_w_var] * n
-
-    def vrow(label, unit, getter):
-        vals = []
-        for c in candidates:
-            try:    vals.append(str(getter(c)))
-            except: vals.append("—")
-        return ([Paragraph(label, ST["body"]),
-                 Paragraph(unit, ST["caption"])] +
-                [Paragraph(v, ST["mono"]) for v in vals])
-
-    col_labels = ["Parameter", "Units"] + [f"Variant {i+1}" for i in range(n)]
-    header_row = [Paragraph(h, ST["h3"]) for h in col_labels]
-    table_data = [header_row,
-        vrow("Bucket series", "—",    lambda c: c.get("bucket_id","—")),
-        vrow("RPM",           "rpm",  lambda c: c.get("rpm","—")),
-        vrow("Fill factor",   "%",    lambda c: c.get("fill","—")),
-        vrow("Belt speed",    "m/s",  lambda c: c.get("speed","—")),
-        vrow("Capacity",      "t/h",  lambda c: c.get("capacity","—")),
-        vrow("Total power",   "kW",   lambda c: c.get("power","—")),
-        vrow("Motor selected","kW",   lambda c: c.get("motor_kw","—")),
-        vrow("Head load R",   "kN",   lambda c: c.get("T1_kN","—")),
-        vrow("Cent. ratio",   "—",    lambda c: c.get("cr","—")),
-        vrow("Score",         "—",    lambda c: fmt(c.get("score"),3)),
-        vrow("Rank",          "—",    lambda c: c.get("rank","—")),
-    ]
-    ranks         = [c.get("rank", 99) for c in candidates]
-    t = Table(table_data, colWidths=col_widths, repeatRows=1)
-    style_cmds = [
-        ("BACKGROUND",   (0, 0), (-1,  0), NAVY),
-        ("TEXTCOLOR",    (0, 0), (-1,  0), TEXT),
-        ("FONTNAME",     (0, 0), (-1,  0), "Helvetica-Bold"),
-        ("FONTSIZE",     (0, 0), (-1,  0), 7.5),
-        ("GRID",         (0, 0), (-1, -1), 0.3, BORDER),
-        ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",   (0, 0), (-1, -1), 2.5),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 2.5),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 3),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-    ]
-    for i in range(1, len(table_data)):
-        bg = LIGHT_BG if i % 2 == 1 else white
-        style_cmds.append(("BACKGROUND", (0, i), (-1, i), bg))
-    best_rank_idx = ranks.index(min(ranks)) if ranks else 0
-    col_idx = 2 + best_rank_idx
-    style_cmds.append(("LINEABOVE", (col_idx, 0), (col_idx, 0), 2.5, GREEN))
-    style_cmds.append(("LINEBELOW", (col_idx, len(table_data)-1),
-                        (col_idx, len(table_data)-1), 1.5, GREEN))
-    t.setStyle(TableStyle(style_cmds))
-    story += [t, Spacer(1, 6)]
-
-    # Per-variant checks
-    story += section("Engineering Validation by Variant")
-    for i, c in enumerate(candidates):
-        story.append(Paragraph(
-            f"<b>Variant {i+1}</b>  —  Bucket {c.get('bucket_id','—')} · "
-            f"{c.get('rpm','—')} RPM · Fill {c.get('fill','—')}% · "
-            f"P={c.get('power','—')} kW · CR={c.get('cr','—')}",
-            ST["h3"]
-        ))
-        cv    = float(c.get("capacity", 0) or 0)
-        Q_req = float(inp.get("Q_req", 0))
-        cr_v  = float(c.get("cr", 0) or 0)
-        chks  = [
-            ("pass" if cv >= Q_req else "fail",
-             f"Capacity: {cv:.1f} t/h {'≥' if cv >= Q_req else '<'} {Q_req:.1f} t/h"),
-            ("pass" if 1.0 <= cr_v <= 2.5 else "warn",
-             f"CR={cr_v:.3f} — {'optimal centrifugal' if 1.0 <= cr_v <= 2.5 else 'outside 1.0–2.5 range'}"),
-        ]
-        for st, msg in chks:
-            icon  = {"pass":"✓","warn":"⚠","fail":"✗"}.get(st,"ℹ")
-            style = {"pass":"tag_ok","warn":"tag_warn","fail":"tag_fail"}.get(st,"tag_ok")
-            story.append(Table(
-                [[Paragraph(icon, ST[style]), Paragraph(msg, ST["check_msg"])]],
-                colWidths=[8*mm, W-ML-MR-8*mm],
-            ))
-        story.append(Spacer(1, 4))
-
-    # Footer
-    story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER))
-    story.append(Spacer(1, 2))
-    story.append(Paragraph(
-        f"VECTRIX™  ·  Jayveecons Engineering &amp; Design  "
-        f"·  Generated {now}  ·  AkshayVipra EL-MEC PVT. LTD.",
-        ST["footer"]
-    ))
-
-    doc.build(story)
-    pdf_bytes = buf.getvalue()
-    if output_path:
-        with open(output_path, "wb") as f:
-            f.write(pdf_bytes)
-    return pdf_bytes
+    build_report(r, inp, project="Grain Terminal GT-01",
+                 doc_ref="VX-BE-2026-001", output_path=out)
+    print(f"PDF written  →  {out}  ({len(open(out,'rb').read()):,} bytes)")

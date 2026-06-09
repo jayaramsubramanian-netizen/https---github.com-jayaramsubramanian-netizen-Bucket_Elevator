@@ -47,7 +47,7 @@ import math
 import warnings
 from typing import Optional
 
-from constants import (
+from .constants import (
     GRAVITY,
     DEFAULT_STARTUP_FACTOR,
     DEFAULT_SERVICE_FACTOR,

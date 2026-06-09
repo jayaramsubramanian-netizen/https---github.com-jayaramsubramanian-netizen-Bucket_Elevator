@@ -12,23 +12,49 @@
 // Right col: KPI cards + engineering checks (scrollable)
 //
 // The top nav pill tabs now control what fills the RIGHT column:
-//   Design     → KPI cards + checks summary
-//   Optimizer  → optimizer panel
-//   Components → component detail
-//   Checks     → full checks panel
+//   Results     → KPI cards + design recommendations + checks summary
+//   Optimizer   → optimizer panel
+//   Components  → existing component detail + structural card + take-up/casing card
+//   Checks      → full checks panel
 //
 // The schematic ALWAYS stays visible in centre regardless of right-col tab.
+//
+// v1.1.0 — Three new components wired in (structural.py v1.3.0 results)
+// ─────────────────────────────────────────────────────────────────────────
+// NEW  DesignRecommendationsPanel — shows in "Results" tab.
+//      Renders design_recommendations[] from solve_elevator().
+//      Empty state = green "Design passes all checks" — always visible.
+//      Placed between the inline checks strip and the KPI grid.
+//
+// NEW  StructuralDetailCard — shows in "Components" tab (after ComponentPanel).
+//      Renders hub, key_check, lagging, end_disc, bolt_fatigue.
+//
+// NEW  TakeupCasingCard — shows in "Components" tab (after StructuralDetailCard).
+//      Renders takeup_gravity, takeup_screw, casing_panel, casing_stiffener.
+//
+// Why no 5th tab?  360px right column fits 4 tabs comfortably; a 5th makes
+// the pill group cramped.  StructuralDetailCard and TakeupCasingCard are
+// conceptually component-design outputs, so the existing "Components" tab
+// is the correct home.  DesignRecommendationsPanel goes in "Results" because
+// it's the first thing an engineer needs to act on.
+// ─────────────────────────────────────────────────────────────────────────
 
-import { useState, useEffect } from "react";
-import { useElevatorCalc } from "./hooks/useElevatorCalc";
-import InputSidebar      from "./components/InputSidebar";
-import ElevatorSchematic from "./components/ElevatorSchematic";
-import KpiGrid           from "./components/KpiGrid";
-import ChartsPanel       from "./components/ChartsPanel";
-import OptimizerPanel    from "./components/OptimizerPanel";
-import ComponentPanel    from "./components/ComponentPanel";
-import ChecksPanel       from "./components/ChecksPanel";
-import SaveLoadModal     from "./components/SaveLoadModal";
+import { useState, useEffect }       from "react";
+import { useElevatorCalc }           from "./hooks/useElevatorCalc";
+import InputSidebar                  from "./components/InputSidebar";
+import ElevatorSchematic             from "./components/ElevatorSchematic";
+import KpiGrid                       from "./components/KpiGrid";
+import ChartsPanel                   from "./components/ChartsPanel";
+import OptimizerPanel                from "./components/OptimizerPanel";
+import ComponentPanel                from "./components/ComponentPanel";
+import ChecksPanel                   from "./components/ChecksPanel";
+import SaveLoadModal                 from "./components/SaveLoadModal";
+// v1.1.0 — New structural result components
+import DesignRecommendationsPanel    from "./components/DesignRecommendationsPanel";
+import StructuralDetailCard          from "./components/StructuralDetailCard";
+import TakeupCasingCard              from "./components/TakeupCasingCard";
+// v1.2.0 — Chute flow integration
+import ChuteFlowCard                 from "./components/ChuteFlowCard";
 
 const RIGHT_TABS = [
   { id: "design",     label: "Results",    badge: null },
@@ -78,13 +104,15 @@ export default function BucketElevatorPage({ onResultsChange }) {
     if (onResultsChange) onResultsChange({ results, inputs });
   }, [results, inputs, onResultsChange]);
 
-  const failCount  = results?.checks?.filter((c) => c.type === "fail").length  ?? 0;
-  const warnCount  = results?.checks?.filter((c) => c.type === "warn").length  ?? 0;
+  const failCount = results?.checks?.filter((c) => c.type === "fail").length ?? 0;
+  const warnCount = results?.checks?.filter((c) => c.type === "warn").length ?? 0;
+  // Design recommendations count — shown in Results tab header
+  const recCount  = results?.design_recommendations?.length ?? 0;
 
   return (
     <>
       {/* ══════════════════════════════════════════════════
-          MODULE NAV BAR (unchanged from Task 3)
+          MODULE NAV BAR
           ══════════════════════════════════════════════════ */}
       <div className="nav">
         <div className="nav-brand">
@@ -153,21 +181,35 @@ export default function BucketElevatorPage({ onResultsChange }) {
           })}
         </div>
 
-        {/* Live KPI strip */}
-        {results && (
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginRight: 12 }}>
-            {[
-              { label:"Q", value: results.Q?.toFixed(0) ?? "—", unit:"t/h",
-                color: (results.Q??0)>=inputs.Q_req ? "var(--success)" : "var(--danger)" },
-              { label:"P", value: results.P_total?.toFixed(1) ?? "—", unit:"kW",
-                color: "var(--warning)" },
-              { label:"v", value: results.v?.toFixed(2) ?? "—", unit:"m/s",
-                color: "var(--primary)" },
+        {/* Live KPI strip — always shown, skeleton when loading */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginRight: 12 }}>
+          {(() => {
+            const fmt = (v, digits) =>
+              v != null && !Number.isNaN(Number(v))
+                ? Number(v).toFixed(digits)
+                : loading ? "···" : "—";
+
+            const Q       = results?.Q;
+            const P       = results?.P_total;
+            const v       = results?.v;
+            const capPass = Q != null && Number(Q) >= Number(inputs.Q_req);
+
+            return [
+              { label:"Q", value: fmt(Q, 0), unit:"t/h",
+                color: Q == null
+                  ? "var(--muted)"
+                  : capPass ? "var(--success)" : "var(--danger)" },
+              { label:"P", value: fmt(P, 1), unit:"kW",
+                color: P == null ? "var(--muted)" : "var(--warning)" },
+              { label:"v", value: fmt(v, 2), unit:"m/s",
+                color: v == null ? "var(--muted)" : "var(--primary)" },
             ].map((k) => (
               <div key={k.label} style={{
                 display: "flex", flexDirection: "column", alignItems: "center",
                 padding: "3px 8px", background: "var(--surface)",
-                borderRadius: "var(--r-md)", border: "1px solid var(--border)", minWidth: 48,
+                borderRadius: "var(--r-md)", border: "1px solid var(--border)",
+                minWidth: 48, opacity: loading ? 0.6 : 1,
+                transition: "opacity 0.2s",
               }}>
                 <span style={{ fontSize: 9, color: "var(--muted)", fontWeight: 600,
                   letterSpacing: ".06em", textTransform: "uppercase" }}>{k.label}</span>
@@ -176,9 +218,9 @@ export default function BucketElevatorPage({ onResultsChange }) {
                 <span style={{ fontSize: 9, color: "var(--muted)",
                   fontFamily: "JetBrains Mono,monospace" }}>{k.unit}</span>
               </div>
-            ))}
-          </div>
-        )}
+            ));
+          })()}
+        </div>
 
         <button className="btn-secondary"
           style={{ padding: "5px 12px", fontSize: 11, flexShrink: 0 }}
@@ -231,7 +273,9 @@ export default function BucketElevatorPage({ onResultsChange }) {
         }}>
           <ColHeader
             label="Equipment Model"
-            sub={results ? `Bucket ${results.bucket?.id} · ${results.bucket?.W}×${results.bucket?.H}mm · ${results.bucket?.V}L` : "Calculating…"}
+            sub={results
+              ? `Bucket ${results.bucket?.id} · ${results.bucket?.W}×${results.bucket?.H}mm · ${results.bucket?.V}L`
+              : "Calculating…"}
             action={
               results && (
                 <div style={{ display: "flex", gap: 6 }}>
@@ -329,9 +373,14 @@ export default function BucketElevatorPage({ onResultsChange }) {
           {/* Right column scrollable content */}
           <div style={{ flex: 1, overflowY: "auto" }}>
 
+            {/* ─────────────────────────────────────────────────
+                RESULTS TAB
+                Inline checks strip  →  Design Recommendations
+                →  KPI cards
+                ───────────────────────────────────────────────── */}
             {activeRight === "design" && (
               <>
-                {/* Inline checks summary strip */}
+                {/* Inline fail/warn summary strip */}
                 {results?.checks && (
                   <div style={{
                     padding: "8px 12px",
@@ -339,18 +388,21 @@ export default function BucketElevatorPage({ onResultsChange }) {
                     borderBottom: "1px solid var(--border)",
                     background: "var(--panel2)",
                   }}>
-                    {results.checks.filter(c => c.type === "fail" || c.type === "warn").slice(0,3).map((c,i) => (
-                      <div key={i} style={{
-                        display: "flex", alignItems: "flex-start", gap: 7,
-                        fontSize: 11, lineHeight: 1.4,
-                        color: c.type === "fail" ? "var(--danger)" : "var(--warning)",
-                      }}>
-                        <span style={{ flexShrink: 0, fontSize: 10 }}>
-                          {c.type === "fail" ? "✗" : "⚠"}
-                        </span>
-                        {c.msg}
-                      </div>
-                    ))}
+                    {results.checks
+                      .filter(c => c.type === "fail" || c.type === "warn")
+                      .slice(0, 3)
+                      .map((c, i) => (
+                        <div key={i} style={{
+                          display: "flex", alignItems: "flex-start", gap: 7,
+                          fontSize: 11, lineHeight: 1.4,
+                          color: c.type === "fail" ? "var(--danger)" : "var(--warning)",
+                        }}>
+                          <span style={{ flexShrink: 0, fontSize: 10 }}>
+                            {c.type === "fail" ? "✗" : "⚠"}
+                          </span>
+                          {c.msg}
+                        </div>
+                      ))}
                     {results.checks.filter(c => c.type === "fail" || c.type === "warn").length === 0 && (
                       <div style={{ fontSize: 11, color: "var(--success)", display: "flex", gap: 6 }}>
                         <span>✓</span> All checks passed
@@ -358,6 +410,17 @@ export default function BucketElevatorPage({ onResultsChange }) {
                     )}
                   </div>
                 )}
+
+                {/*
+                  v1.1.0 NEW — Design Recommendations
+                  Placed between the raw checks strip and the KPI grid so the
+                  engineer sees corrective actions before diving into numbers.
+                  Empty array → green "Design passes all checks" card.
+                */}
+                <DesignRecommendationsPanel
+                  recommendations={results?.design_recommendations}
+                />
+
                 {/* KPI cards — compact grid in right column */}
                 <div style={{ padding: "0 0 16px" }}>
                   <KpiGrid results={results} inputs={inputs} compact />
@@ -365,14 +428,54 @@ export default function BucketElevatorPage({ onResultsChange }) {
               </>
             )}
 
+            {/* ─────────────────────────────────────────────────
+                OPTIMIZER TAB
+                ───────────────────────────────────────────────── */}
             {activeRight === "optimizer" && (
               <OptimizerPanel inputs={inputs} onApply={applyOptimizer} />
             )}
 
+            {/* ─────────────────────────────────────────────────
+                COMPONENTS TAB
+                Original ComponentPanel  +  v1.1.0 new cards:
+                  StructuralDetailCard  (hub/key/lagging/disc/fatigue)
+                  TakeupCasingCard      (take-up / casing panel)
+                ───────────────────────────────────────────────── */}
             {activeRight === "components" && (
-              <ComponentPanel results={results} inputs={inputs} />
+              <>
+                {/* Original component panel (inlet chute, casing thickness, etc.) */}
+                <ComponentPanel results={results} inputs={inputs} />
+
+                {/* v1.1.0 — Structural detail sub-sections */}
+                {results && (
+                  <>
+                    {/* Section divider */}
+                    <div style={{
+                      padding: "10px 12px 4px",
+                      fontSize: 9, fontWeight: 700, letterSpacing: ".08em",
+                      textTransform: "uppercase", color: "var(--text3)",
+                      borderTop: "2px solid var(--border)",
+                      background: "var(--panel2)",
+                    }}>
+                      Structural Design Detail
+                    </div>
+
+                    {/* Hub, keyway, lagging, end disc, bolt fatigue */}
+                    <StructuralDetailCard results={results} />
+
+                    {/* Take-up and casing structural */}
+                    <TakeupCasingCard results={results} />
+
+                    {/* Discharge chute design */}
+                    <ChuteFlowCard results={results} />
+                  </>
+                )}
+              </>
             )}
 
+            {/* ─────────────────────────────────────────────────
+                CHECKS TAB
+                ───────────────────────────────────────────────── */}
             {activeRight === "checks" && (
               <ChecksPanel results={results} inputs={inputs} />
             )}

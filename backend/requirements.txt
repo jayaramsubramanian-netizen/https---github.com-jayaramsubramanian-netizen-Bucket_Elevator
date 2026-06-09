@@ -8,3 +8,4 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.11.0
 python-multipart>=0.0.9
+reportlab>=3.8.0

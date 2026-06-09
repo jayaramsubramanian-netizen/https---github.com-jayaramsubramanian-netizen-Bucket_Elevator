@@ -41,8 +41,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from database import get_db, init_db
-from models import BucketElevatorInput, DesignRecord, OptimizerRequest
-from calculations import solve_elevator, run_optimizer, MATERIALS, BUCKET_SERIES, MOTOR_SIZES
+from .models import BucketElevatorInput, DesignRecord, OptimizerRequest
+from .calculations import solve_elevator, run_optimizer, MATERIALS, BUCKET_SERIES, MOTOR_SIZES
 from generate_report import build_report, build_variant_report
 
 

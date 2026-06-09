@@ -166,36 +166,47 @@ function KpiCard({ label, value, unit, status, target, margin, formula, disc }) 
 export default function KpiGrid({ results, inputs, compact }) {
   if (!results || !results.bucket) return null;
 
-  const capOK    = results.Q >= inputs.Q_req;
-  const capMargin = (((results.Q - inputs.Q_req) / inputs.Q_req) * 100).toFixed(1);
-  const speedOK  = results.v >= (results.bucket.v_min ?? 0.5)
-                && results.v <= (results.bucket.v_max ?? 3.0);
+  // Safe formatter: handles null, undefined, and 0 correctly.
+  // Optional chaining (?.) returns undefined for 0 (falsy), causing ?? to show "—".
+  // This explicit check fixes that.
+  const fmt = (v, digits = 2) =>
+    v != null && !Number.isNaN(Number(v)) ? Number(v).toFixed(digits) : "—";
+
+  const capOK    = results.Q != null && Number(results.Q) >= Number(inputs.Q_req);
+  const capMargin = capOK != null && results.Q != null
+    ? (((Number(results.Q) - Number(inputs.Q_req)) / Number(inputs.Q_req)) * 100).toFixed(1)
+    : "0.0";
+  const speedOK  = results.v != null
+    && Number(results.v) >= (results.bucket.v_min ?? 0.5)
+    && Number(results.v) <= (results.bucket.v_max ?? 3.0);
   const T_total  = (results.T1 ?? 0) + (results.T2 ?? 0) + (results.T3 ?? 0);
-  const motorMargin = (((results.motor_kw - results.P_total) / results.P_total) * 100).toFixed(1);
-  const crOK     = results.cr >= 1.0 && results.cr <= 1.8;
-  const l10OK    = results.L10 >= 40000;
+  const motorMargin = results.motor_kw != null && results.P_total != null && results.P_total > 0
+    ? (((Number(results.motor_kw) - Number(results.P_total)) / Number(results.P_total)) * 100).toFixed(1)
+    : "0.0";
+  const crOK     = results.cr != null && results.cr >= 1.0 && results.cr <= 1.8;
+  const l10OK    = results.L10 != null && results.L10 >= 40000;
 
   const kpis = [
     {
       label: "Design Capacity",
-      value: results.Q?.toFixed(1) ?? "—",
+      value: fmt(results.Q, 1) ?? "—",
       unit: "t/h",
       disc: "process",
       status: capOK ? "ok" : "fail",
       target: `${inputs.Q_req} t/h required`,
-      margin: parseFloat(capMargin),
+      margin: capMargin != null ? parseFloat(capMargin) : null,
       formula:
 `Q = (v / s) · Vb · η · ρ · 3.6
-v = ${results.v?.toFixed(3)} m/s  (belt speed)
-s = ${results.spacing?.toFixed(4)} m  (bucket spacing)
+v = ${fmt(results.v, 3)} m/s  (belt speed)
+s = ${fmt(results.spacing, 4)} m  (bucket spacing)
 Vb = ${results.bucket?.V} L = ${(results.bucket?.V/1000).toFixed(4)} m³
 η = ${(inputs.fill_pct/100).toFixed(2)}  (fill factor ${inputs.fill_pct}%)
 ρ = ${results.rho} kg/m³
-→ Q = ${results.Q?.toFixed(2)} t/h  [CEMA 375 §4]`,
+→ Q = ${fmt(results.Q, 2)} t/h  [CEMA 375 §4]`,
     },
     {
       label: "Belt Speed",
-      value: results.v?.toFixed(3) ?? "—",
+      value: fmt(results.v, 3) ?? "—",
       unit: "m/s",
       disc: "mechanical",
       status: speedOK ? "ok" : "warn",
@@ -206,25 +217,25 @@ Vb = ${results.bucket?.V} L = ${(results.bucket?.V/1000).toFixed(4)} m³
 D = ${inputs.D_mm} mm = ${(inputs.D_mm/1000).toFixed(3)} m
 n = ${inputs.n_rpm} rpm
 → v = π × ${(inputs.D_mm/1000).toFixed(3)} × ${inputs.n_rpm} / 60
-→ v = ${results.v?.toFixed(4)} m/s  [CEMA 375 §3]`,
+→ v = ${fmt(results.v, 4)} m/s  [CEMA 375 §3]`,
     },
     {
       label: "Total Drive Power",
-      value: results.P_total?.toFixed(2) ?? "—",
+      value: fmt(results.P_total, 2) ?? "—",
       unit: "kW",
       disc: "power",
       status: "info",
-      target: `Lift ${results.P_lift?.toFixed(2)} + Dig ${results.P_digging?.toFixed(2)} kW`,
+      target: `Lift ${fmt(results.P_lift, 2)} + Dig ${fmt(results.P_digging, 2)} kW`,
       margin: null,
       formula:
 `P = (P_lift + P_digging) × Ceff
 P_lift    = G × g × H / 1000
          = ${(results.Q/3.6).toFixed(3)} × 9.81 × ${inputs.H_m} / 1000
-         = ${results.P_lift?.toFixed(3)} kW
+         = ${fmt(results.P_lift, 3)} kW
 P_digging = G × g × (d × Leq) / 1000
-         = ${results.P_digging?.toFixed(3)} kW  (Leq=${results.Leq})
+         = ${fmt(results.P_digging, 3)} kW  (Leq=${results.Leq})
 Ceff      = ${results.Ceff}
-→ P_total = ${results.P_total?.toFixed(3)} kW  [CEMA 375 §4 LEQ]`,
+→ P_total = ${fmt(results.P_total, 3)} kW  [CEMA 375 §4 LEQ]`,
     },
     {
       label: "Motor Selected",
@@ -233,10 +244,10 @@ Ceff      = ${results.Ceff}
       disc: "power",
       status: "ok",
       target: `SF ${inputs.sf} · design ${(results.P_total * inputs.sf).toFixed(2)} kW`,
-      margin: parseFloat(motorMargin),
+      margin: motorMargin != null ? parseFloat(motorMargin) : null,
       formula:
 `Motor = next std size ≥ P_total × SF
-P_total = ${results.P_total?.toFixed(3)} kW
+P_total = ${fmt(results.P_total, 3)} kW
 SF      = ${inputs.sf}
 Design  = ${(results.P_total * inputs.sf).toFixed(3)} kW
 Selected: ${results.motor_kw} kW  [IEC/NEMA std sizes]`,
@@ -258,7 +269,7 @@ T3 = ${(results.T3/1000).toFixed(2)} kN  (slack side, K=${inputs.K_takeup})
     },
     {
       label: "Head Shaft Dia.",
-      value: results.d_mm?.toFixed(0) ?? "—",
+      value: fmt(results.d_mm, 0) ?? "—",
       unit: "mm",
       disc: "structural",
       status: "info",
@@ -266,10 +277,10 @@ T3 = ${(results.T3/1000).toFixed(2)} kN  (slack side, K=${inputs.K_takeup})
       margin: null,
       formula:
 `Stress check (ASME DE-Goodman):
-  d_stress   = ${results.d_stress_mm?.toFixed(1)} mm
+  d_stress   = ${fmt(results.d_stress_mm, 1)} mm
 Deflection check (CEMA 0.0015 in/in):
-  d_deflect  = ${results.d_deflect_mm?.toFixed(1)} mm
-Governing    = ${results.d_mm?.toFixed(1)} mm
+  d_deflect  = ${fmt(results.d_deflect_mm, 1)} mm
+Governing    = ${fmt(results.d_mm, 1)} mm
 T_shaft      = ${(results.T_Nm/1000).toFixed(3)} kNm  [CEMA 375 §4]`,
     },
     {
@@ -288,7 +299,7 @@ Selected  = ${results.belt_w} mm  [CEMA std widths]`,
     },
     {
       label: "Centrifugal Ratio",
-      value: results.cr?.toFixed(3) ?? "—",
+      value: fmt(results.cr, 3) ?? "—",
       unit: "—",
       disc: "discharge",
       status: crOK ? "ok" : results.cr < 1.0 ? "warn" : "warn",
@@ -296,18 +307,18 @@ Selected  = ${results.belt_w} mm  [CEMA std widths]`,
       margin: null,
       formula:
 `CR = v² / (r · g)
-v  = ${results.v?.toFixed(4)} m/s
+v  = ${fmt(results.v, 4)} m/s
 r  = ${(inputs.D_mm/2000).toFixed(4)} m  (head pulley radius)
 g  = 9.81 m/s²
-→ CR = ${results.v?.toFixed(4)}² / (${(inputs.D_mm/2000).toFixed(4)} × 9.81)
-→ CR = ${results.cr?.toFixed(4)}
-Release angle θ = ${results.theta_rel?.toFixed(1)}° from vertical  [CEMA 375 §3]`,
+→ CR = ${fmt(results.v, 4)}² / (${(inputs.D_mm/2000).toFixed(4)} × 9.81)
+→ CR = ${fmt(results.cr, 4)}
+Release angle θ = ${fmt(results.theta_rel, 1)}° from vertical  [CEMA 375 §3]`,
     },
     {
       label: "Bearing L10 Life",
       value: results.L10 > 9999
         ? `${(results.L10 / 1000).toFixed(0)}k`
-        : results.L10?.toFixed(0) ?? "—",
+        : fmt(results.L10, 0) ?? "—",
       unit: "h",
       disc: "mechanical",
       status: results.L10 < 20000 ? "fail" : results.L10 < 40000 ? "warn" : "ok",
@@ -316,9 +327,9 @@ Release angle θ = ${results.theta_rel?.toFixed(1)}° from vertical  [CEMA 375 �
       formula:
 `L10 = (C / P)³ × 10⁶ / (60 × n)
 C   = 355,000 N  (basic dynamic rating)
-P   = ${results.R_headshaft?.toFixed(0)} N  (radial load)
+P   = ${fmt(results.R_headshaft, 0)} N  (radial load)
 n   = ${inputs.n_rpm} rpm
-→ L10 = ${results.L10?.toFixed(0)} h  [ISO 281]`,
+→ L10 = ${fmt(results.L10, 0)} h  [ISO 281]`,
     },
     {
       label: "Bucket Series",

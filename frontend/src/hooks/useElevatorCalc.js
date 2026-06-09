@@ -44,6 +44,10 @@ export const DEFAULT_INPUTS = {
   mu: 0.35,
   wrap_deg: 180,
   sf: 1.25,
+  // v1.3.0 — structural module inputs
+  environment:      "dry",   // "dry" | "humid" | "wet" | "submerged"  (lagging selection)
+  belt_type:        "EP",    // "EP" | "ST"  (lagging selection)
+  wind_pressure_pa: 800,     // [Pa]  (casing panel check — typical industrial site)
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -250,6 +254,22 @@ function normaliseResult(raw) {
     stream_spread:        raw.stream_spread        ?? null,
     mat_behavior:         raw.mat_behavior         ?? null,
     recommended_fill_pct: raw.recommended_fill_pct ?? null,
+
+    // v1.3.0 — Structural detail blocks
+    hub:       raw.hub       ?? null,
+    key_check: raw.key_check ?? null,
+    lagging:   raw.lagging   ?? null,
+    end_disc:  raw.end_disc  ?? null,
+    bolt_fatigue:   raw.bolt_fatigue   ?? null,
+    takeup_gravity: raw.takeup_gravity ?? null,
+    takeup_screw:   raw.takeup_screw   ?? null,
+    casing_panel:     raw.casing_panel     ?? null,
+    casing_stiffener: raw.casing_stiffener ?? null,
+    design_recommendations: raw.design_recommendations ?? [],
+
+    // v1.4.0 — Discharge chute (ChuteFlowEngine integration)
+    // Shape: { performance, maintenance, telemetry, recommendations, geometry, hood_spoon }
+    discharge_chute: raw.discharge_chute ?? null,
 
     // ── Validation ──────────────────────────────────────────────
     checks,
