@@ -363,8 +363,8 @@ def _elevator_schematic(results, inputs, W_draw, H_draw):
     # Casing background
     d.add(Rect(cx - cas_hw - 2, bot_y - r_boot,
                (cas_hw + 2) * 2, h_elev + r_head + r_boot,
-               fillColor=col_cas, strokeColor=HexColor("#8aa0b8"),
-               strokeWidth=1.5))
+               fillColor=col_cas, strokeColor=HexColor("#8aa0b8"),  # type: ignore[arg-type]
+               strokeWidth=1.5))  # type: ignore[arg-type]
 
     # Belt lines
     for sx in (-blt_hw, blt_hw):
@@ -376,24 +376,24 @@ def _elevator_schematic(results, inputs, W_draw, H_draw):
         by = bot_y + (i + 0.4) * h_elev / 7
         bw, bh = 14, 9
         d.add(Rect(cx - blt_hw - bw, by - bh/2, bw, bh,
-                   fillColor=col_bkt,
-                   strokeColor=HexColor("#7a90a8"), strokeWidth=0.8))
+                   fillColor=col_bkt,  # type: ignore[arg-type]
+                   strokeColor=HexColor("#7a90a8"), strokeWidth=0.8))  # type: ignore[arg-type]
 
     # Boot pulley
     d.add(Circle(cx, bot_y, r_boot,
-                 fillColor=col_pul, strokeColor=col_dk, strokeWidth=1.5))
-    d.add(Circle(cx, bot_y, r_boot * 0.32, fillColor=col_dk, strokeColor=None))
+                 fillColor=col_pul, strokeColor=col_dk, strokeWidth=1.5))  # type: ignore[arg-type]
+    d.add(Circle(cx, bot_y, r_boot * 0.32, fillColor=col_dk, strokeColor=None))  # type: ignore[arg-type]
 
     # Head pulley
     d.add(Circle(cx, top_y, r_head,
                  fillColor=col_pul, strokeColor=col_dk, strokeWidth=1.5))
-    d.add(Circle(cx, top_y, r_head * 0.28, fillColor=col_dk, strokeColor=None))
+    d.add(Circle(cx, top_y, r_head * 0.28, fillColor=col_dk, strokeColor=None))  # type: ignore[arg-type]
 
     # Motor block
     mx, my = cx + cas_hw + 40, top_y
     mw, mh = 38, 24
     d.add(Rect(mx, my - mh/2, mw, mh,
-               fillColor=col_mtr, strokeColor=HexColor("#0a7040"), strokeWidth=1))
+               fillColor=col_mtr, strokeColor=HexColor("#0a7040"), strokeWidth=1))  # type: ignore[arg-type]
     d.add(Line(cx + r_head, my, mx, my,
                strokeColor=col_dim, strokeWidth=1.5, strokeDashArray=[4,2]))
     motor_kw = r.get("motor_kw") or r.get("motor_kW") or "—"
@@ -404,16 +404,17 @@ def _elevator_schematic(results, inputs, W_draw, H_draw):
                   fontSize=6, fillColor=white, textAnchor="middle",
                   fontName="Helvetica"))
 
-    # Discharge trajectory (small arc)
+    # Discharge trajectory arc — drawn BEFORE labels so labels sit on top
     traj = r.get("trajectory", [])
     if traj and len(traj) >= 3:
-        pts = traj[:18]
+        pts = traj[:20]
         xs  = [p.get("x", 0) for p in pts]
         ys  = [p.get("y", 0) for p in pts]
         xr  = max(max(xs) - min(xs), 1)
         yr  = max(max(ys) - min(ys), 1)
-        sc_x = 70 / xr
-        sc_y = 55 / yr
+        # Scale: fit arc into a 72×50 pt zone to the right of the pulley
+        sc_x = 72 / xr
+        sc_y = 50 / yr
         base_x = cx + r_head
         base_y = top_y
         tx_pts = [(base_x + (x - min(xs)) * sc_x,
@@ -423,6 +424,13 @@ def _elevator_schematic(results, inputs, W_draw, H_draw):
                        tx_pts[i+1][0], tx_pts[i+1][1],
                        strokeColor=col_trj, strokeWidth=1.3,
                        strokeDashArray=[3,3]))
+        # Discharge angle annotation — at the arc start, NOT on top of the arc
+        theta_deg = r.get("theta_rel") or r.get("release_angle_deg")
+        if theta_deg is not None:
+            d.add(GString(cx + r_head + 4, top_y - 10,
+                          f"theta={float(theta_deg):.1f}deg",
+                          fontSize=5.5, fillColor=col_trj, textAnchor="start",
+                          fontName="Helvetica"))
 
     # Dimension: height
     dx = cx - cas_hw - 22
@@ -443,13 +451,17 @@ def _elevator_schematic(results, inputs, W_draw, H_draw):
                   fontSize=6.5, fillColor=col_dim, textAnchor="middle",
                   fontName="Helvetica"))
 
-    # Pulley dia label
+    # Pulley dia label — BELOW the pulley (y = top_y - r_head - 10)
+    # Moved from beside-pulley to below-pulley to clear the trajectory arc zone
     D_mm = inp.get("D_mm", "?")
-    d.add(GString(cx + r_head + 10, top_y + 3, f"D = {D_mm} mm",
-                  fontSize=6.5, fillColor=col_dk, textAnchor="start",
+    n_rpm = inp.get("n_rpm", "?")
+    d.add(GString(cx + r_head + 6, top_y - r_head - 10,
+                  f"D={D_mm}mm  {n_rpm}rpm",
+                  fontSize=6, fillColor=col_dk, textAnchor="start",
                   fontName="Helvetica"))
 
-    # Section labels
+    # Section labels — positioned clear of each other and within bounds
+    # HEAD SECTION: centred above the BW dimension line
     d.add(GString(cx, top_y + r_head + 28, "HEAD SECTION",
                   fontSize=7.5, fillColor=col_dk, textAnchor="middle",
                   fontName="Helvetica-Bold"))
@@ -466,10 +478,16 @@ def _elevator_schematic(results, inputs, W_draw, H_draw):
                   fontSize=7, fillColor=col_arr, textAnchor="end",
                   fontName="Helvetica-Bold"))
 
-    # Discharge label
-    d.add(GString(cx + r_head + 12, top_y + 20, "DISCHARGE",
+    # DISCHARGE label — positioned FAR RIGHT of schematic (clear of arc zone)
+    # Drawn with a short leader line back toward the arc end-point
+    d.add(GString(cx + cas_hw + 55, top_y + 30, "DISCHARGE",
                   fontSize=7, fillColor=col_arr, textAnchor="start",
                   fontName="Helvetica-Bold"))
+    # Thin leader line: from label left-edge to approximate arc end
+    d.add(Line(cx + cas_hw + 53, top_y + 33,
+               cx + r_head + 60, top_y + 14,
+               strokeColor=col_arr, strokeWidth=0.7,
+               strokeDashArray=[2,2]))
 
     return d
 
@@ -482,7 +500,7 @@ def _speed_chart(results, inputs, W_draw, H_draw):
     if len(sweep) < 2:
         return None
     d = Drawing(W_draw, H_draw)
-    d.add(Rect(0, 0, W_draw, H_draw, fillColor=LIGHT_BG, strokeColor=None))
+    d.add(Rect(0, 0, W_draw, H_draw, fillColor=LIGHT_BG, strokeColor=None))  # type: ignore[arg-type]
 
     rpms = [p["rpm"]      for p in sweep]
     caps = [p["capacity"] for p in sweep]
@@ -551,7 +569,7 @@ def _trajectory_chart(results, W_draw, H_draw):
     if len(traj) < 3:
         return None
     d = Drawing(W_draw, H_draw)
-    d.add(Rect(0, 0, W_draw, H_draw, fillColor=LIGHT_BG, strokeColor=None))
+    d.add(Rect(0, 0, W_draw, H_draw, fillColor=LIGHT_BG, strokeColor=None))  # type: ignore[arg-type]
 
     xs = [p.get("x",0) for p in traj]
     ys = [p.get("y",0) for p in traj]
@@ -885,6 +903,34 @@ def _build_sf_rows(r, inp):
                      f"{dl:.2f} mm  (L/360)",
                      sf_str(dl, da),
                      "ok" if cp.get("status") == "ok" else "warn"))
+
+    # 13 Casing clearance (stream vs head-section wall)
+    cc = r.get("casing_clearance") or {}
+    if cc:
+        clears    = cc.get("clears", True)
+        clearance = float(cc.get("clearance_m") or 0) * 1000   # → mm
+        max_x_mm  = float(cc.get("max_x_m") or 0) * 1000
+        wall_mm   = float(cc.get("casing_wall_x_m") or 0) * 1000
+        status_cc = "ok" if clears and clearance >= 20 else ("warn" if clears else "fail")
+        rows.append(("Casing clearance  (stream vs wall)",
+                     f"{max_x_mm:.1f} mm stream reach",
+                     f"{wall_mm:.1f} mm wall",
+                     f"{clearance:.1f} mm margin",
+                     status_cc))
+
+    # 14 Stream interception (chute inlet capture)
+    sc = r.get("stream_chute") or {}
+    if sc:
+        intercepted = sc.get("intercepted", False)
+        ang = sc.get("impact_angle_deg")
+        vel = sc.get("impact_velocity_mps")
+        ang_s = f"{ang:.1f} deg" if ang is not None else fb
+        vel_s = f"{vel:.2f} m/s" if vel is not None else fb
+        rows.append(("Stream  →  chute interception",
+                     ang_s + "  impact angle",
+                     vel_s + "  impact velocity",
+                     fb,
+                     "ok" if intercepted else "warn"))
 
     return rows
 
@@ -1310,14 +1356,14 @@ if __name__ == "__main__":
         environment="dry"; belt_type="EP"; wind_pressure_pa=800
     class OR:
         base_input=BEI(); objective="balanced"
-    models_s.BucketElevatorInput=BEI; models_s.OptimizerRequest=OR
+    models_s.BucketElevatorInput=BEI; models_s.OptimizerRequest=OR  # type: ignore[attr-defined]
     sys.modules["models"] = models_s
 
     try:
         from .calculations import solve_elevator
     except ImportError:
         from calculations import solve_elevator
-    r = solve_elevator(BEI())
+    r = solve_elevator(BEI())  # type: ignore[arg-type]
     inp = {
         "Q_req":120,"H_m":25,"mat_id":"wheat","D_mm":500,"n_rpm":65,
         "boot_pulley_D_mm":300,"fill_pct":75,"bucket_gap":25,"auto_bucket":True,

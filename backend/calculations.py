@@ -601,6 +601,38 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     trajectory_upper = _to_mm_dicts(traj_upper)
     trajectory_lower = _to_mm_dicts(traj_lower)
 
+    # ── Casing clearance check (v1.4.0) ──────────────────────────────────────
+    # Checks whether the discharge stream strikes the head-section casing wall
+    # before entering the chute.  casing_inner_x_m = half belt-width + 50 mm
+    # standard CEMA clearance allowance.  Uses the centre trajectory (worst case;
+    # upper bound would be more conservative but is checked separately in the
+    # stream-scatter risk via CR).
+    _BW_for_cas      = float(BW_mm or 400)
+    _casing_inner_x  = _BW_for_cas / 2000.0 + 0.050   # m — half BW + 50 mm
+    casing_clearance = DischargePhysics.casing_clearance_check(
+        trajectory          = traj_center,
+        casing_half_width_m = _casing_inner_x,
+    )
+
+    # ── Stream interception check (v1.4.0) ────────────────────────────────────
+    # Checks whether the stream actually enters the discharge chute opening.
+    # The chute inlet is modelled as a near-vertical slot at the inner casing
+    # wall, from 20 mm above the release point down to 2× D below it.
+    # A missed stream (intercepted=False) means material bypasses the chute —
+    # a real design failure that prompts the chute-angle recommendation.
+    _rp_chute   = DischargePhysics.calculate_release_point(v, inp.D_mm / 2000.0)
+    _chute_x    = _casing_inner_x - 0.010     # chute lip: 10 mm inside casing wall
+    _chute_ytop = _rp_chute.y0 + 0.020        # 20 mm above release height
+    _chute_ybot = _rp_chute.y0 - inp.D_mm / 500.0  # ≈ 2× D below release
+    stream_chute = DischargePhysics.stream_intersects_chute(
+        trajectory    = traj_center,
+        chute_x0_m   = _chute_x,
+        chute_y0_m   = _chute_ytop,
+        chute_x1_m   = _chute_x,
+        chute_y1_m   = _chute_ybot,
+        release_speed = v,
+    )
+
     # ── Bearing life ──────────────────────────────────────────────────────────
     L10 = calc_bearing_life(R_head, inp.n_rpm)
 
@@ -642,14 +674,16 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     checks = _build_checks(
         inp, mat, mat_behavior, bucket, Q, v, cr, T1, T2, T3, F_eff,
         R_head, d_mm, d_stress_mm, d_deflect_mm, governed_by, L10, Ceff,
-        euler_chk       = euler_chk,
-        key_check       = key,
-        lagging         = lagging,
-        end_disc        = end_disc,
-        bolt_fatigue    = bolt_fatigue,
-        takeup_grav     = takeup_gravity,
-        casing_panel    = casing_panel,
-        discharge_chute = discharge_chute,
+        euler_chk        = euler_chk,
+        key_check        = key,
+        lagging          = lagging,
+        end_disc         = end_disc,
+        bolt_fatigue     = bolt_fatigue,
+        takeup_grav      = takeup_gravity,
+        casing_panel     = casing_panel,
+        discharge_chute  = discharge_chute,
+        casing_clearance = casing_clearance,
+        stream_chute     = stream_chute,
     )
 
     # ── Design recommendations ────────────────────────────────────────────────
@@ -746,6 +780,9 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "design_recommendations": design_recs,
         # Chute flow — v1.4.0
         "discharge_chute":   discharge_chute,
+        # Casing clearance + stream interception — v1.4.0 (wired from physics.py)
+        "casing_clearance":  casing_clearance,
+        "stream_chute":      stream_chute,
         # Checks
         "checks": checks,
         # Context
@@ -760,14 +797,16 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
 def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   T1, T2, T3, F_eff, R_head,
                   d_mm, d_stress_mm, d_deflect_mm, governed_by, L10, Ceff,
-                  euler_chk:       dict = None,
-                  key_check:       dict = None,
-                  lagging:         dict = None,
-                  end_disc:        dict = None,
-                  bolt_fatigue:    dict = None,
-                  takeup_grav:     dict = None,
-                  casing_panel:    dict = None,
-                  discharge_chute: dict = None,
+                  euler_chk:        dict = None,
+                  key_check:        dict = None,
+                  lagging:          dict = None,
+                  end_disc:         dict = None,
+                  bolt_fatigue:     dict = None,
+                  takeup_grav:      dict = None,
+                  casing_panel:     dict = None,
+                  discharge_chute:  dict = None,
+                  casing_clearance: dict = None,
+                  stream_chute:     dict = None,
                   ) -> list:
     checks = []
     ok   = lambda msg: {"type": "ok",   "msg": msg}
@@ -1033,6 +1072,47 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         else:
             checks.append(ok(
                 f"Chute plugging: {plug} risk — {liner} liner specified"))
+
+    # 21 — Casing clearance (stream vs head-section wall)
+    if casing_clearance:
+        clears    = casing_clearance.get("clears", True)
+        clearance = casing_clearance.get("clearance_m", 0.0)
+        max_x     = casing_clearance.get("max_x_m", 0.0)
+        wall_x    = casing_clearance.get("casing_wall_x_m", 0.0)
+        if not clears:
+            sx = casing_clearance.get("strike_x_m")
+            sy = casing_clearance.get("strike_y_m")
+            loc = f" at x={sx:.3f}m, y={sy:.3f}m" if sx is not None else ""
+            checks.append(fail(
+                f"Casing clearance: stream strikes casing wall{loc} "
+                f"(stream max x={max_x:.3f}m, wall at {wall_x:.3f}m) — "
+                f"increase casing width or reduce belt speed [CEMA 375 §7]"))
+        elif clearance < 0.020:
+            checks.append(warn(
+                f"Casing clearance: only {clearance*1000:.0f}mm margin "
+                f"(stream max x={max_x:.3f}m, wall at {wall_x:.3f}m) — "
+                f"borderline; verify at maximum speed [CEMA 375 §7]"))
+        else:
+            checks.append(ok(
+                f"Casing clearance: {clearance*1000:.0f}mm — stream clears "
+                f"casing wall by adequate margin [CEMA 375 §7]"))
+
+    # 22 — Stream interception (does discharge stream enter the chute?)
+    if stream_chute:
+        intercepted = stream_chute.get("intercepted", False)
+        if intercepted:
+            ang = stream_chute.get("impact_angle_deg")
+            vel = stream_chute.get("impact_velocity_mps")
+            ang_str = f"{ang:.1f}°" if ang is not None else "—"
+            vel_str = f"{vel:.2f} m/s" if vel is not None else "—"
+            checks.append(ok(
+                f"Stream interception: chute captures discharge "
+                f"(impact angle={ang_str}, impact velocity={vel_str}) [CEMA 375 §5]"))
+        else:
+            note = stream_chute.get("note", "Stream does not reach chute inlet")
+            checks.append(warn(
+                f"Stream interception: {note} — "
+                f"review chute position or increase belt speed [CEMA 375 §5]"))
 
     return checks
 

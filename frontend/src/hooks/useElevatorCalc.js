@@ -272,6 +272,10 @@ function normaliseResult(raw) {
     discharge_chute: raw.discharge_chute ?? null,
 
     // ── Validation ──────────────────────────────────────────────
+    // Casing clearance + stream interception — v1.4.0
+    casing_clearance: raw.casing_clearance ?? null,
+    stream_chute:     raw.stream_chute     ?? null,
+
     checks,
     status,
   };
