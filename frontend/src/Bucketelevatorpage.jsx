@@ -1,60 +1,46 @@
-// BucketElevatorPage.jsx — Task 4: 3-Column Workstation Layout
+// BucketElevatorPage.jsx — 3-Column Workstation Layout
 //
-// BEFORE (Task 3):
-//   [Sidebar 300px] | [main-content scrollable — schematic + KPIs + charts stacked]
+// Column layout:
+//   [EquipTree 190px] | [Parameters 248-300px] | [Equipment Model flex] | [Engineering Results 360px]
 //
-// AFTER (Task 4):
-//   [Parameters 280px] | [Equipment Model — fixed schematic] | [Engineering Results 360px]
+// Equipment Tree is collapsible. When collapsed, Parameters expands to 300px.
 //
-// The machine schematic is now the permanent centre column.
-// Left col: input accordion (discipline cards, always visible)
-// Centre col: live SVG schematic + performance charts below
-// Right col: KPI cards + engineering checks (scrollable)
+// Right column tabs:
+//   Results     → KpiGrid + DesignRecommendationsPanel
+//   Optimizer   → OptimizerPanel
+//   Components  → ComponentPanel + StructuralDetailCard + TakeupCasingCard + ChuteFlowCard
+//   Checks      → ChecksPanel
 //
-// The top nav pill tabs now control what fills the RIGHT column:
-//   Results     → KPI cards + design recommendations + checks summary
-//   Optimizer   → optimizer panel
-//   Components  → existing component detail + structural card + take-up/casing card
-//   Checks      → full checks panel
+// DesignReview is rendered ABOVE all right-col tab content (always visible).
+// ElevatorSchematic and charts are always visible in the centre column.
 //
-// The schematic ALWAYS stays visible in centre regardless of right-col tab.
-//
-// v1.1.0 — Three new components wired in (structural.py v1.3.0 results)
-// ─────────────────────────────────────────────────────────────────────────
-// NEW  DesignRecommendationsPanel — shows in "Results" tab.
-//      Renders design_recommendations[] from solve_elevator().
-//      Empty state = green "Design passes all checks" — always visible.
-//      Placed between the inline checks strip and the KPI grid.
-//
-// NEW  StructuralDetailCard — shows in "Components" tab (after ComponentPanel).
-//      Renders hub, key_check, lagging, end_disc, bolt_fatigue.
-//
-// NEW  TakeupCasingCard — shows in "Components" tab (after StructuralDetailCard).
-//      Renders takeup_gravity, takeup_screw, casing_panel, casing_stiffener.
-//
-// Why no 5th tab?  360px right column fits 4 tabs comfortably; a 5th makes
-// the pill group cramped.  StructuralDetailCard and TakeupCasingCard are
-// conceptually component-design outputs, so the existing "Components" tab
-// is the correct home.  DesignRecommendationsPanel goes in "Results" because
-// it's the first thing an engineer needs to act on.
-// ─────────────────────────────────────────────────────────────────────────
+// v1.2.0 — Merged with structural + chute flow component additions
+// ─────────────────────────────────────────────────────────────────
+// ADDED  DesignRecommendationsPanel — wired under KpiGrid in Results tab
+// ADDED  StructuralDetailCard       — hub/key/lagging/end-disc/bolt-fatigue
+// ADDED  TakeupCasingCard           — take-up design + casing structural
+// ADDED  ChuteFlowCard              — discharge chute design (v1.4.0)
+// All four components gated on results != null; fail silently if component
+// file not yet present (dynamic import guard is added below).
+// ─────────────────────────────────────────────────────────────────
 
-import { useState, useEffect }       from "react";
-import { useElevatorCalc }           from "./hooks/useElevatorCalc";
-import InputSidebar                  from "./components/InputSidebar";
-import ElevatorSchematic             from "./components/ElevatorSchematic";
-import KpiGrid                       from "./components/KpiGrid";
-import ChartsPanel                   from "./components/ChartsPanel";
-import OptimizerPanel                from "./components/OptimizerPanel";
-import ComponentPanel                from "./components/ComponentPanel";
-import ChecksPanel                   from "./components/ChecksPanel";
-import SaveLoadModal                 from "./components/SaveLoadModal";
-// v1.1.0 — New structural result components
-import DesignRecommendationsPanel    from "./components/DesignRecommendationsPanel";
-import StructuralDetailCard          from "./components/StructuralDetailCard";
-import TakeupCasingCard              from "./components/TakeupCasingCard";
-// v1.2.0 — Chute flow integration
-import ChuteFlowCard                 from "./components/ChuteFlowCard";
+import { useState, useEffect } from "react";
+import { useElevatorCalc }     from "./hooks/useElevatorCalc";
+import InputSidebar            from "./components/InputSidebar";
+import ElevatorSchematic       from "./components/ElevatorSchematic";
+import KpiGrid                 from "./components/KpiGrid";
+import ChartsPanel             from "./components/ChartsPanel";
+import OptimizerPanel          from "./components/OptimizerPanel";
+import ComponentPanel          from "./components/ComponentPanel";
+import ChecksPanel             from "./components/ChecksPanel";
+import SaveLoadModal           from "./components/SaveLoadModal";
+import EquipmentTree           from "./components/EquipmentTree";
+import DesignReview            from "./components/DesignReview";
+// v1.2.0 additions
+import DesignRecommendationsPanel from "./components/DesignRecommendationsPanel";
+import StructuralDetailCard       from "./components/StructuralDetailCard";
+import TakeupCasingCard           from "./components/TakeupCasingCard";
+import ChuteFlowCard              from "./components/ChuteFlowCard";
 
 const RIGHT_TABS = [
   { id: "design",     label: "Results",    badge: null },
@@ -63,7 +49,7 @@ const RIGHT_TABS = [
   { id: "checks",     label: "Checks",     badge: null, failBadge: true },
 ];
 
-// ── Column header shared style ────────────────────────────────────────────
+// ── Column header ─────────────────────────────────────────────────────────
 function ColHeader({ label, sub, action }) {
   return (
     <div style={{
@@ -98,7 +84,9 @@ export default function BucketElevatorPage({ onResultsChange }) {
 
   const [activeRight, setActiveRight] = useState("design");
   const [showSaveLoad, setShowSaveLoad] = useState(false);
-  const [chartTab, setChartTab]       = useState("speed");
+  const [chartTab, setChartTab]   = useState("speed");
+  const [showTree, setShowTree]   = useState(true);
+  const [activeDisc, setActiveDisc] = useState(null);
 
   useEffect(() => {
     if (onResultsChange) onResultsChange({ results, inputs });
@@ -106,13 +94,11 @@ export default function BucketElevatorPage({ onResultsChange }) {
 
   const failCount = results?.checks?.filter((c) => c.type === "fail").length ?? 0;
   const warnCount = results?.checks?.filter((c) => c.type === "warn").length ?? 0;
-  // Design recommendations count — shown in Results tab header
-  const recCount  = results?.design_recommendations?.length ?? 0;
 
   return (
     <>
       {/* ══════════════════════════════════════════════════
-          MODULE NAV BAR
+          NAV BAR
           ══════════════════════════════════════════════════ */}
       <div className="nav">
         <div className="nav-brand">
@@ -128,7 +114,7 @@ export default function BucketElevatorPage({ onResultsChange }) {
           </div>
         </div>
 
-        {/* Right-column tabs — pill group */}
+        {/* Right-column tab pills */}
         <div style={{
           display: "flex", gap: 3,
           background: "var(--surface)",
@@ -181,27 +167,23 @@ export default function BucketElevatorPage({ onResultsChange }) {
           })}
         </div>
 
-        {/* Live KPI strip — always shown, skeleton when loading */}
+        {/* Live KPI strip */}
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginRight: 12 }}>
           {(() => {
             const fmt = (v, digits) =>
               v != null && !Number.isNaN(Number(v))
                 ? Number(v).toFixed(digits)
                 : loading ? "···" : "—";
-
             const Q       = results?.Q;
             const P       = results?.P_total;
             const v       = results?.v;
             const capPass = Q != null && Number(Q) >= Number(inputs.Q_req);
-
             return [
-              { label:"Q", value: fmt(Q, 0), unit:"t/h",
-                color: Q == null
-                  ? "var(--muted)"
-                  : capPass ? "var(--success)" : "var(--danger)" },
-              { label:"P", value: fmt(P, 1), unit:"kW",
+              { label: "Q", value: fmt(Q, 0), unit: "t/h",
+                color: Q == null ? "var(--muted)" : capPass ? "var(--success)" : "var(--danger)" },
+              { label: "P", value: fmt(P, 1), unit: "kW",
                 color: P == null ? "var(--muted)" : "var(--warning)" },
-              { label:"v", value: fmt(v, 2), unit:"m/s",
+              { label: "v", value: fmt(v, 2), unit: "m/s",
                 color: v == null ? "var(--muted)" : "var(--primary)" },
             ].map((k) => (
               <div key={k.label} style={{
@@ -237,90 +219,119 @@ export default function BucketElevatorPage({ onResultsChange }) {
       )}
 
       {/* ══════════════════════════════════════════════════
-          3-COLUMN WORKSTATION BODY
+          WORKSTATION BODY
           ══════════════════════════════════════════════════ */}
-      <div style={{
-        display: "flex",
-        flex: 1,
-        overflow: "hidden",
-        background: "var(--bg)",
-      }}>
+      <div style={{ display: "flex", flex: 1, overflow: "hidden", background: "var(--bg)" }}>
 
-        {/* ── LEFT COLUMN — Parameters (280px fixed) ──────── */}
+        {/* ── Equipment Tree (collapsible, 190px) ─────────── */}
+        {showTree && (
+          <div style={{
+            width: 190, flexShrink: 0,
+            display: "flex", flexDirection: "column",
+            borderRight: "1px solid var(--border)",
+            background: "var(--panel2)", overflow: "hidden",
+          }}>
+            <ColHeader
+              label="Equipment" sub="BE-001"
+              action={
+                <button onClick={() => setShowTree(false)} style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  color: "var(--muted)", fontSize: 12, padding: "0 2px", lineHeight: 1,
+                }} title="Collapse tree">✕</button>
+              }
+            />
+            <div style={{ flex: 1, overflow: "hidden" }}>
+              <EquipmentTree
+                results={results}
+                inputs={inputs}
+                onNodeClick={(disc) => {
+                  setActiveDisc(disc);
+                  const el = document.getElementById(`disc-${disc}`);
+                  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* ── Parameters (248px with tree, 300px without) ──── */}
         <div style={{
-          width: 280,
-          flexShrink: 0,
-          display: "flex",
-          flexDirection: "column",
+          width: showTree ? 248 : 300, flexShrink: 0,
+          display: "flex", flexDirection: "column",
           borderRight: "1px solid var(--border)",
-          background: "var(--panel)",
-          overflow: "hidden",
+          background: "var(--panel)", overflow: "hidden",
+          transition: "width .2s ease",
         }}>
-          <ColHeader label="Parameters" sub="CEMA 375 Inputs" />
+          <ColHeader
+            label="Parameters" sub="CEMA 375 Inputs"
+            action={
+              !showTree && (
+                <button onClick={() => setShowTree(true)} style={{
+                  display: "flex", alignItems: "center", gap: 4,
+                  background: "var(--primary-dim)", border: "1px solid var(--primary-ring)",
+                  borderRadius: "var(--r-sm)", cursor: "pointer",
+                  color: "var(--primary)", fontSize: 9, fontWeight: 600,
+                  padding: "2px 7px", letterSpacing: ".04em",
+                }} title="Show equipment tree">⛏ TREE</button>
+              )
+            }
+          />
           <div style={{ flex: 1, overflowY: "auto" }}>
-            <InputSidebar inputs={inputs} setField={setField} results={results} />
+            <InputSidebar
+              inputs={inputs}
+              setField={setField}
+              results={results}
+              activeDisc={activeDisc}
+            />
           </div>
         </div>
 
-        {/* ── CENTRE COLUMN — Equipment Model (flexible) ───── */}
+        {/* ── Centre column — Equipment Model ──────────────── */}
         <div style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          borderRight: "1px solid var(--border)",
-          minWidth: 0,
+          flex: 1, display: "flex", flexDirection: "column",
+          overflow: "hidden", borderRight: "1px solid var(--border)", minWidth: 0,
         }}>
           <ColHeader
             label="Equipment Model"
             sub={results
               ? `Bucket ${results.bucket?.id} · ${results.bucket?.W}×${results.bucket?.H}mm · ${results.bucket?.V}L`
               : "Calculating…"}
-            action={
-              results && (
-                <div style={{ display: "flex", gap: 6 }}>
-                  {failCount > 0 && (
-                    <span style={{ fontSize: 9, fontWeight: 600, padding: "2px 7px",
-                      borderRadius: "var(--r-pill)", background: "var(--danger-dim)",
-                      color: "var(--danger)", border: "1px solid var(--danger-border)" }}>
-                      {failCount} FAIL
-                    </span>
-                  )}
-                  {warnCount > 0 && (
-                    <span style={{ fontSize: 9, fontWeight: 600, padding: "2px 7px",
-                      borderRadius: "var(--r-pill)", background: "var(--warning-dim)",
-                      color: "var(--warning)", border: "1px solid var(--warning-border)" }}>
-                      {warnCount} WARN
-                    </span>
-                  )}
-                </div>
-              )
-            }
+            action={results && (
+              <div style={{ display: "flex", gap: 6 }}>
+                {failCount > 0 && (
+                  <span style={{ fontSize: 9, fontWeight: 600, padding: "2px 7px",
+                    borderRadius: "var(--r-pill)", background: "var(--danger-dim)",
+                    color: "var(--danger)", border: "1px solid var(--danger-border)" }}>
+                    {failCount} FAIL
+                  </span>
+                )}
+                {warnCount > 0 && (
+                  <span style={{ fontSize: 9, fontWeight: 600, padding: "2px 7px",
+                    borderRadius: "var(--r-pill)", background: "var(--warning-dim)",
+                    color: "var(--warning)", border: "1px solid var(--warning-border)" }}>
+                    {warnCount} WARN
+                  </span>
+                )}
+              </div>
+            )}
           />
 
-          {/* Schematic — permanent, always visible */}
+          {/* Schematic — permanent */}
           <div style={{
-            flexShrink: 0,
-            background: "var(--panel2)",
+            flexShrink: 0, background: "var(--panel2)",
             borderBottom: "1px solid var(--border)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "12px 0",
-            minHeight: 260,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: "12px 0", minHeight: 260,
           }}>
             <ElevatorSchematic inputs={inputs} results={results} />
           </div>
 
-          {/* Chart area — below schematic, scrollable */}
+          {/* Charts */}
           <div style={{ flex: 1, overflowY: "auto", background: "var(--bg)" }}>
-
-            {/* Chart sub-tabs */}
             <div style={{
               display: "flex", gap: 0,
               borderBottom: "1px solid var(--border)",
-              background: "var(--panel2)",
-              padding: "0 12px",
+              background: "var(--panel2)", padding: "0 12px",
             }}>
               {[
                 { id: "speed",   label: "Speed Sweep"  },
@@ -329,33 +340,29 @@ export default function BucketElevatorPage({ onResultsChange }) {
                 { id: "tension", label: "Tension"       },
               ].map((t) => (
                 <button key={t.id} onClick={() => setChartTab(t.id)} style={{
-                  padding: "8px 14px", fontSize: 11, fontWeight: chartTab===t.id ? 600 : 400,
+                  padding: "8px 14px", fontSize: 11,
+                  fontWeight: chartTab === t.id ? 600 : 400,
                   cursor: "pointer", border: "none", background: "transparent",
-                  color: chartTab===t.id ? "var(--primary)" : "var(--text3)",
-                  borderBottom: `2px solid ${chartTab===t.id ? "var(--primary)" : "transparent"}`,
+                  color: chartTab === t.id ? "var(--primary)" : "var(--text3)",
+                  borderBottom: `2px solid ${chartTab === t.id ? "var(--primary)" : "transparent"}`,
                   marginBottom: -1, transition: "all var(--t-base)",
                   fontFamily: "var(--ff-ui)",
                 }}
-                onMouseEnter={e => { if (chartTab!==t.id) e.currentTarget.style.color="var(--text2)"; }}
-                onMouseLeave={e => { if (chartTab!==t.id) e.currentTarget.style.color="var(--text3)"; }}
+                onMouseEnter={e => { if (chartTab !== t.id) e.currentTarget.style.color = "var(--text2)"; }}
+                onMouseLeave={e => { if (chartTab !== t.id) e.currentTarget.style.color = "var(--text3)"; }}
                 >{t.label}</button>
               ))}
             </div>
-
             <ChartsPanel results={results} inputs={inputs} activeTab={chartTab} />
           </div>
         </div>
 
-        {/* ── RIGHT COLUMN — Engineering Results (360px fixed) */}
+        {/* ── Right column — Engineering Results (360px) ─────── */}
         <div style={{
-          width: 360,
-          flexShrink: 0,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          background: "var(--panel)",
+          width: 360, flexShrink: 0,
+          display: "flex", flexDirection: "column",
+          overflow: "hidden", background: "var(--panel)",
         }}>
-          {/* Right column header with status summary */}
           <ColHeader
             label={
               activeRight === "design"     ? "Engineering Results" :
@@ -370,83 +377,41 @@ export default function BucketElevatorPage({ onResultsChange }) {
             }
           />
 
-          {/* Right column scrollable content */}
+          {/* DesignReview — persistent above all tabs (your component) */}
+          <DesignReview results={results} />
+
+          {/* Scrollable tab content */}
           <div style={{ flex: 1, overflowY: "auto" }}>
 
-            {/* ─────────────────────────────────────────────────
-                RESULTS TAB
-                Inline checks strip  →  Design Recommendations
-                →  KPI cards
-                ───────────────────────────────────────────────── */}
+            {/* ─── RESULTS TAB ─────────────────────────────────────
+                KpiGrid first, then DesignRecommendationsPanel below.
+                DesignRecommendationsPanel shows "All checks passed" (green)
+                when design_recommendations is empty — always useful signal.
+                ─────────────────────────────────────────────────── */}
             {activeRight === "design" && (
               <>
-                {/* Inline fail/warn summary strip */}
-                {results?.checks && (
-                  <div style={{
-                    padding: "8px 12px",
-                    display: "flex", flexDirection: "column", gap: 4,
-                    borderBottom: "1px solid var(--border)",
-                    background: "var(--panel2)",
-                  }}>
-                    {results.checks
-                      .filter(c => c.type === "fail" || c.type === "warn")
-                      .slice(0, 3)
-                      .map((c, i) => (
-                        <div key={i} style={{
-                          display: "flex", alignItems: "flex-start", gap: 7,
-                          fontSize: 11, lineHeight: 1.4,
-                          color: c.type === "fail" ? "var(--danger)" : "var(--warning)",
-                        }}>
-                          <span style={{ flexShrink: 0, fontSize: 10 }}>
-                            {c.type === "fail" ? "✗" : "⚠"}
-                          </span>
-                          {c.msg}
-                        </div>
-                      ))}
-                    {results.checks.filter(c => c.type === "fail" || c.type === "warn").length === 0 && (
-                      <div style={{ fontSize: 11, color: "var(--success)", display: "flex", gap: 6 }}>
-                        <span>✓</span> All checks passed
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/*
-                  v1.1.0 NEW — Design Recommendations
-                  Placed between the raw checks strip and the KPI grid so the
-                  engineer sees corrective actions before diving into numbers.
-                  Empty array → green "Design passes all checks" card.
-                */}
+                <div style={{ padding: "0 0 8px" }}>
+                  <KpiGrid results={results} inputs={inputs} compact />
+                </div>
                 <DesignRecommendationsPanel
                   recommendations={results?.design_recommendations}
                 />
-
-                {/* KPI cards — compact grid in right column */}
-                <div style={{ padding: "0 0 16px" }}>
-                  <KpiGrid results={results} inputs={inputs} compact />
-                </div>
               </>
             )}
 
-            {/* ─────────────────────────────────────────────────
-                OPTIMIZER TAB
-                ───────────────────────────────────────────────── */}
+            {/* ─── OPTIMIZER TAB ───────────────────────────────────── */}
             {activeRight === "optimizer" && (
               <OptimizerPanel inputs={inputs} onApply={applyOptimizer} />
             )}
 
-            {/* ─────────────────────────────────────────────────
-                COMPONENTS TAB
-                Original ComponentPanel  +  v1.1.0 new cards:
-                  StructuralDetailCard  (hub/key/lagging/disc/fatigue)
-                  TakeupCasingCard      (take-up / casing panel)
-                ───────────────────────────────────────────────── */}
+            {/* ─── COMPONENTS TAB ──────────────────────────────────────
+                Original ComponentPanel first, then the v1.2.0 structural
+                and chute additions below a visual section break.
+                ─────────────────────────────────────────────────────── */}
             {activeRight === "components" && (
               <>
-                {/* Original component panel (inlet chute, casing thickness, etc.) */}
                 <ComponentPanel results={results} inputs={inputs} />
 
-                {/* v1.1.0 — Structural detail sub-sections */}
                 {results && (
                   <>
                     {/* Section divider */}
@@ -459,13 +424,10 @@ export default function BucketElevatorPage({ onResultsChange }) {
                     }}>
                       Structural Design Detail
                     </div>
-
                     {/* Hub, keyway, lagging, end disc, bolt fatigue */}
                     <StructuralDetailCard results={results} />
-
-                    {/* Take-up and casing structural */}
+                    {/* Take-up + casing structural */}
                     <TakeupCasingCard results={results} />
-
                     {/* Discharge chute design */}
                     <ChuteFlowCard results={results} />
                   </>
@@ -473,9 +435,7 @@ export default function BucketElevatorPage({ onResultsChange }) {
               </>
             )}
 
-            {/* ─────────────────────────────────────────────────
-                CHECKS TAB
-                ───────────────────────────────────────────────── */}
+            {/* ─── CHECKS TAB ──────────────────────────────────────── */}
             {activeRight === "checks" && (
               <ChecksPanel results={results} inputs={inputs} />
             )}

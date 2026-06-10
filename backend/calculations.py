@@ -46,28 +46,62 @@ CHANGES FROM v1.1.0
 import math
 from typing import List, Dict
 
-from .models import BucketElevatorInput, OptimizerRequest
+try:
+    from .models import BucketElevatorInput, OptimizerRequest
+except ImportError:
+    from models import BucketElevatorInput, OptimizerRequest
 
 # ── Engine modules ────────────────────────────────────────────────────────────
-from .constants import (
-    CEMA_MAX_SHAFT_SLOPE, SHAFT_Su_PA, SHAFT_Ka, SHAFT_Kc, SHAFT_Kd,
-    SHAFT_E_PA, LEQ_DEFAULT, CEFF_BELT, BELT_WEIGHT_DEFAULT,
-)
-from physics   import DischargePhysics
-from .structural import StructuralStressEngine
-from dynamics  import DynamicLoadEngine
-from .chute_flow import ChuteFlowEngine
+try:
+    from .constants import (
+        CEMA_MAX_SHAFT_SLOPE, SHAFT_Su_PA, SHAFT_Ka, SHAFT_Kc, SHAFT_Kd,
+        SHAFT_E_PA, LEQ_DEFAULT, CEFF_BELT, BELT_WEIGHT_DEFAULT,
+    )
+except ImportError:
+    from constants import (
+        CEMA_MAX_SHAFT_SLOPE, SHAFT_Su_PA, SHAFT_Ka, SHAFT_Kc, SHAFT_Kd,
+        SHAFT_E_PA, LEQ_DEFAULT, CEFF_BELT, BELT_WEIGHT_DEFAULT,
+    )
+try:
+    from .physics import DischargePhysics
+except ImportError:
+    from physics import DischargePhysics
+try:
+    from .structural import StructuralStressEngine
+except ImportError:
+    from structural import StructuralStressEngine
+try:
+    from .dynamics import DynamicLoadEngine
+except ImportError:
+    from dynamics import DynamicLoadEngine
+try:
+    from .chute_flow import ChuteFlowEngine
+except ImportError:
+    from chute_flow import ChuteFlowEngine
 
 # ── Material database (400+ entries) ─────────────────────────────────────────
-from .materials import (
-    MATERIALS,
-    get_material as _materials_get,
-    search_materials,
-    list_categories,
-    materials_by_category,
-    material_count,
-)
-from .material_behavior import MaterialBehaviorEngine
+try:
+    from .materials import (
+        MATERIALS,
+        get_material as _materials_get,
+        search_materials,
+        list_categories,
+        materials_by_category,
+        material_count,
+    )
+except ImportError:
+    from materials import (
+        MATERIALS,
+        get_material as _materials_get,
+        search_materials,
+        list_categories,
+        materials_by_category,
+        material_count,
+    )
+try:
+    from .material_behavior import MaterialBehaviorEngine
+except ImportError:
+    from material_behavior import MaterialBehaviorEngine
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -537,27 +571,46 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     motor_kw = select_motor(P_total, inp.sf)
     belt_ply = math.ceil(F_eff / (BW_mm / 25.4 * 4450 * 0.5))
 
-    # ── Discharge physics ─────────────────────────────────────────────────────
-    cr = centrifugal_ratio(v, inp.D_mm)
-    # v1.2.0: release point now from DischargePhysics (single source of truth)
-    rp = DischargePhysics.calculate_release_point(v, inp.D_mm / 2000.0)
-    theta_rel  = rp.theta_deg
-    trajectory = discharge_trajectory(v, inp.D_mm)
-    # Material-dependent stream spread
-    stream_spread = MaterialBehaviorEngine.stream_spread_factor(mat, v)
+    # ── Discharge physics — stream envelope replaces single trajectory ────────
+    # v1.4.0: DischargePhysics.stream_envelope() returns centre + upper + lower
+    # bounds with MaterialBehaviorEngine spread integration and trajectory metrics.
+    # The three lines feed the frontend visualisation and chute_flow.py.
+    rp    = DischargePhysics.calculate_release_point(v, inp.D_mm / 2000.0)
+    cr    = rp.cr
+    theta_rel = rp.theta_deg
+
+    envelope = DischargePhysics.stream_envelope(
+        speed               = v,
+        radius              = inp.D_mm / 2000.0,
+        bucket_projection_m = (bucket.get("P") or 140) / 1000.0,
+        cohesion_index      = mat.get("cohesion", 0.0),
+        elevator_type       = "centrifugal",
+        material            = mat,
+    )
+    traj_center  = envelope["center"]
+    traj_upper   = envelope["upper"]
+    traj_lower   = envelope["lower"]
+    stream_spread = envelope["spread_m"]
+    traj_metrics  = envelope.get("metrics", {})
+
+    # Legacy trajectory format for report + chute_flow (list of {x_mm, y_mm} dicts)
+    def _to_mm_dicts(pts):
+        return [{"x": round(p[0] * 1000, 1), "y": round(p[1] * 1000, 1)} for p in pts]
+
+    trajectory       = _to_mm_dicts(traj_center)
+    trajectory_upper = _to_mm_dicts(traj_upper)
+    trajectory_lower = _to_mm_dicts(traj_lower)
 
     # ── Bearing life ──────────────────────────────────────────────────────────
     L10 = calc_bearing_life(R_head, inp.n_rpm)
 
     # ── Discharge chute design ────────────────────────────────────────────────
-    # All chute calculations derived from data already in scope — no new inputs.
-    # traj_raw: raw (x, y) tuples [m] for discharge_chute_geometry() (needs m not mm)
-    traj_raw      = DischargePhysics.trajectory(v, inp.D_mm / 2000.0)
-    bkt_w_mm      = float(bucket.get("W") or BW_mm)
-    drop_h_m      = max(inp.D_mm / 1000.0 * 1.5, 0.50)   # head section drop ≈ 1.5×D
+    # traj_center is already the raw (x, y) tuple list in metres from stream_envelope()
+    bkt_w_mm   = float(bucket.get("W") or BW_mm)
+    drop_h_m   = max(inp.D_mm / 1000.0 * 1.5, 0.50)
 
-    chute_geom  = ChuteFlowEngine.discharge_chute_geometry(
-        trajectory           = traj_raw,
+    chute_geom = ChuteFlowEngine.discharge_chute_geometry(
+        trajectory           = traj_center,
         belt_speed_mps       = v,
         head_pulley_radius_m = inp.D_mm / 2000.0,
         bucket_width_mm      = bkt_w_mm,
@@ -665,10 +718,13 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         # Belt & buckets
         "belt_ply": belt_ply, "belt_w": BW_mm,
         "bucket_mass_kg": round(bw_kg, 2),
-        # Discharge
+        # Discharge — stream envelope (v1.4.0 replaces single trajectory)
         "cr": round(cr, 4), "theta_rel": round(theta_rel, 2),
-        "stream_spread": round(stream_spread, 4),
-        "trajectory": trajectory,
+        "stream_spread":    round(stream_spread, 4),
+        "trajectory":       trajectory,           # centre line, mm dicts (legacy)
+        "trajectory_upper": trajectory_upper,     # upper bound, mm dicts
+        "trajectory_lower": trajectory_lower,     # lower bound, mm dicts
+        "trajectory_metrics": traj_metrics,       # throw_distance, impact_v, etc.
         # Bearing
         "L10": round(L10, 0),
         # Material behaviour (v1.2.0 — advisory, does not override user fill)

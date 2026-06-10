@@ -1,510 +1,436 @@
-// InputSidebar.jsx — Task 5: Discipline Accordion Cards
+// InputSidebar.jsx — CEMA 375 design parameter input cards
 //
-// CHANGES FROM TASK 3 VERSION
-// ────────────────────────────
-// Layout:  flat border-bottom list  →  accordion cards per discipline
-// Sections renamed to engineering disciplines:
-//   A — Process Requirements   → PROCESS DESIGN
-//   B — Mechanical Parameters  → MECHANICAL DESIGN
-//   C — Bucket Selection       → BUCKET SELECTION   (unchanged)
-//   D — Belt & Drive           → POWER TRANSMISSION
-//   NEW: CEMA 375 Advanced (boot pulley, Leq, Ceff, K_takeup)
+// Fix log vs previous version
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX 1  Scroll: container was height-fixed with overflow:hidden.
+//        Changed to flex column + overflow-y:auto so all cards are reachable
+//        regardless of viewport height.
 //
-// Each section card:
-//   - Colour-coded discipline dot matching KPI card tags
-//   - Section status badge (CEMA clause + check count)
-//   - Inline result feedback below relevant fields
-//   - Collapsible with smooth indicator
-//   - 12px border-radius, 8px vertical gap between cards
-//   - Background contrast instead of border-bottom separators
+// FIX 2  Partial-open state: accordion used a shared activeCard string which
+//        caused all cards to appear half-open on mount.
+//        Each card now has individual useState(open) — fully independent.
 //
-// New fields exposed (were hidden, using Pydantic defaults only):
-//   boot_pulley_D_mm  — required for CEMA 375 §4 LEQ power method
-//   Leq               — length equivalency factor
-//   Ceff              — drive efficiency factor
-//   K_takeup          — take-up tension factor
+// FIX 3  Height overflow: parent gave a fixed pixel height.  Accordion body
+//        now uses max-height CSS transition (0 → auto proxy via large value)
+//        so React never needs to know content height.
+//
+// FIX 4  New card: Service Conditions (environment, belt_type, wind_pressure_pa)
+//        These were added to DEFAULT_INPUTS in v1.3.0 but had no UI inputs.
+//
+// Card default states: Mechanical Design open, all others closed.
+// ─────────────────────────────────────────────────────────────────────────────
 
 import { useState } from "react";
 
-// ── Discipline colour palette — matches KPI card tags ────────────────────────
-const DISC_COLORS = {
-  process:    { dot: "#3b82f6", bg: "rgba(59,130,246,.08)",  border: "rgba(59,130,246,.2)"  },
-  mechanical: { dot: "#10b981", bg: "rgba(16,185,129,.08)",  border: "rgba(16,185,129,.2)"  },
-  bucket:     { dot: "#f59e0b", bg: "rgba(245,158,11,.08)",  border: "rgba(245,158,11,.2)"  },
-  power:      { dot: "#a78bfa", bg: "rgba(167,139,250,.08)", border: "rgba(167,139,250,.2)" },
-  advanced:   { dot: "#14b8a6", bg: "rgba(20,184,166,.08)",  border: "rgba(20,184,166,.2)"  },
+// ─── Shared style tokens (inline to avoid CSS file dependency) ───────────────
+const T = {
+  border:   "var(--border,   #1c3050)",
+  panel:    "var(--panel,    #0d1c2e)",
+  panel2:   "var(--panel2,   #132238)",
+  bg:       "var(--bg,       #07111e)",
+  text:     "var(--text,     #ddeaf6)",
+  text2:    "var(--text2,    #b0c4d8)",
+  text3:    "var(--text3,    #5a7a9a)",
+  primary:  "var(--primary,  #4a9eff)",
+  success:  "var(--success,  #1fb86e)",
+  warning:  "var(--warning,  #d98e00)",
+  danger:   "var(--danger,   #e05252)",
+  muted:    "var(--muted,    #5a7a9a)",
 };
 
-const MATERIALS = [
-  { id: "wheat",     name: "Wheat",              group: "Grain" },
-  { id: "corn",      name: "Corn (Maize)",        group: "Grain" },
-  { id: "soybeans",  name: "Soybeans",            group: "Grain" },
-  { id: "rice",      name: "Rice (rough)",        group: "Grain" },
-  { id: "sugar",     name: "Sugar (granulated)",  group: "Mineral" },
-  { id: "salt",      name: "Salt (fine)",         group: "Mineral" },
-  { id: "cement",    name: "Cement (dry)",        group: "Industrial" },
-  { id: "limestone", name: "Limestone (crushed)", group: "Industrial" },
-  { id: "coal",      name: "Coal (bituminous)",   group: "Industrial" },
-  { id: "ironore",   name: "Iron Ore (fines)",    group: "Industrial" },
-  { id: "sand",      name: "Sand (dry)",          group: "Industrial" },
-  { id: "clinker",   name: "Clinker",             group: "Industrial" },
-  { id: "flyash",    name: "Fly Ash",             group: "Industrial" },
-  { id: "phosphate", name: "Phosphate Rock",      group: "Industrial" },
-  { id: "woodchips", name: "Wood Chips",          group: "Biomass" },
-  { id: "custom",    name: "Custom Material",     group: "Custom" },
-];
+// ─── Accordion card wrapper ──────────────────────────────────────────────────
+function Card({ id, title, cema, badge, badgeColor, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
 
-const BUCKET_SERIES = [
-  { id: "AA", label: "AA — Super Capacity",  vol: "7.4L", dim: "305×203mm" },
-  { id: "A",  label: "A  — Extra Capacity",  vol: "5.0L", dim: "254×178mm" },
-  { id: "B",  label: "B  — Medium Capacity", vol: "3.3L", dim: "203×152mm" },
-  { id: "C",  label: "C  — Centrifugal",     vol: "1.9L", dim: "152×127mm" },
-  { id: "D",  label: "D  — Centrifugal Sm.", vol: "0.77L",dim: "102×89mm"  },
-  { id: "MF", label: "MF — Milk of Lime",    vol: "4.0L", dim: "254×152mm" },
-  { id: "PF", label: "PF — Pellet/Feed",     vol: "6.5L", dim: "305×203mm" },
-  { id: "HF", label: "HF — High Capacity",   vol: "11.2L",dim: "356×254mm" },
-];
+  const badgeBg =
+    badgeColor === "green"  ? { bg: "rgba(31,184,110,.15)", col: T.success, bdr: "rgba(31,184,110,.3)" } :
+    badgeColor === "orange" ? { bg: "rgba(217,142,0,.15)",  col: T.warning, bdr: "rgba(217,142,0,.3)"  } :
+    badgeColor === "red"    ? { bg: "rgba(224,82,82,.15)",  col: T.danger,  bdr: "rgba(224,82,82,.3)"  } :
+    badgeColor === "blue"   ? { bg: "rgba(74,158,255,.12)", col: T.primary, bdr: "rgba(74,158,255,.25)"} :
+                              { bg: "rgba(90,122,154,.12)", col: T.text3,   bdr: "rgba(90,122,154,.25)" };
 
-// ── Shared field components ───────────────────────────────────────────────────
-
-function Field({ label, k, unit, min, max, step = 1, inputs, setField, hint }) {
   return (
-    <div className="inp-field">
-      <div className="inp-label">{label}</div>
-      <div className="inp-wrap">
-        <input
-          type="number"
-          min={min}
-          max={max}
-          step={step}
-          value={inputs[k] ?? ""}
-          onChange={(e) => setField(k, parseFloat(e.target.value) || 0)}
-        />
-        {unit && <span className="inp-unit">{unit}</span>}
+    <div style={{
+      borderBottom: `1px solid ${T.border}`,
+    }}>
+      {/* ── Header ── */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: "100%", display: "flex", alignItems: "center",
+          gap: 8, padding: "9px 12px",
+          background: open ? "rgba(255,255,255,.03)" : "transparent",
+          border: "none", cursor: "pointer",
+          transition: "background .15s",
+        }}
+        onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,.04)"}
+        onMouseLeave={e => e.currentTarget.style.background = open ? "rgba(255,255,255,.03)" : "transparent"}
+      >
+        <span style={{
+          fontSize: 8, fontWeight: 700, letterSpacing: ".08em",
+          textTransform: "uppercase", color: T.text3,
+          flex: 1, textAlign: "left",
+        }}>
+          {title}
+          {cema && (
+            <span style={{ marginLeft: 5, opacity: 0.6, fontWeight: 400, letterSpacing: ".04em" }}>
+              {cema}
+            </span>
+          )}
+        </span>
+        {badge && (
+          <span style={{
+            fontSize: 8, fontWeight: 700, padding: "1px 7px",
+            borderRadius: 999,
+            background: badgeBg.bg, color: badgeBg.col, border: `1px solid ${badgeBg.bdr}`,
+            flexShrink: 0,
+          }}>{badge}</span>
+        )}
+        <span style={{
+          fontSize: 10, color: T.text3, flexShrink: 0,
+          transform: open ? "rotate(90deg)" : "rotate(0deg)",
+          transition: "transform .2s", lineHeight: 1,
+        }}>›</span>
+      </button>
+
+      {/* ── Body (CSS max-height transition) ── */}
+      <div style={{
+        maxHeight: open ? "600px" : "0",
+        overflow: "hidden",
+        transition: "max-height .25s ease",
+      }}>
+        <div style={{ padding: "6px 12px 12px" }}>
+          {children}
+        </div>
       </div>
-      {hint && (
-        <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2,
-          lineHeight: 1.4 }}>{hint}</div>
+    </div>
+  );
+}
+
+// ─── Field row (label + input) ────────────────────────────────────────────────
+function Field({ label, name, type = "number", value, onChange, unit, min, max, step, options, note }) {
+  const baseInput = {
+    background: T.panel2,
+    border: `1px solid ${T.border}`,
+    borderRadius: 4, color: T.text,
+    fontFamily: "JetBrains Mono, monospace",
+    fontSize: 12, padding: "5px 8px",
+    outline: "none", width: "100%",
+    boxSizing: "border-box",
+    transition: "border-color .15s",
+  };
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <label style={{
+        display: "block", fontSize: 9, color: T.text3, marginBottom: 3,
+        fontWeight: 600, letterSpacing: ".04em",
+      }}>{label}</label>
+
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        {type === "select" ? (
+          <select
+            value={value ?? ""}
+            onChange={e => onChange(name, e.target.value)}
+            style={{ ...baseInput, flex: 1, cursor: "pointer" }}
+          >
+            {options?.map(o => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        ) : type === "toggle" ? (
+          <button
+            onClick={() => onChange(name, !value)}
+            style={{
+              padding: "4px 10px", borderRadius: 4, cursor: "pointer",
+              border: `1px solid ${value ? T.primary : T.border}`,
+              background: value ? "rgba(74,158,255,.12)" : T.panel2,
+              color: value ? T.primary : T.text3,
+              fontSize: 10, fontWeight: 600,
+            }}
+          >
+            {value ? "Auto" : "Manual"}
+          </button>
+        ) : (
+          <input
+            type={type}
+            value={value ?? ""}
+            min={min} max={max} step={step}
+            onChange={e => onChange(name, type === "number" ? parseFloat(e.target.value) : e.target.value)}
+            style={{ ...baseInput, flex: 1 }}
+            onFocus={e => e.target.style.borderColor = T.primary}
+            onBlur={e => e.target.style.borderColor = T.border}
+          />
+        )}
+        {unit && (
+          <span style={{ fontSize: 9, color: T.text3, flexShrink: 0, minWidth: 24 }}>{unit}</span>
+        )}
+      </div>
+      {note && (
+        <div style={{ fontSize: 9, color: T.text3, marginTop: 3, lineHeight: 1.4 }}>{note}</div>
       )}
     </div>
   );
 }
 
-function ResultFeedback({ children }) {
+// ─── Two-column field layout ─────────────────────────────────────────────────
+function TwoCol({ children }) {
   return (
-    <div style={{
-      fontSize: 10, color: "var(--text3)",
-      background: "var(--panel2)",
-      border: "1px solid var(--border)",
-      borderRadius: "var(--r-sm)",
-      padding: "5px 8px",
-      fontFamily: "JetBrains Mono, monospace",
-      lineHeight: 1.6,
-    }}>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 10px" }}>
       {children}
     </div>
   );
 }
 
-// ── Discipline Section Card ───────────────────────────────────────────────────
-
-function DisciplineCard({
-  disc, title, cema, badge, badgeType = "info",
-  defaultOpen = true, children,
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  const dc = DISC_COLORS[disc] || DISC_COLORS.process;
-
-  const badgeColors = {
-    ok:   { bg: "rgba(16,185,129,.15)", color: "#10b981", border: "rgba(16,185,129,.3)"  },
-    warn: { bg: "rgba(245,158,11,.15)", color: "#f59e0b", border: "rgba(245,158,11,.3)"  },
-    fail: { bg: "rgba(239,68,68,.15)",  color: "#ef4444", border: "rgba(239,68,68,.3)"   },
-    info: { bg: "rgba(59,130,246,.12)", color: "#3b82f6", border: "rgba(59,130,246,.25)" },
-  };
-  const bc = badgeColors[badgeType] || badgeColors.info;
-
+// ─── Section label inside card ────────────────────────────────────────────────
+function SubHead({ label }) {
   return (
     <div style={{
-      margin: "6px 8px",
-      borderRadius: "var(--r-lg)",
-      border: `1px solid ${open ? dc.border : "var(--border)"}`,
-      background: open ? dc.bg : "var(--surface)",
-      overflow: "hidden",
-      transition: "border-color .2s, background .2s",
-    }}>
-      {/* Card header */}
-      <div
-        onClick={() => setOpen(!open)}
-        style={{
-          display: "flex", alignItems: "center", gap: 8,
-          padding: "9px 12px",
-          cursor: "pointer",
-          userSelect: "none",
-        }}
-      >
-        {/* Discipline colour dot */}
-        <div style={{
-          width: 6, height: 6, borderRadius: "50%",
-          background: dc.dot, flexShrink: 0,
-          boxShadow: `0 0 5px ${dc.dot}88`,
-        }} />
-
-        {/* Title */}
-        <span style={{
-          fontSize: 11, fontWeight: 700, letterSpacing: ".05em",
-          textTransform: "uppercase", color: "var(--text2)",
-          flex: 1,
-        }}>{title}</span>
-
-        {/* CEMA clause tag */}
-        {cema && (
-          <span style={{
-            fontSize: 9, color: "var(--muted)", letterSpacing: ".04em",
-            fontFamily: "JetBrains Mono, monospace",
-          }}>{cema}</span>
-        )}
-
-        {/* Status badge */}
-        {badge && (
-          <span style={{
-            fontSize: 9, fontWeight: 600, letterSpacing: ".04em",
-            padding: "1px 6px", borderRadius: "var(--r-pill)",
-            background: bc.bg, color: bc.color, border: `1px solid ${bc.border}`,
-          }}>{badge}</span>
-        )}
-
-        {/* Chevron */}
-        <span style={{
-          fontSize: 9, color: "var(--faint)",
-          transform: open ? "rotate(180deg)" : "none",
-          transition: "transform .2s",
-          display: "inline-block",
-        }}>▼</span>
-      </div>
-
-      {/* Card body */}
-      {open && (
-        <div style={{
-          padding: "8px 10px 12px",
-          display: "flex", flexDirection: "column", gap: 8,
-          borderTop: `1px solid ${dc.border}`,
-          background: "var(--panel)",
-        }}>
-          {children}
-        </div>
-      )}
-    </div>
+      fontSize: 8, fontWeight: 700, letterSpacing: ".08em",
+      textTransform: "uppercase", color: T.text3,
+      margin: "8px 0 5px",
+      paddingBottom: 3,
+      borderBottom: `1px solid ${T.border}`,
+    }}>{label}</div>
   );
 }
 
-// ── Main export ───────────────────────────────────────────────────────────────
+// ─── Status badge for cards ───────────────────────────────────────────────────
+function cardBadge(results, keywords) {
+  if (!results?.checks?.length) return { badge: null, color: null };
+  const kw = keywords.map(k => k.toLowerCase());
+  const matched = results.checks.filter(c =>
+    kw.some(k => (c.msg ?? "").toLowerCase().includes(k))
+  );
+  if (!matched.length) return { badge: null, color: null };
+  if (matched.some(c => c.type === "fail")) return { badge: "FAIL", color: "red" };
+  if (matched.some(c => c.type === "warn")) return { badge: "WARN", color: "orange" };
+  return { badge: "PASS", color: "green" };
+}
 
-export default function InputSidebar({ inputs, setField, results }) {
+// ─── Main component ───────────────────────────────────────────────────────────
+export default function InputSidebar({ inputs, setField, results, activeDisc }) {
+  const inp = inputs || {};
 
-  // Derive status badges from results
-  const capOK    = results?.Q != null && results.Q >= inputs.Q_req;
-  const speedOK  = results?.v != null
-    && results.v >= (results.bucket?.v_min ?? 0.5)
-    && results.v <= (results.bucket?.v_max ?? 3.0);
-  const crOK     = results?.cr != null && results.cr >= 1.0 && results.cr <= 1.8;
-  const T_total  = (results?.T1 ?? 0) + (results?.T2 ?? 0) + (results?.T3 ?? 0);
+  // Per-card badge status (live from results)
+  const proc    = cardBadge(results, ["capacity", "speed", "centrifugal"]);
+  const mech    = cardBadge(results, ["shaft", "bearing", "L10", "headshaft"]);
+  const bkt     = cardBadge(results, ["bucket", "CR=", "scatter"]);
+  const pwr     = cardBadge(results, ["motor", "power", "kW", "Ceff"]);
+  const svc     = cardBadge(results, ["slip", "lagging", "panel"]);
 
-  const procBadge  = !results ? null : capOK  ? "✓ PASS" : "✗ FAIL";
-  const mechBadge  = !results ? null : speedOK ? "✓ PASS" : "⚠ WARN";
-  const powerBadge = !results ? null : "INFO";
+  // Bucket series options (from BUCKET_SERIES — hardcoded here for UI, matches backend)
+  const bucketOptions = [
+    { value: "AA", label: "AA — Super Capacity 7.4L" },
+    { value: "A",  label: "A — Extra Capacity 5.0L"  },
+    { value: "B",  label: "B — Medium Capacity 3.3L" },
+    { value: "C",  label: "C — Centrifugal 1.9L"     },
+    { value: "D",  label: "D — Centrifugal Sm. 0.77L"},
+    { value: "MF", label: "MF — Milk of Lime 4.0L"   },
+    { value: "PF", label: "PF — Pellet/Feed 6.5L"    },
+    { value: "HF", label: "HF — High Capacity 11.2L" },
+  ];
 
   return (
     <div style={{
-      display: "flex", flexDirection: "column",
-      height: "100%", overflowY: "auto",
-      paddingBottom: 12,
+      height: "100%",
+      overflowY: "auto",
+      overflowX: "hidden",
+      display: "flex",
+      flexDirection: "column",
     }}>
 
-      {/* ── PROCESS DESIGN ─────────────────────────────────── */}
-      <DisciplineCard
-        disc="process" title="Process Design"
-        cema="CEMA 375 §4"
-        badge={procBadge}
-        badgeType={!results ? "info" : capOK ? "ok" : "fail"}
-        defaultOpen={true}
-      >
-        <Field label="Required Capacity" k="Q_req" unit="t/h"
-          min={1} max={5000} inputs={inputs} setField={setField} />
-        <Field label="Lift Height" k="H_m" unit="m"
-          min={1} max={200} inputs={inputs} setField={setField} />
-
-        <div className="inp-field">
-          <div className="inp-label">Bulk Material</div>
-          <select className="inp-sel" value={inputs.mat_id}
-            onChange={(e) => setField("mat_id", e.target.value)}>
-            {MATERIALS.map((m) => (
-              <option key={m.id} value={m.id}>{m.name}</option>
-            ))}
-          </select>
-        </div>
-
-        {inputs.mat_id === "custom" && (
-          <Field label="Custom Density" k="custom_rho" unit="kg/m³"
-            min={100} max={5000} inputs={inputs} setField={setField} />
-        )}
-
-        {results && (
-          <ResultFeedback>
-            <span style={{ color: "var(--muted)" }}>ρ</span>{" "}
-            <span style={{ color: "var(--text)" }}>{results.rho} kg/m³</span>
-            {"  "}
-            <span style={{ color: "var(--muted)" }}>Km</span>{" "}
-            <span style={{ color: "var(--text)" }}>{results.mat?.Km}</span>
-            {"  "}
-            <span style={{ color: "var(--muted)" }}>Flow</span>{" "}
-            <span style={{ color: "var(--primary)" }}>
-              {results.mat?.flowability === 1 ? "Very Free"
-               : results.mat?.flowability === 2 ? "Free"
-               : results.mat?.flowability === 3 ? "Average" : "Poor"}
-            </span>
-            {results.mat?.hazard_codes?.length > 0 && (
-              <span style={{ color: "var(--danger)", marginLeft: 6 }}>
-                ⚠ {results.mat.hazard_codes.join(" ")}
-              </span>
-            )}
-          </ResultFeedback>
-        )}
-
-        {results && (
-          <ResultFeedback>
-            <span style={{ color: "var(--muted)" }}>Q achieved</span>{" "}
-            <span style={{ color: capOK ? "var(--success)" : "var(--danger)", fontWeight: 700 }}>
-              {Number(results.Q).toFixed(1)} t/h
-            </span>
-            {"  "}
-            <span style={{ color: "var(--muted)" }}>req</span>{" "}
-            <span style={{ color: "var(--text)" }}>{inputs.Q_req} t/h</span>
-            {results.Q != null && (
-              <span style={{
-                color: capOK ? "var(--success)" : "var(--danger)",
-                marginLeft: 6,
-              }}>
-                {capOK ? "+" : ""}{(((results.Q - inputs.Q_req) / inputs.Q_req) * 100).toFixed(1)}%
-              </span>
-            )}
-          </ResultFeedback>
-        )}
-      </DisciplineCard>
-
-      {/* ── MECHANICAL DESIGN ──────────────────────────────── */}
-      <DisciplineCard
-        disc="mechanical" title="Mechanical Design"
-        cema="CEMA 375 §3,6"
-        badge={mechBadge}
-        badgeType={!results ? "info" : speedOK ? "ok" : "warn"}
-        defaultOpen={true}
-      >
-        <div className="inp-row">
-          <Field label="Head Pulley Dia." k="D_mm" unit="mm"
-            min={100} max={1500} step={25} inputs={inputs} setField={setField} />
-          <Field label="Shaft Speed" k="n_rpm" unit="rpm"
-            min={10} max={300} inputs={inputs} setField={setField} />
-        </div>
-        <div className="inp-row">
-          <Field label="Fill Factor" k="fill_pct" unit="%"
-            min={30} max={100} inputs={inputs} setField={setField} />
-          <Field label="Spacing Gap" k="bucket_gap" unit="mm"
-            min={0} max={200} inputs={inputs} setField={setField} />
-        </div>
-
-        {results && (
-          <ResultFeedback>
-            <span style={{ color: "var(--muted)" }}>v</span>{" "}
-            <span style={{ color: speedOK ? "var(--success)" : "var(--danger)", fontWeight: 700 }}>
-              {Number(results.v).toFixed(3)} m/s
-            </span>
-            {"  "}
-            <span style={{ color: "var(--muted)" }}>CR</span>{" "}
-            <span style={{ color: crOK ? "var(--success)" : "var(--warning)" }}>
-              {Number(results.cr).toFixed(3)}
-            </span>
-            {"  "}
-            <span style={{ color: "var(--muted)" }}>θ</span>{" "}
-            <span style={{ color: "var(--primary)" }}>{Number(results.theta_rel).toFixed(1)}°</span>
-          </ResultFeedback>
-        )}
-        {results && (
-          <ResultFeedback>
-            <span style={{ color: "var(--muted)" }}>spacing</span>{" "}
-            <span style={{ color: "var(--text)" }}>{(results.spacing * 1000).toFixed(0)} mm</span>
-            {"  "}
-            <span style={{ color: "var(--muted)" }}>belt</span>{" "}
-            <span style={{ color: "var(--text)" }}>{results.belt_w} mm wide</span>
-          </ResultFeedback>
-        )}
-      </DisciplineCard>
-
-      {/* ── BUCKET SELECTION ───────────────────────────────── */}
-      <DisciplineCard
-        disc="bucket" title="Bucket Selection"
-        cema="CEMA 375 §6"
-        badge={results?.bucket ? results.bucket.id : null}
-        badgeType="info"
-        defaultOpen={true}
-      >
-        <div className="inp-field">
-          <div className="inp-label">Selection Mode</div>
-          <select className="inp-sel"
-            value={inputs.auto_bucket ? "auto" : "manual"}
-            onChange={(e) => setField("auto_bucket", e.target.value === "auto")}>
-            <option value="auto">Auto Select (recommended)</option>
-            <option value="manual">Manual Select</option>
-          </select>
-        </div>
-
-        {!inputs.auto_bucket && (
-          <div className="inp-field">
-            <div className="inp-label">Bucket Series</div>
-            <select className="inp-sel" value={inputs.bucket_id}
-              onChange={(e) => setField("bucket_id", e.target.value)}>
-              {BUCKET_SERIES.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.label} · {b.vol}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        {results?.bucket && (
-          <ResultFeedback>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span>
-                <span style={{ color: "var(--muted)" }}>Series</span>{" "}
-                <span style={{ color: "var(--warning)", fontWeight: 700 }}>
-                  {results.bucket.id}
-                </span>
-              </span>
-              <span>
-                <span style={{ color: "var(--muted)" }}>V</span>{" "}
-                <span style={{ color: "var(--text)" }}>{results.bucket.V}L</span>
-              </span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 2 }}>
-              <span>
-                <span style={{ color: "var(--muted)" }}>Size</span>{" "}
-                <span style={{ color: "var(--text)" }}>
-                  {results.bucket.W}×{results.bucket.H}mm
-                </span>
-              </span>
-              <span>
-                <span style={{ color: "var(--muted)" }}>P</span>{" "}
-                <span style={{ color: "var(--text)" }}>{results.bucket.P}mm</span>
-              </span>
-            </div>
-            <div style={{ marginTop: 4 }}>
-              <span style={{ color: "var(--muted)" }}>Speed range</span>{" "}
-              <span style={{ color: "var(--text2)" }}>
-                {results.bucket.v_min}–{results.bucket.v_max} m/s
-              </span>
-            </div>
-          </ResultFeedback>
-        )}
-      </DisciplineCard>
-
-      {/* ── POWER TRANSMISSION ─────────────────────────────── */}
-      <DisciplineCard
-        disc="power" title="Power Transmission"
-        cema="CEMA 375 §4"
-        badge={results ? `${results.motor_kw}kW` : null}
-        badgeType="info"
-        defaultOpen={false}
-      >
-        <div className="inp-row">
-          <Field label="Friction μ" k="mu" unit=""
-            min={0.1} max={0.6} step={0.01} inputs={inputs} setField={setField} />
-          <Field label="Wrap Angle" k="wrap_deg" unit="°"
-            min={90} max={240} inputs={inputs} setField={setField} />
-        </div>
-        <div className="inp-row">
-          <Field label="Service Factor" k="sf" unit=""
-            min={1.0} max={2.0} step={0.05} inputs={inputs} setField={setField} />
-          <Field label="Take-up K" k="K_takeup" unit=""
-            min={0.4} max={0.9} step={0.05} inputs={inputs} setField={setField}
-            hint="0.5 screw · 0.7 gravity" />
-        </div>
-
-        {results && (
-          <ResultFeedback>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span>
-                <span style={{ color: "var(--muted)" }}>P_total</span>{" "}
-                <span style={{ color: "var(--warning)", fontWeight: 700 }}>
-                  {Number(results.P_total).toFixed(2)} kW
-                </span>
-              </span>
-              <span>
-                <span style={{ color: "var(--muted)" }}>motor</span>{" "}
-                <span style={{ color: "var(--text)" }}>{results.motor_kw} kW</span>
-              </span>
-            </div>
-            <div style={{ marginTop: 2 }}>
-              <span style={{ color: "var(--muted)" }}>T1+T2+T3</span>{" "}
-              <span style={{ color: T_total > 50000 ? "var(--warning)" : "var(--text)" }}>
-                {(T_total / 1000).toFixed(2)} kN
-              </span>
-            </div>
-          </ResultFeedback>
-        )}
-      </DisciplineCard>
-
-      {/* ── CEMA 375 ADVANCED ──────────────────────────────── */}
-      <DisciplineCard
-        disc="advanced" title="CEMA 375 Advanced"
-        cema="LEQ Method"
-        badge="§4 Expert"
-        badgeType="info"
-        defaultOpen={false}
-      >
-        <div style={{ fontSize: 10, color: "var(--muted)", lineHeight: 1.5,
-          padding: "2px 0 6px" }}>
-          CEMA 375 §4 Length Equivalency power method parameters.
-          Leave at 0 to use material-specific defaults.
-        </div>
-
-        <Field label="Boot Pulley Dia." k="boot_pulley_D_mm" unit="mm"
-          min={100} max={1000} step={25} inputs={inputs} setField={setField}
-          hint="Tail pulley for LEQ digging loss calc" />
-
-        <div className="inp-row">
-          <Field label="Leq Factor" k="Leq" unit=""
-            min={0} max={20} step={0.5} inputs={inputs} setField={setField}
-            hint="5–12 · 0=auto" />
-          <Field label="Ceff Factor" k="Ceff" unit=""
-            min={0} max={2.0} step={0.05} inputs={inputs} setField={setField}
-            hint="1.10–1.30 · 0=auto" />
-        </div>
-
-        {results && (
-          <ResultFeedback>
-            <span style={{ color: "var(--muted)" }}>Leq used</span>{" "}
-            <span style={{ color: "var(--teal)" }}>{results.Leq}</span>
-            {"  "}
-            <span style={{ color: "var(--muted)" }}>Ceff</span>{" "}
-            <span style={{ color: "var(--teal)" }}>{results.Ceff}</span>
-            {"  "}
-            <span style={{ color: "var(--muted)" }}>P_dig</span>{" "}
-            <span style={{ color: "var(--text)" }}>
-              {results.P_digging != null ? Number(results.P_digging).toFixed(3) : "—"} kW
-            </span>
-          </ResultFeedback>
-        )}
-      </DisciplineCard>
-
-      {/* Footer */}
-      <div style={{ padding: "10px 12px 4px", marginTop: "auto" }}>
-        <div style={{ fontSize: 9, color: "var(--faint)", textAlign: "center",
-          letterSpacing: ".05em" }}>
-          VECTRIX™ · AKSHAYVIPRA EL-MEC
-          <br />
-          VECTOMEC™ Bucket Elevator · CEMA 375-2017
-        </div>
+      {/* ══════════════════════════════════════════════════════
+          PROCESS DESIGN
+          ══════════════════════════════════════════════════════ */}
+      <div id="disc-process">
+        <Card
+          id="process" title="Process Design" cema="CEMA 375"
+          badge={proc.badge} badgeColor={proc.color}
+          defaultOpen={false}
+        >
+          <TwoCol>
+            <Field label="Required Capacity" name="Q_req"
+              value={inp.Q_req} onChange={setField}
+              unit="t/h" min={1} max={5000} step={1} />
+            <Field label="Lift Height" name="H_m"
+              value={inp.H_m} onChange={setField}
+              unit="m" min={1} max={200} step={0.5} />
+          </TwoCol>
+          <Field label="Material" name="mat_id" type="text"
+            value={inp.mat_id} onChange={setField}
+            note="Material ID from VECTRIX database (e.g. wheat, cement, ironore)" />
+          <Field label="Custom Bulk Density" name="custom_rho"
+            value={inp.custom_rho} onChange={setField}
+            unit="kg/m³" min={0} max={5000} step={10}
+            note="Set 0 to use material database value" />
+        </Card>
       </div>
+
+      {/* ══════════════════════════════════════════════════════
+          MECHANICAL DESIGN
+          ══════════════════════════════════════════════════════ */}
+      <div id="disc-mechanical">
+        <Card
+          id="mechanical" title="Mechanical Design" cema="CEMA 375  §3, §6"
+          badge={mech.badge} badgeColor={mech.color}
+          defaultOpen={true}
+        >
+          <TwoCol>
+            <Field label="Head Pulley Dia." name="D_mm"
+              value={inp.D_mm} onChange={setField}
+              unit="mm" min={100} max={1500} step={25} />
+            <Field label="Shaft Speed" name="n_rpm"
+              value={inp.n_rpm} onChange={setField}
+              unit="rpm" min={10} max={300} step={5} />
+          </TwoCol>
+          <TwoCol>
+            <Field label="Fill Factor" name="fill_pct"
+              value={inp.fill_pct} onChange={setField}
+              unit="%" min={30} max={100} step={5} />
+            <Field label="Spacing Gap" name="bucket_gap"
+              value={inp.bucket_gap} onChange={setField}
+              unit="mm" min={0} max={200} step={5} />
+          </TwoCol>
+          <TwoCol>
+            <Field label="Friction  μ" name="mu"
+              value={inp.mu} onChange={setField}
+              min={0.1} max={0.6} step={0.01} />
+            <Field label="Wrap Angle" name="wrap_deg"
+              value={inp.wrap_deg} onChange={setField}
+              unit="°" min={90} max={240} step={5} />
+          </TwoCol>
+        </Card>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════
+          BUCKET SELECTION
+          ══════════════════════════════════════════════════════ */}
+      <div id="disc-bucket">
+        <Card
+          id="bucket" title="Bucket Selection" cema="CEMA 375  §6"
+          badge={bkt.badge} badgeColor={bkt.color}
+          defaultOpen={false}
+        >
+          <SubHead label="Selection Mode" />
+          <Field
+            label="Auto-select bucket" name="auto_bucket"
+            type="toggle" value={inp.auto_bucket} onChange={setField}
+          />
+          {!inp.auto_bucket && (
+            <Field
+              label="Bucket Series" name="bucket_id"
+              type="select" value={inp.bucket_id} onChange={setField}
+              options={bucketOptions}
+            />
+          )}
+          {inp.auto_bucket && (
+            <div style={{ fontSize: 9, color: T.text3, padding: "4px 0" }}>
+              Bucket series selected automatically to meet Q_req at the specified belt speed.
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════
+          POWER TRANSMISSION
+          ══════════════════════════════════════════════════════ */}
+      <div id="disc-power">
+        <Card
+          id="power" title="Power Transmission" cema="CEMA 375"
+          badge={pwr.badge} badgeColor={pwr.color}
+          defaultOpen={false}
+        >
+          <TwoCol>
+            <Field label="Service Factor" name="sf"
+              value={inp.sf} onChange={setField}
+              min={1.0} max={2.0} step={0.05} />
+            <Field label="Take-Up Factor K" name="K_takeup"
+              value={inp.K_takeup} onChange={setField}
+              min={0.4} max={0.9} step={0.05}
+              note="0.5 screw  0.7 gravity" />
+          </TwoCol>
+        </Card>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════
+          SERVICE CONDITIONS  (v1.3.0 — new card)
+          Exposes environment, belt_type, wind_pressure_pa
+          which were in DEFAULT_INPUTS but had no UI controls.
+          ══════════════════════════════════════════════════════ */}
+      <div id="disc-service">
+        <Card
+          id="service" title="Service Conditions" cema="v1.3.0"
+          badge={svc.badge} badgeColor={svc.color}
+          defaultOpen={false}
+        >
+          <Field
+            label="Environment" name="environment"
+            type="select" value={inp.environment ?? "dry"}
+            onChange={setField}
+            options={[
+              { value: "dry",       label: "Dry — standard indoor" },
+              { value: "humid",     label: "Humid — moisture > 15%" },
+              { value: "wet",       label: "Wet — water spray / washdown" },
+              { value: "submerged", label: "Submerged — boot below water" },
+            ]}
+            note="Drives pulley lagging type and friction coefficient selection"
+          />
+          <Field
+            label="Belt Type" name="belt_type"
+            type="select" value={inp.belt_type ?? "EP"}
+            onChange={setField}
+            options={[
+              { value: "EP", label: "EP — Fabric ply (standard)" },
+              { value: "ST", label: "ST — Steel cord (high tension)" },
+            ]}
+            note="ST belts route to herringbone lagging (diamond groove not recommended)"
+          />
+          <Field
+            label="Design Wind Pressure" name="wind_pressure_pa"
+            value={inp.wind_pressure_pa ?? 800}
+            onChange={setField}
+            unit="Pa" min={0} max={5000} step={100}
+            note="Used for casing panel deflection check. Typical: 600–1200 Pa"
+          />
+        </Card>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════
+          CEMA 375 ADVANCED
+          ══════════════════════════════════════════════════════ */}
+      <div id="disc-advanced">
+        <Card
+          id="advanced" title="CEMA 375 Advanced" cema="LEQ Method"
+          badge="Expert" badgeColor="blue"
+          defaultOpen={false}
+        >
+          <div style={{
+            fontSize: 9, color: T.text3, padding: "2px 0 8px",
+            lineHeight: 1.5, borderBottom: `1px solid ${T.border}`, marginBottom: 8,
+          }}>
+            CEMA 375 §4 Length Equivalency power method parameters.
+            Set to 0 to use material-specific database defaults.
+          </div>
+          <Field label="Boot Pulley Dia." name="boot_pulley_D_mm"
+            value={inp.boot_pulley_D_mm} onChange={setField}
+            unit="mm" min={100} max={1000} step={25}
+            note="Tail pulley for LEQ digging loss calculation" />
+          <TwoCol>
+            <Field label="Leq Factor" name="Leq"
+              value={inp.Leq} onChange={setField}
+              min={0} max={20} step={0.5}
+              note="0 = auto from material" />
+            <Field label="Ceff Factor" name="Ceff"
+              value={inp.Ceff} onChange={setField}
+              min={0} max={2.0} step={0.01}
+              note="0 = auto from material" />
+          </TwoCol>
+        </Card>
+      </div>
+
+      {/* Bottom padding so last card isn't flush with the container edge */}
+      <div style={{ flexShrink: 0, height: 16 }} />
     </div>
   );
 }

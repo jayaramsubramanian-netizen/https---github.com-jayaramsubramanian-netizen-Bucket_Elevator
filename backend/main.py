@@ -40,10 +40,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from database import get_db, init_db
-from .models import BucketElevatorInput, DesignRecord, OptimizerRequest
-from .calculations import solve_elevator, run_optimizer, MATERIALS, BUCKET_SERIES, MOTOR_SIZES
-from generate_report import build_report, build_variant_report
+try:
+    from .database import get_db, init_db
+except ImportError:
+    from database import get_db, init_db
+try:
+    from .models import BucketElevatorInput, DesignRecord, OptimizerRequest
+except ImportError:
+    from models import BucketElevatorInput, DesignRecord, OptimizerRequest
+try:
+    from .calculations import solve_elevator, run_optimizer, MATERIALS, BUCKET_SERIES, MOTOR_SIZES
+except ImportError:
+    from calculations import solve_elevator, run_optimizer, MATERIALS, BUCKET_SERIES, MOTOR_SIZES
+try:
+    from .generate_report import build_report, build_variant_report
+except ImportError:
+    from generate_report import build_report, build_variant_report
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────

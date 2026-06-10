@@ -42,7 +42,10 @@ import warnings
 from dataclasses import dataclass
 from typing import Literal
 
-from .constants import GRAVITY
+try:
+    from .constants import GRAVITY
+except ImportError:
+    from constants import GRAVITY
 
 
 # ── CEMA 375 §3 centrifugal ratio boundary values ─────────────────────────────
@@ -140,6 +143,7 @@ class DischargePhysics:
         cohesion_index:    float = 0.0,
         moisture_pct:      float = 0.0,
         surface_roughness: float = 0.5,
+        material:          "dict | None" = None,
     ) -> float:
         """
         Effective launch-velocity retention factor [0.0–1.0].
@@ -147,32 +151,30 @@ class DischargePhysics:
         Material that clings to the bucket lip leaves at a reduced effective
         speed.  This factor multiplies belt speed before trajectory calculation.
 
+        v1.2.0: accepts an optional material dict (from MATERIALS database).
+        When provided, cohesion, moisture, and roughness are derived internally
+        instead of requiring the caller to pre-extract them.  This eliminates
+        the intermediate conversion step in calculations.py and makes the
+        factor correctly material-aware for all 400 database entries.
+
         Parameters
         ----------
         cohesion_index     0 = free-flowing dry sand, 1 = wet clay / flyash cake
         moisture_pct       Gravimetric moisture content [%]
         surface_roughness  0 = polished steel bucket, 1 = rubber-lined
-
-        Returns
-        -------
-        Dimensionless factor ∈ [~0.78, 1.00].
-
-        Notes
-        -----
-        Coefficients are engineering approximations scaled to published OEM
-        correction tables.  For precise retention, specific adhesion tests
-        (DIN 18134 or ASTM D4253) by material are required.
-
-        Examples
-        --------
-        Dry wheat    cohesion=0.05, moisture=12 %  → ≈ 0.97
-        Wet clinker  cohesion=0.15, moisture=8 %   → ≈ 0.96
-        Moist flyash cohesion=0.70, moisture=18 %  → ≈ 0.86
+        material           If provided: all three parameters are derived from
+                           the material dict; the individual arguments are ignored.
         """
+        if material is not None:
+            cohesion_index    = float(material.get("cohesion",     0.0))
+            moisture_pct      = float(material.get("moisture_pct", 0.0))
+            abr               = float(material.get("abr_code",     3))
+            surface_roughness = min(1.0, abr / 10.0)   # abr 0→smooth, 7→rough
+
         k_cohesion  = 1.0 - 0.15 * min(1.0, max(0.0, cohesion_index))
         k_moisture  = 1.0 - 0.004 * min(20.0, max(0.0, moisture_pct))
         k_roughness = 1.0 - 0.02  * min(1.0,  max(0.0, surface_roughness))
-        return round(k_cohesion * k_moisture * k_roughness, 4)
+        return k_cohesion * k_moisture * k_roughness   # full precision; round at caller
 
     # ── Issues #1 + #2 — Corrected release point ──────────────────────────────
 
@@ -279,13 +281,13 @@ class DischargePhysics:
         vy = -v_eff  * math.sin(theta)   # corrected sign: negative = downward
 
         return ReleasePoint(
-            theta_rad     = round(theta,               6),
-            theta_deg     = round(math.degrees(theta), 3),
-            x0            = round(x0,    4),
-            y0            = round(y0,    4),
-            vx            = round(vx,    4),
-            vy            = round(vy,    4),
-            cr            = round(cr,    4),
+            theta_rad     = theta,
+            theta_deg     = math.degrees(theta),
+            x0            = x0,
+            y0            = y0,
+            vx            = vx,
+            vy            = vy,
+            cr            = cr,
             discharge_cls = d_class,
             retention     = r_fac,
         )
@@ -338,10 +340,10 @@ class DischargePhysics:
         while t < 5.0:
             x = rp.x0 + rp.vx * t
             y = rp.y0 + rp.vy * t - 0.5 * GRAVITY * t ** 2
-            points.append((round(x, 4), round(y, 4)))
+            points.append((x, y))          # full precision — round at API layer
             if y < stop_y:
                 break
-            t = round(t + dt, 6)   # round avoids floating-point accumulation
+            t = round(t + dt, 6)           # t rounding prevents float accumulation
 
         return points
 
@@ -356,19 +358,30 @@ class DischargePhysics:
         cohesion_index:      float = 0.0,
         elevator_type:       DischargeType = "centrifugal",
         floor_y:             float | None = None,
+        material:            "dict | None" = None,
     ) -> dict:
         """
         CEMA 375 §3 — Discharge stream envelope (centre, upper, lower bounds).
 
+        v1.2.0 changes
+        ──────────────
+        • Accepts optional material dict. When provided, MaterialBehaviorEngine
+          .stream_spread_factor() is applied to scale the base spread by the
+          material's actual flow properties (cohesion, moisture, particle shape).
+          This replaces the generic k_mat = 1 − cohesion_index approximation.
+        • Output points are full precision — rounding is the caller's responsibility.
+        • trajectory_metrics block added to the return dict.
+
         Spread model
         ────────────
-        spread = 0.5 · bucket_projection
-               + 0.04 · v² / g
-               + k_mat · particle_size_mm / 1000
+        base_spread = 0.5 · bucket_projection
+                    + 0.04 · v² / g
+                    + k_mat · particle_size_mm / 1000
 
-        k_mat = max(0, 1 − cohesion_index)
-          →  k_mat = 1.0 for free-flowing coarse (clinker, gravel): wide stream
-          →  k_mat = 0.1 for cohesive fine (moist flyash):           narrow stream
+        k_mat = max(0, 1 − cohesion_index) when no material dict given.
+
+        When material dict is provided:
+            spread *= MaterialBehaviorEngine.stream_spread_factor(material, speed)
 
         Physical rationale for each term
         ──────────────────────────────────
@@ -376,33 +389,35 @@ class DischargePhysics:
         0.04 · v²/g         Velocity-proportional throw dispersion (empirical)
         k_mat · d / 1000    Particle-size scatter; larger lumps disperse wider
 
-        Worked examples
-        ───────────────
-        Flyash    (1 mm,  cohesion=0.80): spread ≈  80 mm
-        Dry wheat (4 mm,  cohesion=0.10): spread ≈ 120 mm
-        Clinker   (40 mm, cohesion=0.05): spread ≈ 175 mm
-
         Parameters
         ----------
-        particle_size_mm  Characteristic lump/particle size [mm]
-        cohesion_index    0 = free-flowing, 1 = highly cohesive
-        floor_y           Passed through to trajectory()
-
-        Returns
-        -------
-        {
-            "center":   [(x, y), ...],
-            "upper":    [(x, y + spread), ...],
-            "lower":    [(x, y - spread), ...],
-            "spread_m": float,
-        }
+        material    Optional material dict from MATERIALS database.  When present,
+                    cohesion and particle size are extracted automatically and
+                    MaterialBehaviorEngine.stream_spread_factor() is applied.
         """
-        k_mat  = max(0.0, 1.0 - cohesion_index)
-        spread = (
+        # Derive cohesion and particle size from material dict if available
+        if material is not None:
+            cohesion_index   = float(material.get("cohesion",         cohesion_index))
+            particle_size_mm = float(material.get("particle_size_mm", particle_size_mm)
+                                     if material.get("particle_size_mm") else particle_size_mm)
+
+        k_mat = max(0.0, 1.0 - cohesion_index)
+        base_spread = (
             0.5  * bucket_projection_m
             + 0.04 * (speed ** 2) / GRAVITY
             + k_mat * particle_size_mm / 1000.0
         )
+
+        # Scale by MaterialBehaviorEngine if material dict provided
+        if material is not None:
+            try:
+                from .material_behavior import MaterialBehaviorEngine
+                behavior_factor = MaterialBehaviorEngine.stream_spread_factor(material, speed)
+                spread = base_spread * behavior_factor
+            except Exception:
+                spread = base_spread
+        else:
+            spread = base_spread
 
         center = DischargePhysics.trajectory(
             speed, radius,
@@ -410,14 +425,20 @@ class DischargePhysics:
             cohesion_index = cohesion_index,
             floor_y        = floor_y,
         )
-        upper = [(x, round(y + spread, 4)) for x, y in center]
-        lower = [(x, round(y - spread, 4)) for x, y in center]
+
+        # Full precision — no rounding in physics layer
+        upper = [(x, y + spread) for x, y in center]
+        lower = [(x, y - spread) for x, y in center]
+
+        # Trajectory metrics derived from center line
+        metrics = DischargePhysics.trajectory_metrics(center, speed)
 
         return {
             "center":   center,
             "upper":    upper,
             "lower":    lower,
-            "spread_m": round(spread, 4),
+            "spread_m": spread,
+            "metrics":  metrics,
         }
 
     # ── Issue #4 (cont.) — Backlegging check ─────────────────────────────────
@@ -459,6 +480,239 @@ class DischargePhysics:
             if x >= return_leg_x and abs(y - return_leg_y) <= belt_half_width:
                 return True
         return False
+
+    # ── Trajectory metrics ────────────────────────────────────────────────────
+
+    @staticmethod
+    def trajectory_metrics(
+        points:        list[tuple[float, float]],
+        release_speed: float,
+        dt:            float = 0.005,
+    ) -> dict:
+        """
+        Summary metrics derived from a trajectory point list.
+
+        All values are full precision — round at the API layer (calculations.py).
+
+        Parameters
+        ----------
+        points         List of (x, y) tuples from trajectory() [m]
+        release_speed  Belt speed at release [m/s] (used for energy conservation)
+        dt             Time step used to generate the trajectory [s].
+                       Default 0.005 matches trajectory() default.
+
+        Returns
+        -------
+        {
+            "throw_distance_m":    x_land − x_release  [m]
+            "max_height_m":        highest y above release point [m]
+            "impact_velocity_mps": v at landing (energy conservation) [m/s]
+            "flight_time_s":       n_points × dt [s]
+            "land_x_m":            x coordinate of last point [m]
+            "land_y_m":            y coordinate of last point [m]
+        }
+        """
+        if not points or len(points) < 2:
+            return {}
+
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+
+        x_release = xs[0]
+        y_release = ys[0]
+        x_land    = xs[-1]
+        y_land    = ys[-1]
+
+        throw_distance = x_land - x_release
+        max_height     = max(ys) - y_release       # positive if stream rises first
+        flight_time    = len(points) * dt
+
+        # Impact speed from energy conservation: v² = v₀² + 2g·Δh
+        delta_h  = y_release - y_land              # positive when material falls
+        v_impact = math.sqrt(max(0.0, release_speed ** 2 + 2.0 * GRAVITY * delta_h))
+
+        return {
+            "throw_distance_m":    throw_distance,
+            "max_height_m":        max_height,
+            "impact_velocity_mps": v_impact,
+            "flight_time_s":       flight_time,
+            "land_x_m":            x_land,
+            "land_y_m":            y_land,
+        }
+
+    # ── Stream interception analysis ──────────────────────────────────────────
+
+    @staticmethod
+    def stream_intersects_chute(
+        trajectory:    list[tuple[float, float]],
+        chute_x0_m:   float,
+        chute_y0_m:   float,
+        chute_x1_m:   float,
+        chute_y1_m:   float,
+        release_speed: float = 2.0,
+    ) -> dict:
+        """
+        Check whether the discharge stream trajectory intersects a chute opening.
+
+        The chute opening is defined as a straight line segment from
+        (chute_x0_m, chute_y0_m) to (chute_x1_m, chute_y1_m), all coordinates
+        relative to the head pulley centre [m].
+
+        Uses parametric 2D line-segment intersection:
+            P(t) = P1 + t·(P2 − P1),  t ∈ [0, 1]   — trajectory segment
+            C(s) = C0 + s·(C1 − C0),  s ∈ [0, 1]   — chute segment
+        Intersection requires both t and s in [0, 1].
+
+        Parameters
+        ----------
+        trajectory      List of (x, y) tuples from trajectory() [m]
+        chute_x0_m …    Chute opening endpoints [m] — pulley-centre reference frame
+        release_speed   Belt speed at release [m/s] — for impact velocity
+
+        Returns
+        -------
+        {
+            "intercepted":       bool
+            "impact_x_m":        float | None
+            "impact_y_m":        float | None
+            "impact_angle_deg":  float | None   angle between stream and chute normal
+            "impact_velocity_mps": float | None  energy-conservation estimate
+            "trajectory_fraction": float | None  how far along trajectory (0–1)
+            "note":              str
+        }
+        """
+        cx0, cy0 = chute_x0_m, chute_y0_m
+        cx1, cy1 = chute_x1_m, chute_y1_m
+        cdx, cdy = cx1 - cx0, cy1 - cy0
+
+        for i in range(len(trajectory) - 1):
+            px1, py1 = trajectory[i]
+            px2, py2 = trajectory[i + 1]
+            tdx, tdy = px2 - px1, py2 - py1
+
+            denom = tdx * cdy - tdy * cdx
+            if abs(denom) < 1e-12:
+                continue            # parallel segments
+
+            t = ((cx0 - px1) * cdy - (cy0 - py1) * cdx) / denom
+            s = ((cx0 - px1) * tdy - (cy0 - py1) * tdx) / denom
+
+            if 0.0 <= t <= 1.0 and 0.0 <= s <= 1.0:
+                ix = px1 + t * tdx
+                iy = py1 + t * tdy
+
+                # Impact angle: between trajectory direction and chute normal
+                chute_len = math.sqrt(cdx**2 + cdy**2)
+                if chute_len > 1e-9:
+                    # Chute normal (rotate 90°): (-cdy, cdx) / len
+                    nx, ny = -cdy / chute_len, cdx / chute_len
+                    traj_len = math.sqrt(tdx**2 + tdy**2)
+                    if traj_len > 1e-9:
+                        tx, ty = tdx / traj_len, tdy / traj_len
+                        dot = abs(tx * nx + ty * ny)
+                        impact_angle = math.degrees(math.asin(min(1.0, dot)))
+                    else:
+                        impact_angle = 90.0
+                else:
+                    impact_angle = 90.0
+
+                # Impact velocity from energy conservation
+                delta_h  = trajectory[0][1] - iy
+                v_impact = math.sqrt(max(0.0, release_speed**2 + 2.0 * GRAVITY * delta_h))
+
+                traj_frac = (i + t) / max(len(trajectory) - 1, 1)
+
+                return {
+                    "intercepted":          True,
+                    "impact_x_m":           ix,
+                    "impact_y_m":           iy,
+                    "impact_angle_deg":     impact_angle,
+                    "impact_velocity_mps":  v_impact,
+                    "trajectory_fraction":  traj_frac,
+                    "note": "Stream intersects chute at computed point.",
+                }
+
+        return {
+            "intercepted":          False,
+            "impact_x_m":           None,
+            "impact_y_m":           None,
+            "impact_angle_deg":     None,
+            "impact_velocity_mps":  None,
+            "trajectory_fraction":  None,
+            "note": "Stream does not intersect the specified chute opening.",
+        }
+
+    # ── Casing clearance check ────────────────────────────────────────────────
+
+    @staticmethod
+    def casing_clearance_check(
+        trajectory:           list[tuple[float, float]],
+        casing_half_width_m:  float,
+        casing_inner_x_m:     float | None = None,
+    ) -> dict:
+        """
+        Check whether the discharge stream clears the elevator casing wall.
+
+        Real-world problem: at high CR (> 2.5) or with very wide buckets, the
+        material stream can strike the casing head section before entering the
+        discharge chute, causing wear, blockage, and structural damage.
+
+        The casing wall is modelled as a vertical plane at
+        x = casing_half_width_m (measured from pulley centre).
+
+        Parameters
+        ----------
+        trajectory           List of (x, y) tuples from trajectory() [m]
+        casing_half_width_m  Half the internal casing width at head [m].
+                             Typical: belt_width / 2 + casing_plate_thickness
+        casing_inner_x_m     Override for non-symmetric casings [m].
+                             If None: uses casing_half_width_m.
+
+        Returns
+        -------
+        {
+            "clears":          bool   True if stream stays inside casing
+            "max_x_m":         float  Maximum x reached by stream [m]
+            "clearance_m":     float  casing_wall_x − max_x  (negative = strike)
+            "strike_x_m":      float | None  x at first wall contact
+            "strike_y_m":      float | None  y at first wall contact
+            "casing_wall_x_m": float  the wall position used for the check
+        }
+        """
+        wall_x = casing_inner_x_m if casing_inner_x_m is not None else casing_half_width_m
+
+        max_x      = max((p[0] for p in trajectory), default=0.0)
+        clearance  = wall_x - max_x
+        clears     = clearance >= 0.0
+
+        strike_x = strike_y = None
+        if not clears:
+            for i in range(len(trajectory) - 1):
+                x1, y1 = trajectory[i]
+                x2, y2 = trajectory[i + 1]
+                if x1 <= wall_x <= x2 or x2 <= wall_x <= x1:
+                    # Interpolate y at wall
+                    if abs(x2 - x1) > 1e-9:
+                        frac = (wall_x - x1) / (x2 - x1)
+                        strike_x = wall_x
+                        strike_y = y1 + frac * (y2 - y1)
+                    break
+
+        return {
+            "clears":           clears,
+            "max_x_m":          max_x,
+            "clearance_m":      clearance,
+            "strike_x_m":       strike_x,
+            "strike_y_m":       strike_y,
+            "casing_wall_x_m":  wall_x,
+            "recommendation": (
+                "Stream clears casing — no head-section impact risk."
+                if clears else
+                f"Stream strikes casing at x={strike_x:.3f} m, y={strike_y:.3f} m. "
+                "Consider reducing belt speed, increasing casing width, or "
+                "adding a curved hood to redirect the stream."
+            ),
+        }
 
     # ── Deprecated — retained for backward compatibility ──────────────────────
 

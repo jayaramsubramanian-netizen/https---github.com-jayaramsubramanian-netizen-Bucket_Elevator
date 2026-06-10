@@ -1313,7 +1313,10 @@ if __name__ == "__main__":
     models_s.BucketElevatorInput=BEI; models_s.OptimizerRequest=OR
     sys.modules["models"] = models_s
 
-    from calculations import solve_elevator
+    try:
+        from .calculations import solve_elevator
+    except ImportError:
+        from calculations import solve_elevator
     r = solve_elevator(BEI())
     inp = {
         "Q_req":120,"H_m":25,"mat_id":"wheat","D_mm":500,"n_rpm":65,
@@ -1325,3 +1328,158 @@ if __name__ == "__main__":
     build_report(r, inp, project="Grain Terminal GT-01",
                  doc_ref="VX-BE-2026-001", output_path=out)
     print(f"PDF written  →  {out}  ({len(open(out,'rb').read()):,} bytes)")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VARIANT COMPARISON REPORT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def build_variant_report(candidates: list, inputs: dict,
+                         project: str = "", doc_ref: str = "",
+                         output_path=None) -> bytes:
+    """
+    A4 portrait PDF comparing multiple optimizer candidates side by side.
+    Called by main.py POST /bucket-elevator/report-variants.
+
+    candidates : list of dicts from run_optimizer() — each has rpm, bucket_id,
+                 fill, speed, capacity, power, motor_kw, T1_kN, cr, score, rank
+    inputs     : same BucketElevatorInput dict used for the base calculation
+    """
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+        leftMargin=ML, rightMargin=MR, topMargin=MT, bottomMargin=MB,
+        title="VECTRIX™ Design Variants Comparison",
+        author="Jayveecons Engineering & Design")
+
+    inp = inputs or {}
+    n   = len(candidates)
+    now = datetime.now().strftime("%d %b %Y  %H:%M")
+    story = []
+
+    # ── Header ───────────────────────────────────────────────────────────────
+    hdr = Table([[
+        [
+            Paragraph("<b>VECTRIX™</b>",
+                ParagraphStyle("lg", fontName="Helvetica-Bold", fontSize=16,
+                               textColor=white, leading=18)),
+            Paragraph("BUCKET ELEVATOR",
+                ParagraphStyle("s1", fontName="Helvetica", fontSize=7,
+                               textColor=MUTED2, leading=9)),
+            Paragraph("Design Variant Comparison",
+                ParagraphStyle("s2", fontName="Helvetica", fontSize=6.5,
+                               textColor=MUTED, leading=8)),
+        ],
+        [
+            Paragraph(f"<b>Project:</b> {project or 'Unspecified'}",
+                ParagraphStyle("pi", fontName="Helvetica", fontSize=8,
+                               textColor=white, leading=10)),
+            Paragraph(f"<b>Ref:</b> {doc_ref or 'VX-BE-VAR'}",
+                ParagraphStyle("pi", fontName="Helvetica", fontSize=8,
+                               textColor=white, leading=10)),
+            Paragraph(f"<b>Date:</b> {now}",
+                ParagraphStyle("pi", fontName="Helvetica", fontSize=8,
+                               textColor=white, leading=10)),
+            Paragraph(f"<b>Variants:</b> {n} candidates",
+                ParagraphStyle("pi", fontName="Helvetica", fontSize=8,
+                               textColor=white, leading=10)),
+        ],
+        [
+            Paragraph(f"<b>{n} VARIANTS</b>",
+                ParagraphStyle("st", fontName="Helvetica-Bold", fontSize=14,
+                               textColor=BLUE, alignment=TA_CENTER, leading=16)),
+            Paragraph("Comparison Report",
+                ParagraphStyle("sl", fontName="Helvetica", fontSize=6.5,
+                               textColor=MUTED, alignment=TA_CENTER, leading=8)),
+        ],
+    ]], colWidths=[AVAIL*0.28, AVAIL*0.46, AVAIL*0.26])
+    hdr.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0), (-1,-1), NAVY),
+        ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING",    (0,0), (-1,-1), 8),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+        ("LEFTPADDING",   (0,0), (-1,-1), 6),
+        ("RIGHTPADDING",  (0,0), (-1,-1), 6),
+        ("LINEBELOW",     (0,0), (-1, 0), 2.5, CRIMSON),
+    ]))
+    story += [hdr, Spacer(1, 8)]
+
+    # ── Design basis ─────────────────────────────────────────────────────────
+    story += section("Design Basis")
+    story += data_table([
+        ("Required capacity", f"{inp.get('Q_req','—')} t/h"),
+        ("Lift height",       f"{inp.get('H_m','—')} m"),
+        ("Material",          inp.get('mat_id','—')),
+        ("Head pulley dia.",  f"{inp.get('D_mm','—')} mm"),
+        ("Service factor",    str(inp.get('sf','—'))),
+        ("Fill target",       f"{inp.get('fill_pct','—')}%"),
+    ], col_widths=[AVAIL*0.40, AVAIL*0.60])
+
+    # ── Comparison table ──────────────────────────────────────────────────────
+    story += section("Variant Comparison")
+    col_first = 44 * mm
+    col_unit  = 14 * mm
+    col_var   = (AVAIL - col_first - col_unit) / max(n, 1)
+    col_widths_t = [col_first, col_unit] + [col_var] * n
+
+    def vrow(label, unit, getter):
+        vals = []
+        for c in candidates:
+            try:    vals.append(str(getter(c)))
+            except: vals.append("—")
+        return ([Paragraph(label, ST["body"]),
+                 Paragraph(unit, ST["cap"])] +
+                [Paragraph(v, ST["mono"]) for v in vals])
+
+    col_labels = ["Parameter", "Units"] + [f"Var {i+1}" for i in range(n)]
+    header_row = [Paragraph(h, ST["h3"]) for h in col_labels]
+    table_data = [header_row,
+        vrow("Bucket series", "—",    lambda c: c.get("bucket_id","—")),
+        vrow("RPM",           "rpm",  lambda c: c.get("rpm","—")),
+        vrow("Fill factor",   "%",    lambda c: c.get("fill","—")),
+        vrow("Belt speed",    "m/s",  lambda c: c.get("speed","—")),
+        vrow("Capacity",      "t/h",  lambda c: c.get("capacity","—")),
+        vrow("Total power",   "kW",   lambda c: c.get("power","—")),
+        vrow("Motor",         "kW",   lambda c: c.get("motor_kw","—")),
+        vrow("Headshaft R",   "kN",   lambda c: c.get("T1_kN","—")),
+        vrow("Cent. ratio",   "—",    lambda c: c.get("cr","—")),
+        vrow("Score",         "—",    lambda c: fmt(c.get("score"),3)),
+        vrow("Rank",          "—",    lambda c: c.get("rank","—")),
+    ]
+    ranks = [c.get("rank", 99) for c in candidates]
+    t = Table(table_data, colWidths=col_widths_t, repeatRows=1)
+    cmds = [
+        ("BACKGROUND",    (0,0), (-1, 0), NAVY),
+        ("TEXTCOLOR",     (0,0), (-1, 0), TEXT),
+        ("FONTNAME",      (0,0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE",      (0,0), (-1, 0), 7.5),
+        ("GRID",          (0,0), (-1,-1), 0.3, BORDER),
+        ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING",    (0,0), (-1,-1), 2.5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 2.5),
+        ("LEFTPADDING",   (0,0), (-1,-1), 3),
+        ("RIGHTPADDING",  (0,0), (-1,-1), 3),
+    ]
+    for i in range(1, len(table_data)):
+        cmds.append(("BACKGROUND", (0,i), (-1,i), LIGHT_BG if i%2==1 else white))
+    if ranks:
+        best = 2 + ranks.index(min(ranks))
+        cmds.append(("LINEABOVE", (best,0), (best,0), 2.5, GREEN))
+        cmds.append(("LINEBELOW", (best,len(table_data)-1),
+                     (best,len(table_data)-1), 1.5, GREEN))
+    t.setStyle(TableStyle(cmds))
+    story += [t, Spacer(1, 6)]
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER))
+    story.append(Spacer(1, 2))
+    story.append(Paragraph(
+        f"VECTRIX™  ·  Jayveecons Engineering &amp; Design  "
+        f"·  Generated {now}  ·  AkshayVipra EL-MEC PVT. LTD.",
+        ST["ftr"]))
+
+    doc.build(story)
+    pdf_bytes = buf.getvalue()
+    if output_path:
+        with open(output_path, "wb") as f:
+            f.write(pdf_bytes)
+    return pdf_bytes

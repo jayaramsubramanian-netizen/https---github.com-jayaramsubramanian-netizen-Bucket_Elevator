@@ -47,12 +47,20 @@ import math
 import warnings
 from typing import Optional
 
-from .constants import (
-    GRAVITY,
-    DEFAULT_STARTUP_FACTOR,
-    DEFAULT_SERVICE_FACTOR,
-    DEFAULT_SERVICE_FACTOR_CHAIN,
-)
+try:
+    from .constants import (
+        GRAVITY,
+        DEFAULT_STARTUP_FACTOR,
+        DEFAULT_SERVICE_FACTOR,
+        DEFAULT_SERVICE_FACTOR_CHAIN,
+    )
+except ImportError:
+    from constants import (
+        GRAVITY,
+        DEFAULT_STARTUP_FACTOR,
+        DEFAULT_SERVICE_FACTOR,
+        DEFAULT_SERVICE_FACTOR_CHAIN,
+    )
 
 
 # ── CEMA 375 §4 Tension Path Architecture ─────────────────────────────────────

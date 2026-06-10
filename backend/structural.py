@@ -54,19 +54,31 @@ from typing import Optional
 # call time so changes to constants.py are reflected immediately.
 
 def _allowable_stress() -> float:
-    from .constants import STEEL_ALLOWABLE_STRESS
+    try:
+        from .constants import STEEL_ALLOWABLE_STRESS
+    except ImportError:
+        from constants import STEEL_ALLOWABLE_STRESS
     return STEEL_ALLOWABLE_STRESS
 
 def _cema_max_slope() -> float:
-    from .constants import CEMA_MAX_SHAFT_SLOPE
+    try:
+        from .constants import CEMA_MAX_SHAFT_SLOPE
+    except ImportError:
+        from constants import CEMA_MAX_SHAFT_SLOPE
     return CEMA_MAX_SHAFT_SLOPE
 
 def _shaft_E() -> float:
-    from .constants import SHAFT_E_PA
+    try:
+        from .constants import SHAFT_E_PA
+    except ImportError:
+        from constants import SHAFT_E_PA
     return SHAFT_E_PA
 
 def _gravity() -> float:
-    from .constants import GRAVITY
+    try:
+        from .constants import GRAVITY
+    except ImportError:
+        from constants import GRAVITY
     return GRAVITY
 
 

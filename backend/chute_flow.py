@@ -63,8 +63,14 @@ CHANGES FROM v1.0.0
 
 import math
 from typing import Optional
-from .constants import GRAVITY
-from .material_behavior import MaterialBehaviorEngine
+try:
+    from .constants import GRAVITY
+except ImportError:
+    from constants import GRAVITY
+try:
+    from .material_behavior import MaterialBehaviorEngine
+except ImportError:
+    from material_behavior import MaterialBehaviorEngine
 
 
 class ChuteFlowEngine:
