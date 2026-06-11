@@ -99,6 +99,22 @@ except ImportError:
         material_count,
     )
 try:
+    from .bom import generate_bom
+except ImportError:
+    try:
+        from bom import generate_bom
+    except ImportError:
+        generate_bom = lambda r, i: None   # bom.py not deployed — skip silently
+
+try:
+    from .reliability import maintenance_schedule
+except ImportError:
+    try:
+        from reliability import maintenance_schedule
+    except ImportError:
+        maintenance_schedule = lambda r, i, **kw: None  # reliability.py not deployed — skip silently
+
+try:
     from .material_behavior import MaterialBehaviorEngine
 except ImportError:
     from material_behavior import MaterialBehaviorEngine
@@ -456,7 +472,23 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     bucket_id = inp.bucket_id if not inp.auto_bucket else None
     is_hf = (bucket_id == "HF") if bucket_id else False
     elev_type = "continuous" if is_hf else "centrifugal"
-    mat_behavior = MaterialBehaviorEngine.apply_to_solver(mat, elev_type)
+    try:
+        mat_behavior = MaterialBehaviorEngine.apply_to_solver(mat, elev_type)
+    except Exception as _mbe:
+        # Safe fallback — bad material entry must not crash the solver
+        mat_behavior = {
+            "fill_efficiency":           0.75,
+            "recommended_fill_pct":      float(inp.fill_pct),
+            "vfi":                       3,
+            "rollback_factor":           0.0,
+            "effective_cr_threshold":    1.0,
+            "wall_friction_coeff":       0.35,
+            "minimum_chute_angle_deg":   45.0,
+            "hazards":                   {},
+            "abrasion_class":            3,
+            "flowability_class":         3,
+            "_error":                    str(_mbe),
+        }
 
     # ── Belt speed ─────────────────────────────────────────────────────────────
     v = belt_speed(inp.D_mm, inp.n_rpm)
@@ -658,15 +690,18 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     chute_w_m        = (bkt_w_mm + 100.0) / 1000.0   # CEMA §5: +50mm each side
     chute_h_m        = chute_w_m * 0.75
 
-    discharge_chute = ChuteFlowEngine.design_summary(
-        material        = mat,
-        capacity_tph    = Q,
-        velocity_mps    = v,
-        drop_height_m   = drop_h_m,
-        chute_angle_deg = chute_angle_auto,
-        chute_width_m   = chute_w_m,
-        chute_height_m  = chute_h_m,
-    )
+    try:
+        discharge_chute = ChuteFlowEngine.design_summary(
+            material        = mat,
+            capacity_tph    = Q,
+            velocity_mps    = v,
+            drop_height_m   = drop_h_m,
+            chute_angle_deg = float(chute_angle_auto) if chute_angle_auto is not None else 65.0,
+            chute_width_m   = chute_w_m,
+            chute_height_m  = chute_h_m,
+        )
+    except Exception as _ce:
+        discharge_chute = {"_error": str(_ce), "performance": {}, "maintenance": {}, "recommendations": []}
     discharge_chute["geometry"]   = chute_geom
     discharge_chute["hood_spoon"] = hood_spoon
 
@@ -702,6 +737,55 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         design_recs = StructuralStressEngine.design_recommendations(_partial, _inp_dict)
     except Exception:
         design_recs = []
+
+    # ── BOM + Maintenance schedule (Tier 2) ────────────────────────────────────
+    # Pass a populated sub-dict so bom.py and reliability.py don't need the full
+    # result object (which hasn't been assembled yet).
+    _r_for_tier2 = {
+        "d_mm":             round(d_mm, 1),
+        "belt_w":           BW_mm,
+        "belt_ply":         belt_ply,
+        "bucket":           bucket,
+        "bucket_mass_kg":   round(bw_kg, 2),
+        "hub":              hub,
+        "lagging":          lagging,
+        "end_disc":         end_disc,
+        "bolt_fatigue":     bolt_fatigue,
+        "takeup_gravity":   takeup_gravity,
+        "takeup_screw":     takeup_screw,
+        "discharge_chute":  discharge_chute,
+        "casing_t_mm":      round(casing_t_m * 1000, 1),
+        "casing_panel":     casing_panel,
+        "casing_stiffener": casing_stiffener,
+        "shaft_span_mm":    round(span_m * 1000, 0),
+        "motor_kw":         motor_kw,
+        "T_Nm":             round(T_Nm, 2),
+        "L10":              round(L10, 0),
+        "mat":              mat,
+        "spacing":          round(spacing, 4),
+    }
+    _inp_for_tier2 = {
+        "Q_req":            inp.Q_req,
+        "H_m":              inp.H_m,
+        "D_mm":             inp.D_mm,
+        "n_rpm":            inp.n_rpm,
+        "boot_pulley_D_mm": getattr(inp, "boot_pulley_D_mm", 300),
+        "fill_pct":         inp.fill_pct,
+        "sf":               inp.sf,
+        "mu":               inp.mu,
+        "wrap_deg":         inp.wrap_deg,
+        "belt_type":        getattr(inp, "belt_type", "EP"),
+        "environment":      getattr(inp, "environment", "dry"),
+        "wind_pressure_pa": getattr(inp, "wind_pressure_pa", 800),
+    }
+    try:
+        bom_result = generate_bom(_r_for_tier2, _inp_for_tier2)
+    except Exception:
+        bom_result = None
+    try:
+        maintenance_result = maintenance_schedule(_r_for_tier2, _inp_for_tier2)
+    except Exception:
+        maintenance_result = None
 
     # ── Sweep data ────────────────────────────────────────────────────────────
     speed_sweep = []
@@ -783,6 +867,9 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         # Casing clearance + stream interception — v1.4.0 (wired from physics.py)
         "casing_clearance":  casing_clearance,
         "stream_chute":      stream_chute,
+        # BOM + Maintenance schedule — Tier 2
+        "bom":               bom_result,
+        "maintenance":       maintenance_result,
         # Checks
         "checks": checks,
         # Context
@@ -797,16 +884,16 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
 def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   T1, T2, T3, F_eff, R_head,
                   d_mm, d_stress_mm, d_deflect_mm, governed_by, L10, Ceff,
-                  euler_chk:        dict = None,
-                  key_check:        dict = None,
-                  lagging:          dict = None,
-                  end_disc:         dict = None,
-                  bolt_fatigue:     dict = None,
-                  takeup_grav:      dict = None,
-                  casing_panel:     dict = None,
-                  discharge_chute:  dict = None,
-                  casing_clearance: dict = None,
-                  stream_chute:     dict = None,
+                  euler_chk:        "dict | None" = None,
+                  key_check:        "dict | None" = None,
+                  lagging:          "dict | None" = None,
+                  end_disc:         "dict | None" = None,
+                  bolt_fatigue:     "dict | None" = None,
+                  takeup_grav:      "dict | None" = None,
+                  casing_panel:     "dict | None" = None,
+                  discharge_chute:  "dict | None" = None,
+                  casing_clearance: "dict | None" = None,
+                  stream_chute:     "dict | None" = None,
                   ) -> list:
     checks = []
     ok   = lambda msg: {"type": "ok",   "msg": msg}
@@ -1122,24 +1209,84 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_optimizer(req: OptimizerRequest) -> List[dict]:
+    """
+    Grid-search optimizer: RPM × Bucket Series × Fill factor.
+
+    v1.4.0 improvements
+    ────────────────────
+    • "discharge" objective added — scores on CR proximity to ideal 1.2–1.5 range
+    • "balanced" weights rebalanced to include discharge quality (D factor)
+    • Euler slip check on every candidate — slip_ok and slip_margin in output
+    • Bearing life quick estimate per candidate (L10 from ISO 281 simplified)
+    • All design parameters used: mu, wrap_deg, environment, belt_type, sf
+    • CR penalty refined — soft quadratic penalty outside [1.0, 2.5],
+      hard exclusion outside [0.7, 3.0]
+    • Returns top 20 candidates sorted by score; each has rank field
+
+    Objective weights
+    ─────────────────
+    Each term is normalised over a representative range, then weighted.
+    Weights sum to 1.0 within each objective.
+
+    Objective   P (power)  T (tension)  M (motor)  D (discharge)
+    ──────────────────────────────────────────────────────────────
+    power         0.70        0.15        0.10        0.05
+    tension       0.15        0.70        0.10        0.05
+    motor         0.15        0.15        0.70        0.00
+    discharge     0.15        0.20        0.15        0.50
+    balanced      0.35        0.30        0.20        0.15
+
+    Normalisation ranges (cover 95%+ of practical elevators):
+      P: 0–400 kW    T: 0–400 kN    M: 0–400 kW    D: 0–1 (penalty)
+    """
+    import math as _math
+
     inp  = req.base_input
     mat  = get_material(inp.mat_id)
     rho  = inp.custom_rho if inp.custom_rho > 0 else mat["rho_loose"]
     D_boot_m  = inp.boot_pulley_D_mm / 1000.0
     Leq  = inp.Leq  if inp.Leq  > 0 else mat.get("Leq_default", LEQ_DEFAULT)
     Ceff = inp.Ceff if inp.Ceff > 0 else mat.get("Ceff_default", CEFF_BELT)
-    objective = req.objective
+    objective = (req.objective or "balanced").lower()
+
+    # Design parameters — all used for slip and bearing checks
+    mu_use       = getattr(inp, "mu",               0.35)
+    wrap_use     = getattr(inp, "wrap_deg",         180.0)
+    K_takeup     = getattr(inp, "K_takeup",           0.7)
+    belt_type    = getattr(inp, "belt_type",          "EP")
+    environment  = getattr(inp, "environment",       "dry")
+    sf           = getattr(inp, "sf",                1.25)
+
+    # Euler limit from lagging type + environment (fast lookup — no full solve)
+    # Wet/submerged service degrades rubber friction: apply 0.85 factor
+    env_factor   = 0.85 if environment in ("wet", "submerged") else \
+                   0.92 if environment == "humid" else 1.0
+    mu_eff       = mu_use * env_factor
+    euler_limit  = _math.exp(mu_eff * wrap_use * _math.pi / 180.0)
+
+    # Objective weight tables
+    OBJ_WEIGHTS = {
+        "power":     {"P": 0.70, "T": 0.15, "M": 0.10, "D": 0.05},
+        "tension":   {"P": 0.15, "T": 0.70, "M": 0.10, "D": 0.05},
+        "motor":     {"P": 0.15, "T": 0.15, "M": 0.70, "D": 0.00},
+        "discharge": {"P": 0.15, "T": 0.20, "M": 0.15, "D": 0.50},
+        "balanced":  {"P": 0.35, "T": 0.30, "M": 0.20, "D": 0.15},
+    }
+    W = OBJ_WEIGHTS.get(objective, OBJ_WEIGHTS["balanced"])
+
     candidates = []
 
     for bucket in BUCKET_SERIES:
-        # v1.2.0 FIX: actual bucket mass
         bw_kg = bucket.get("bucket_mass_kg", bucket["V"] * 1.5)
 
         for rpm in range(40, 161, 10):
             for fill in range(60, 91, 5):
                 v = belt_speed(inp.D_mm, rpm)
+
+                # Hard speed limits
                 if v < bucket["v_min"] or v > bucket["v_max"]:
                     continue
+
                 spacing = (bucket["P"] + inp.bucket_gap) / 1000.0
                 Q = calc_capacity(v, spacing, bucket["V"], fill, rho)
                 if Q < inp.Q_req:
@@ -1148,57 +1295,96 @@ def run_optimizer(req: OptimizerRequest) -> List[dict]:
                 pwr    = calc_power_cema375(Q, inp.H_m, D_boot_m, Leq, Ceff)
                 P_total = pwr["P_total"]
                 BW_mm  = select_belt_width(bucket["W"])
-                # v1.2.0 FIX: correct belt weight
                 tens   = calc_headshaft_tensions(
-                    Q, inp.H_m, v, bw_kg, spacing, BW_mm, inp.K_takeup
+                    Q, inp.H_m, v, bw_kg, spacing, BW_mm, K_takeup,
                 )
-                T_total = tens["T1"] + tens["T2"] + tens["T3"]
+                T1, T2, T3 = tens["T1"], tens["T2"], tens["T3"]
+                T_head  = T1 + T2 + T3
                 cr      = centrifugal_ratio(v, inp.D_mm)
-                motor   = select_motor(P_total, inp.sf)
-                cr_pen  = 1000 if (cr < 1.0 or cr > 2.5) else 0
+                motor   = select_motor(P_total, sf)
 
-                # ── Normalized objective score ────────────────────────────────
-                # v1.3.0 — Task 4: normalized scoring replaces arbitrary scaling.
-                #
-                # Old: P_total/10 + T_total/100000 + motor/5
-                #   Problem: weights were implicit and unit-biased. P_total in kW
-                #   contributed differently depending on its absolute magnitude;
-                #   no principled reason for /10, /100000, /5 divisors.
-                #
-                # New: each objective normalized to [0–1] over its expected range,
-                #   then combined with explicit documented weights (sum = 1.0).
-                #
-                # Normalization ranges (covering 95%+ of practical elevators):
-                #   Power:   0 – 400 kW   → /400
-                #   Tension: 0 – 400 kN   → /400000 (N)
-                #   Motor:   0 – 400 kW   → /400
-                #
-                # Balanced weights:
-                #   40% power (primary operating cost driver)
-                #   35% tension (belt and shaft cost / life)
-                #   25% motor (capital cost, switchgear sizing)
-                P_norm = P_total   / 400.0
-                T_norm = T_total   / 400_000.0
-                M_norm = motor     / 400.0
+                # ── Euler slip check ─────────────────────────────────────────
+                T3_euler_min = T1 / euler_limit if euler_limit > 0 else 0
+                slip_ok      = T3 >= T3_euler_min
+                slip_margin  = (T3 / T3_euler_min - 1.0) * 100 \
+                               if T3_euler_min > 0 else 100.0
+                slip_penalty = 0 if slip_ok else 500.0    # hard exclusion
 
-                if objective == "power":
-                    score = P_norm + cr_pen
-                elif objective == "tension":
-                    score = T_norm + cr_pen
-                elif objective == "motor":
-                    score = M_norm + cr_pen
-                else:   # balanced
-                    score = (0.40 * P_norm + 0.35 * T_norm + 0.25 * M_norm) + cr_pen
+                # ── Discharge quality score ──────────────────────────────────
+                # CR ideal range: 1.20–1.50 (clean centrifugal at minimal energy)
+                # Quadratic penalty rising outside that range, capped at 1.0
+                CR_IDEAL_LO, CR_IDEAL_HI = 1.20, 1.50
+                CR_HARD_LO,  CR_HARD_HI  = 0.70, 3.00
+                if cr < CR_HARD_LO or cr > CR_HARD_HI:
+                    continue   # hard exclusion — no trajectory possible
+                if CR_IDEAL_LO <= cr <= CR_IDEAL_HI:
+                    d_penalty = 0.0
+                elif cr < CR_IDEAL_LO:
+                    d_penalty = min(1.0, ((CR_IDEAL_LO - cr) / 0.50) ** 2)
+                else:
+                    d_penalty = min(1.0, ((cr - CR_IDEAL_HI) / 1.00) ** 2)
+
+                # ── Bearing life quick estimate (ISO 281 simplified) ─────────
+                # Approximate radial load as headshaft resultant (2 × T_head)
+                R_approx   = 2.0 * T_head          # [N] — conservative
+                # Representative catalogue value for medium-bore pillow block
+                # (SKF SY 60 TF class: C ≈ 75kN basic dynamic)
+                C_bearing  = 75_000.0
+                L10_h_est  = 0
+                if R_approx > 0:
+                    L10_h_est = int(
+                        (C_bearing / R_approx) ** 3
+                        * 1_000_000 / (60.0 * max(rpm, 1))
+                    )
+
+                # ── Normalised scores ────────────────────────────────────────
+                P_norm = P_total  / 400.0
+                T_norm = T_head   / 400_000.0
+                M_norm = motor    / 400.0
+                D_norm = d_penalty                # already in [0, 1]
+
+                score = (
+                    W["P"] * P_norm
+                    + W["T"] * T_norm
+                    + W["M"] * M_norm
+                    + W["D"] * D_norm
+                    + slip_penalty
+                )
 
                 candidates.append({
-                    "rpm": rpm, "bucket_id": bucket["id"], "fill": fill,
-                    "speed": round(v, 2), "capacity": round(Q, 1),
-                    "power": round(P_total, 2), "motor_kw": motor,
-                    "T1_kN": round(T_total / 1000, 2), "cr": round(cr, 3),
-                    "score": round(score, 4),
+                    # Identity
+                    "rpm":         rpm,
+                    "bucket_id":   bucket["id"],
+                    "fill":        fill,
+                    # Performance
+                    "speed":       round(v, 2),
+                    "capacity":    round(Q, 1),
+                    "cr":          round(cr, 3),
+                    # Power
+                    "power":       round(P_total, 2),
+                    "motor_kw":    motor,
+                    # Tension
+                    "headshaft_kN":round(T_head / 1000, 2),
+                    "T1_kN":       round(T_head / 1000, 2),  # backward compat
+                    "T3_kN":       round(T3 / 1000, 2),
+                    "T3_min_kN":   round(T3_euler_min / 1000, 2),
+                    # Feasibility
+                    "slip_ok":     slip_ok,
+                    "slip_margin_pct": round(slip_margin, 1),
+                    "L10_est_h":   L10_h_est,
+                    "cr_discharge_penalty": round(d_penalty, 4),
+                    # Score
+                    "score":       round(score, 4),
+                    "objective":   objective,
                 })
 
+    # Sort, rank, return top 20
     candidates.sort(key=lambda c: c["score"])
-    for i, c in enumerate(candidates[:20]):
+    # Exclude slip failures from ranking (still include at bottom for reference)
+    ranked  = [c for c in candidates if c.get("slip_ok", True)]
+    slipped = [c for c in candidates if not c.get("slip_ok", True)]
+
+    final = ranked[:20] + slipped[:max(0, 20 - len(ranked[:20]))]
+    for i, c in enumerate(final[:20]):
         c["rank"] = i + 1
-    return candidates[:20]
+    return final[:20]

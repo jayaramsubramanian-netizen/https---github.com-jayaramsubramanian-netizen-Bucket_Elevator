@@ -45,9 +45,9 @@ export const DEFAULT_INPUTS = {
   wrap_deg: 180,
   sf: 1.25,
   // v1.3.0 — structural module inputs
-  environment:      "dry",   // "dry" | "humid" | "wet" | "submerged"  (lagging selection)
-  belt_type:        "EP",    // "EP" | "ST"  (lagging selection)
-  wind_pressure_pa: 800,     // [Pa]  (casing panel check — typical industrial site)
+  environment: "dry", // "dry" | "humid" | "wet" | "submerged"  (lagging selection)
+  belt_type: "EP", // "EP" | "ST"  (lagging selection)
+  wind_pressure_pa: 800, // [Pa]  (casing panel check — typical industrial site)
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -75,9 +75,9 @@ function normaliseResult(raw) {
   const release_angle_deg = raw.release_angle_deg ?? raw.theta_rel;
 
   // ── Power ─────────────────────────────────────────────────────
-  const power_P_lift  = raw.power_P_lift  ?? raw.P_lift;
+  const power_P_lift = raw.power_P_lift ?? raw.P_lift;
   const power_P_frict = raw.power_P_frict ?? raw.P_drive_loss ?? raw.P_frict;
-  const power_P_dig   = raw.power_P_dig   ?? raw.P_digging ?? 0;
+  const power_P_dig = raw.power_P_dig ?? raw.P_digging ?? 0;
   const power_P_total = raw.power_P_total ?? raw.P_total;
 
   // ── Tension ───────────────────────────────────────────────────
@@ -96,11 +96,11 @@ function normaliseResult(raw) {
 
   // ── Shaft ─────────────────────────────────────────────────────
   const shaft_torque_Nm = raw.shaft_torque_Nm ?? raw.T_Nm;
-  const shaft_d_mm      = raw.shaft_d_mm      ?? raw.d_mm;
+  const shaft_d_mm = raw.shaft_d_mm ?? raw.d_mm;
 
   // ── Belt ──────────────────────────────────────────────────────
   const belt_width_mm = raw.belt_width_mm ?? raw.belt_w ?? raw.beltW;
-  const belt_class    =
+  const belt_class =
     raw.belt_class ?? (raw.belt_ply ? `${raw.belt_ply} PLY` : null);
 
   // ── Motor ─────────────────────────────────────────────────────
@@ -114,17 +114,17 @@ function normaliseResult(raw) {
   if (bucket) {
     bucket = {
       ...bucket,
-      series:         bucket.series         ?? bucket.id,
-      style:          bucket.style          ?? bucket.type ?? "centrifugal",
-      width_mm:       bucket.width_mm       ?? bucket.W,
-      depth_mm:       bucket.depth_mm       ?? bucket.H,
-      projection_mm:  bucket.projection_mm  ?? bucket.P,
-      volume_L:       bucket.volume_L       ?? bucket.V,
-      id:             bucket.id             ?? bucket.series,
-      W:              bucket.W              ?? bucket.width_mm,
-      H:              bucket.H              ?? bucket.depth_mm,
-      P:              bucket.P              ?? bucket.projection_mm,
-      V:              bucket.V              ?? bucket.volume_L,
+      series: bucket.series ?? bucket.id,
+      style: bucket.style ?? bucket.type ?? "centrifugal",
+      width_mm: bucket.width_mm ?? bucket.W,
+      depth_mm: bucket.depth_mm ?? bucket.H,
+      projection_mm: bucket.projection_mm ?? bucket.P,
+      volume_L: bucket.volume_L ?? bucket.V,
+      id: bucket.id ?? bucket.series,
+      W: bucket.W ?? bucket.width_mm,
+      H: bucket.H ?? bucket.depth_mm,
+      P: bucket.P ?? bucket.projection_mm,
+      V: bucket.V ?? bucket.volume_L,
     };
   }
 
@@ -137,9 +137,9 @@ function normaliseResult(raw) {
   // inline strip colour. Removing it caused failCount === 0 always.
   const checks = (raw.checks ?? []).map((c) => ({
     status: c.status ?? (c.type === "ok" ? "pass" : c.type) ?? "info",
-    type:   c.type   ?? (c.status === "pass" ? "ok" : c.status) ?? "info",
-    code:   c.code   ?? "GEN",
-    msg:    c.msg,
+    type: c.type ?? (c.status === "pass" ? "ok" : c.status) ?? "info",
+    code: c.code ?? "GEN",
+    msg: c.msg,
   }));
 
   const has_fail = checks.some((c) => c.status === "fail");
@@ -149,7 +149,7 @@ function normaliseResult(raw) {
 
   return {
     // ── Meta ────────────────────────────────────────────────────
-    inputs:   raw.inputs ?? null,
+    inputs: raw.inputs ?? null,
     material,
     bucket,
 
@@ -171,7 +171,7 @@ function normaliseResult(raw) {
     T1: raw.T1 ?? null,
     T2: raw.T2 ?? null,
     T3: raw.T3 ?? null,
-    F_eff:       raw.F_eff       ?? null,
+    F_eff: raw.F_eff ?? null,
     R_headshaft: raw.R_headshaft ?? null,
     tension_ratio,
     slip_limit,
@@ -179,9 +179,9 @@ function normaliseResult(raw) {
     // ── Shaft + motor ───────────────────────────────────────────
     shaft_torque_Nm,
     shaft_d_mm,
-    d_stress_mm:  raw.d_stress_mm  ?? null,
+    d_stress_mm: raw.d_stress_mm ?? null,
     d_deflect_mm: raw.d_deflect_mm ?? null,
-    governed_by:  raw.governed_by  ?? null,
+    governed_by: raw.governed_by ?? null,
     motor_kW,
 
     // ── Belt ────────────────────────────────────────────────────
@@ -193,16 +193,16 @@ function normaliseResult(raw) {
     L10_hours,
 
     // ── Component design ────────────────────────────────────────
-    inlet_chute:    raw.inlet_chute    ?? null,
-    casing_t_mm:    raw.casing_t_mm    ?? null,
+    inlet_chute: raw.inlet_chute ?? null,
+    casing_t_mm: raw.casing_t_mm ?? null,
     boot_vol_min_m3: raw.boot_vol_min_m3 ?? null,
     thermal_exp_mm: raw.thermal_exp_mm ?? null,
 
     // ── Chart sweep data ────────────────────────────────────────
     speed_sweep: raw.speed_sweep ?? raw.speedSweep ?? [],
-    fill_sweep:  raw.fill_sweep  ?? raw.fillSweep  ?? [],
-    speedSweep:  raw.speed_sweep ?? raw.speedSweep ?? [],
-    fillSweep:   raw.fill_sweep  ?? raw.fillSweep  ?? [],
+    fill_sweep: raw.fill_sweep ?? raw.fillSweep ?? [],
+    speedSweep: raw.speed_sweep ?? raw.speedSweep ?? [],
+    fillSweep: raw.fill_sweep ?? raw.fillSweep ?? [],
 
     // ── Backend alias pass-throughs ─────────────────────────────
     // generate_report.py and KpiGrid read these original field names
@@ -211,59 +211,59 @@ function normaliseResult(raw) {
     // FIX 1: Q and v were renamed to Q_th and v_ms but never written
     // back under the original names. Nav bar, ElevatorSchematic, and
     // KpiGrid all read results.Q / results.v → were always undefined.
-    Q: Q_th,   // ← FIX 1: nav bar, KpiGrid, ElevatorSchematic
-    v: v_ms,   // ← FIX 1: nav bar, KpiGrid, ElevatorSchematic
+    Q: Q_th, // ← FIX 1: nav bar, KpiGrid, ElevatorSchematic
+    v: v_ms, // ← FIX 1: nav bar, KpiGrid, ElevatorSchematic
 
-    rho:          raw.rho         ?? null,
-    mat:          raw.mat         ?? null,
-    Leq:          raw.Leq         ?? null,
-    Ceff:         raw.Ceff        ?? null,
-    P_total:      raw.P_total     ?? null,
-    P_lift:       raw.P_lift      ?? null,
-    P_digging:    raw.P_digging   ?? null,
+    rho: raw.rho ?? null,
+    mat: raw.mat ?? null,
+    Leq: raw.Leq ?? null,
+    Ceff: raw.Ceff ?? null,
+    P_total: raw.P_total ?? null,
+    P_lift: raw.P_lift ?? null,
+    P_digging: raw.P_digging ?? null,
     P_drive_loss: raw.P_drive_loss ?? null,
-    T_Nm:         raw.T_Nm        ?? null,
-    d_mm:         raw.d_mm        ?? null,
-    motor_kw:     raw.motor_kw    ?? null,
-    belt_w:       raw.belt_w      ?? null,
-    L10:          raw.L10         ?? null,
-    spacing:      raw.spacing     ?? null,
-    cr:           raw.cr          ?? null,
-    theta_rel:    raw.theta_rel   ?? null,
+    T_Nm: raw.T_Nm ?? null,
+    d_mm: raw.d_mm ?? null,
+    motor_kw: raw.motor_kw ?? null,
+    belt_w: raw.belt_w ?? null,
+    L10: raw.L10 ?? null,
+    spacing: raw.spacing ?? null,
+    cr: raw.cr ?? null,
+    theta_rel: raw.theta_rel ?? null,
 
     // FIX 3: New backend fields from v1.2.x — pass through for
     // ComponentPanel, generate_report.py, and future KpiGrid cards.
 
     // Task 3 — Power decomposition
-    P_shaft:   raw.P_shaft  ?? null,
-    H_equiv:   raw.H_equiv  ?? null,
-    H_total:   raw.H_total  ?? null,
+    P_shaft: raw.P_shaft ?? null,
+    H_equiv: raw.H_equiv ?? null,
+    H_total: raw.H_total ?? null,
 
     // Task 1 — Euler-Eytelwein slip check
-    T3_ktakeup:   raw.T3_ktakeup   ?? null,
+    T3_ktakeup: raw.T3_ktakeup ?? null,
     T3_euler_min: raw.T3_euler_min ?? null,
-    euler_ratio:  raw.euler_ratio  ?? null,
-    slip_safe:    raw.slip_safe    ?? null,
-    euler_check:  raw.euler_check  ?? null,
+    euler_ratio: raw.euler_ratio ?? null,
+    slip_safe: raw.slip_safe ?? null,
+    euler_check: raw.euler_check ?? null,
 
     // v1.2.0 — Shaft geometry and material behaviour
-    shaft_span_mm:        raw.shaft_span_mm        ?? null,
-    shaft_A_mm:           raw.shaft_A_mm           ?? null,
-    shaft_B_mm:           raw.shaft_B_mm           ?? null,
-    bucket_mass_kg:       raw.bucket_mass_kg       ?? null,
-    stream_spread:        raw.stream_spread        ?? null,
-    mat_behavior:         raw.mat_behavior         ?? null,
+    shaft_span_mm: raw.shaft_span_mm ?? null,
+    shaft_A_mm: raw.shaft_A_mm ?? null,
+    shaft_B_mm: raw.shaft_B_mm ?? null,
+    bucket_mass_kg: raw.bucket_mass_kg ?? null,
+    stream_spread: raw.stream_spread ?? null,
+    mat_behavior: raw.mat_behavior ?? null,
     recommended_fill_pct: raw.recommended_fill_pct ?? null,
 
     // v1.3.0 — Structural detail blocks
-    hub:       raw.hub       ?? null,
+    hub: raw.hub ?? null,
     key_check: raw.key_check ?? null,
-    lagging:   raw.lagging   ?? null,
-    end_disc:  raw.end_disc  ?? null,
-    bolt_fatigue:   raw.bolt_fatigue   ?? null,
+    lagging: raw.lagging ?? null,
+    end_disc: raw.end_disc ?? null,
+    bolt_fatigue: raw.bolt_fatigue ?? null,
     takeup_gravity: raw.takeup_gravity ?? null,
-    takeup_screw:   raw.takeup_screw   ?? null,
-    casing_panel:     raw.casing_panel     ?? null,
+    takeup_screw: raw.takeup_screw ?? null,
+    casing_panel: raw.casing_panel ?? null,
     casing_stiffener: raw.casing_stiffener ?? null,
     design_recommendations: raw.design_recommendations ?? [],
 
@@ -274,7 +274,11 @@ function normaliseResult(raw) {
     // ── Validation ──────────────────────────────────────────────
     // Casing clearance + stream interception — v1.4.0
     casing_clearance: raw.casing_clearance ?? null,
-    stream_chute:     raw.stream_chute     ?? null,
+    stream_chute: raw.stream_chute ?? null,
+
+    // BOM + maintenance schedule — Tier 2
+    bom: raw.bom ?? null,
+    maintenance: raw.maintenance ?? null,
 
     checks,
     status,
@@ -285,19 +289,19 @@ function normaliseResult(raw) {
 // HOOK — your original structure, one line changed
 // ─────────────────────────────────────────────────────────────────
 export function useElevatorCalc() {
-  const [inputs,   setInputs]  = useState(DEFAULT_INPUTS);
-  const [results,  setResults] = useState(null);
-  const [loading,  setLoading] = useState(false);
-  const [error,    setError]   = useState(null);
-  const [designId]             = useState(() => uuidv4());
-  const debounceRef            = useRef(null);
+  const [inputs, setInputs] = useState(DEFAULT_INPUTS);
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [designId] = useState(() => uuidv4());
+  const debounceRef = useRef(null);
 
   const runCalc = useCallback(async (inp) => {
     setLoading(true);
     setError(null);
     try {
       const raw = await calculateElevator(inp);
-      setResults(normaliseResult(raw));   // ← only change from original hook
+      setResults(normaliseResult(raw)); // ← only change from original hook
     } catch (e) {
       setError(e.message);
       setResults(null);
@@ -319,10 +323,10 @@ export function useElevatorCalc() {
   const applyOptimizer = useCallback(({ rpm, bucket_id, fill }) => {
     setInputs((prev) => ({
       ...prev,
-      n_rpm:       rpm,
+      n_rpm: rpm,
       bucket_id,
       auto_bucket: false,
-      fill_pct:    fill,
+      fill_pct: fill,
     }));
   }, []);
 
@@ -330,13 +334,13 @@ export function useElevatorCalc() {
     async (name, project, notes) => {
       if (!results) return;
       await saveDesign({
-        id:           designId,
-        module:       "bucket_elevator",
+        id: designId,
+        module: "bucket_elevator",
         name,
-        project:      project || null,
-        inputs_json:  JSON.stringify(inputs),
+        project: project || null,
+        inputs_json: JSON.stringify(inputs),
         results_json: JSON.stringify(results),
-        notes:        notes || null,
+        notes: notes || null,
       });
     },
     [designId, inputs, results],

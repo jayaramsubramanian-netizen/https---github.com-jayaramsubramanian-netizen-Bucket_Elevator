@@ -28,6 +28,7 @@ v1.1.0 — Engineering Platform Hardening
 import hashlib
 import io
 import json
+import traceback as _traceback
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -361,7 +362,10 @@ def calculate(
         # in the calculation layer (e.g. negative height, zero capacity).
         _err("VALIDATION_ERROR", str(e))
     except Exception as e:
-        _err("SOLVER_ERROR", str(e), status=500)
+        _tb = _traceback.format_exc()
+        # ── Print to uvicorn terminal — visible without opening Network tab ──
+        print(f"\n{'='*64}\nSOLVER 500 — full traceback\n{_tb}{'='*64}\n", flush=True)
+        _err("SOLVER_ERROR", f"{type(e).__name__}: {e}\n\n{_tb}", status=500)
 
     warnings = _collect_warnings(inp, results)
 
@@ -558,7 +562,7 @@ app.include_router(v1)
 #   Remove this entire block once the frontend has been updated to /api/v1/*.
 
 _compat = APIRouter(prefix="/api", tags=["deprecated — migrate to /api/v1"])
-_R = dict(include_in_schema=False)
+_R: dict[str, Any] = {"include_in_schema": False}   # typed Any — Pylance needs this for **_R spread
 
 _compat.add_api_route("/materials",                       get_materials,           methods=["GET"],    **_R)
 _compat.add_api_route("/bucket-series",                   get_bucket_series,       methods=["GET"],    **_R)
