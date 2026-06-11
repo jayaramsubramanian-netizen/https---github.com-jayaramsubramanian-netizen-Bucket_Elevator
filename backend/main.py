@@ -335,7 +335,7 @@ def get_materials():     return _materials_payload()
 def search_materials_api(
     q:        str = "",
     category: str = "",
-    app:      str = "be",
+    app:      str = "",   # no filter: all modules searchable
     limit:    int = 40,
 ):
     """

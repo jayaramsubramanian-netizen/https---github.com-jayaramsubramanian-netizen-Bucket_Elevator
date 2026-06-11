@@ -521,8 +521,12 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     Q = calc_capacity(v, spacing, bucket["V"], inp.fill_pct, rho)
 
     # ── Power ─────────────────────────────────────────────────────────────────
+    # HF continuous elevators use Leq = 4–5 (CEMA 375 §4).
+    # Centrifugal elevators use Leq = 6–8 (default from material DB or LEQ_DEFAULT).
+    _leq_hf_default = 4.5   # midpoint of CEMA 375 continuous range
     D_boot_m = inp.boot_pulley_D_mm / 1000.0
-    Leq  = inp.Leq  if inp.Leq  > 0 else mat.get("Leq_default", LEQ_DEFAULT)
+    Leq  = (inp.Leq if inp.Leq > 0
+            else mat.get("Leq_default", _leq_hf_default if is_hf else LEQ_DEFAULT))
     Ceff = inp.Ceff if inp.Ceff > 0 else mat.get("Ceff_default", CEFF_BELT)
     pwr  = calc_power_cema375(Q, inp.H_m, D_boot_m, Leq, Ceff)
     P_total = pwr["P_total"]
@@ -667,67 +671,110 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     motor_kw = select_motor(P_total, inp.sf)
     belt_ply = math.ceil(F_eff / (BW_mm / 25.4 * 4450 * 0.5))
 
-    # ── Discharge physics — stream envelope replaces single trajectory ────────
-    # v1.4.0: DischargePhysics.stream_envelope() returns centre + upper + lower
-    # bounds with MaterialBehaviorEngine spread integration and trajectory metrics.
-    # The three lines feed the frontend visualisation and chute_flow.py.
-    rp    = DischargePhysics.calculate_release_point(v, inp.D_mm / 2000.0)
-    cr    = rp.cr
-    theta_rel = rp.theta_deg
+    # ── Discharge physics — branched on elevator type ─────────────────────────
+    # v1.5.0: HF (continuous discharge) elevators use a pour-curve model.
+    #          Centrifugal (CC) elevators use the existing stream_envelope model.
+    #
+    # is_continuous is True when:
+    #   • auto_bucket=False and bucket_id="HF"
+    #   • auto_bucket=True  and selected bucket type == "HF"
+    #
+    # Continuous discharge physics differences:
+    #   • CR must be < 1.0 (opposite of centrifugal — CR ≥ 1.0 is a FAIL)
+    #   • No centrifugal release angle — material pours as bucket inverts
+    #   • Stream is a short curtain, not a parabolic throw
+    #   • Casing check: CR < 1.0 confirmed; no stream-strike risk
 
-    envelope = DischargePhysics.stream_envelope(
-        speed               = v,
-        radius              = inp.D_mm / 2000.0,
-        bucket_projection_m = (bucket.get("P") or 140) / 1000.0,
-        cohesion_index      = mat.get("cohesion", 0.0),
-        elevator_type       = "centrifugal",
-        material            = mat,
-    )
-    traj_center  = envelope["center"]
-    traj_upper   = envelope["upper"]
-    traj_lower   = envelope["lower"]
-    stream_spread = envelope["spread_m"]
-    traj_metrics  = envelope.get("metrics", {})
+    is_continuous = (bucket.get("type") == "HF") or (elev_type == "continuous")
 
-    # Legacy trajectory format for report + chute_flow (list of {x_mm, y_mm} dicts)
+    if is_continuous:
+        # ── Continuous discharge (HF) ─────────────────────────────────────────
+        # CR = v²/(g·r) must be < 1.0. Record it for check branching below.
+        cr = v ** 2 / (9.81 * (inp.D_mm / 2000.0))
+        theta_rel = 0.0   # no centrifugal release angle for continuous discharge
+
+        cont_curve = DischargePhysics.continuous_discharge_curve(
+            v_belt  = v,
+            D_mm    = inp.D_mm,
+            aor_deg = float(mat.get("angle_repose", 35.0) or 35.0),
+        )
+        traj_center   = cont_curve["center"]
+        traj_upper    = cont_curve["upper"]
+        traj_lower    = cont_curve["lower"]
+        stream_spread = 0.060   # 60mm fixed spread for continuous pour
+        traj_metrics  = {
+            "onset_angle_deg": cont_curve.get("onset_angle_deg"),
+            "land_x_m":        cont_curve.get("land_x_m"),
+            "land_y_m":        cont_curve.get("land_y_m"),
+            "discharge_type":  "continuous",
+        }
+
+        # Casing clearance: for HF, check CR < 1.0 rather than stream-strike
+        _BW_for_cas     = float(BW_mm or 400)
+        _casing_inner_x = _BW_for_cas / 2000.0 + 0.050
+        casing_clearance = DischargePhysics.continuous_casing_check(
+            v_belt    = v,
+            D_mm      = inp.D_mm,
+            belt_w_mm = float(BW_mm),
+        )
+
+        # Stream interception: for HF the chute is fixed behind the head pulley
+        # The chute always intercepts the continuous pour — use chute_rec geometry
+        chute_rec = cont_curve.get("chute_rec", {})
+        stream_chute = {
+            "intercepted":         True,
+            "discharge_type":      "continuous",
+            "chute_angle_rec_deg": chute_rec.get("back_plate_angle_deg", 65.0),
+            "note":                chute_rec.get("description", ""),
+        }
+
+    else:
+        # ── Centrifugal discharge (CC/standard) ───────────────────────────────
+        rp    = DischargePhysics.calculate_release_point(v, inp.D_mm / 2000.0)
+        cr    = rp.cr
+        theta_rel = rp.theta_deg
+
+        envelope = DischargePhysics.stream_envelope(
+            speed               = v,
+            radius              = inp.D_mm / 2000.0,
+            bucket_projection_m = (bucket.get("P") or 140) / 1000.0,
+            cohesion_index      = mat.get("cohesion", 0.0),
+            elevator_type       = "centrifugal",
+            material            = mat,
+        )
+        traj_center   = envelope["center"]
+        traj_upper    = envelope["upper"]
+        traj_lower    = envelope["lower"]
+        stream_spread = envelope["spread_m"]
+        traj_metrics  = envelope.get("metrics", {})
+
+        _BW_for_cas     = float(BW_mm or 400)
+        _casing_inner_x = _BW_for_cas / 2000.0 + 0.050
+        casing_clearance = DischargePhysics.casing_clearance_check(
+            trajectory          = traj_center,
+            casing_half_width_m = _casing_inner_x,
+        )
+
+        _rp_chute   = DischargePhysics.calculate_release_point(v, inp.D_mm / 2000.0)
+        _chute_x    = _casing_inner_x - 0.010
+        _chute_ytop = _rp_chute.y0 + 0.020
+        _chute_ybot = _rp_chute.y0 - inp.D_mm / 500.0
+        stream_chute = DischargePhysics.stream_intersects_chute(
+            trajectory    = traj_center,
+            chute_x0_m   = _chute_x,
+            chute_y0_m   = _chute_ytop,
+            chute_x1_m   = _chute_x,
+            chute_y1_m   = _chute_ybot,
+            release_speed = v,
+        )
+
+    # ── Legacy trajectory format for report + chute_flow ─────────────────────
     def _to_mm_dicts(pts):
         return [{"x": round(p[0] * 1000, 1), "y": round(p[1] * 1000, 1)} for p in pts]
 
     trajectory       = _to_mm_dicts(traj_center)
     trajectory_upper = _to_mm_dicts(traj_upper)
     trajectory_lower = _to_mm_dicts(traj_lower)
-
-    # ── Casing clearance check (v1.4.0) ──────────────────────────────────────
-    # Checks whether the discharge stream strikes the head-section casing wall
-    # before entering the chute.  casing_inner_x_m = half belt-width + 50 mm
-    # standard CEMA clearance allowance.  Uses the centre trajectory (worst case;
-    # upper bound would be more conservative but is checked separately in the
-    # stream-scatter risk via CR).
-    _BW_for_cas      = float(BW_mm or 400)
-    _casing_inner_x  = _BW_for_cas / 2000.0 + 0.050   # m — half BW + 50 mm
-    casing_clearance = DischargePhysics.casing_clearance_check(
-        trajectory          = traj_center,
-        casing_half_width_m = _casing_inner_x,
-    )
-
-    # ── Stream interception check (v1.4.0) ────────────────────────────────────
-    # Checks whether the stream actually enters the discharge chute opening.
-    # The chute inlet is modelled as a near-vertical slot at the inner casing
-    # wall, from 20 mm above the release point down to 2× D below it.
-    # A missed stream (intercepted=False) means material bypasses the chute —
-    # a real design failure that prompts the chute-angle recommendation.
-    _rp_chute   = DischargePhysics.calculate_release_point(v, inp.D_mm / 2000.0)
-    _chute_x    = _casing_inner_x - 0.010     # chute lip: 10 mm inside casing wall
-    _chute_ytop = _rp_chute.y0 + 0.020        # 20 mm above release height
-    _chute_ybot = _rp_chute.y0 - inp.D_mm / 500.0  # ≈ 2× D below release
-    stream_chute = DischargePhysics.stream_intersects_chute(
-        trajectory    = traj_center,
-        chute_x0_m   = _chute_x,
-        chute_y0_m   = _chute_ytop,
-        chute_x1_m   = _chute_x,
-        chute_y1_m   = _chute_ybot,
-        release_speed = v,
-    )
 
     # ── Bearing life ──────────────────────────────────────────────────────────
     L10 = calc_bearing_life(R_head, inp.n_rpm)
@@ -783,6 +830,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         discharge_chute  = discharge_chute,
         casing_clearance = casing_clearance,
         stream_chute     = stream_chute,
+        is_continuous    = is_continuous,
     )
 
     # ── Design recommendations ────────────────────────────────────────────────
@@ -902,6 +950,8 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "bucket_mass_kg": round(bw_kg, 2),
         # Discharge — stream envelope (v1.4.0 replaces single trajectory)
         "cr": round(cr, 4), "theta_rel": round(theta_rel, 2),
+        "discharge_type":   "continuous" if is_continuous else "centrifugal",
+        "is_continuous":    is_continuous,
         "stream_spread":    round(stream_spread, 4),
         "trajectory":       trajectory,           # centre line, mm dicts (legacy)
         "trajectory_upper": trajectory_upper,     # upper bound, mm dicts
@@ -978,6 +1028,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   discharge_chute:  "dict | None" = None,
                   casing_clearance: "dict | None" = None,
                   stream_chute:     "dict | None" = None,
+                  is_continuous:    bool           = False,
                   ) -> list:
     checks = []
     ok   = lambda msg: {"type": "ok",   "msg": msg}
@@ -986,6 +1037,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
     info = lambda msg: {"type": "info", "msg": msg}
 
     v_min, v_max = bucket["v_min"], bucket["v_max"]
+    bkt_id = bucket.get("id", "?")
 
     # 1 — Capacity
     if Q < inp.Q_req:
@@ -997,29 +1049,51 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
     if v < v_min:
         checks.append(warn(
             f"Speed {v:.2f} m/s below CEMA min {v_min:.2f} m/s "
-            f"for bucket {bucket['id']} — back-legging risk [CEMA 375 §6]"))
+            f"for bucket {bkt_id} — back-legging risk [CEMA 375 §6]"))
     elif v > v_max:
         checks.append(fail(
             f"Speed {v:.2f} m/s exceeds CEMA max {v_max:.2f} m/s "
-            f"for bucket {bucket['id']} — scatter risk [CEMA 375 §6]"))
+            f"for bucket {bkt_id} — scatter risk [CEMA 375 §6]"))
     else:
         checks.append(ok(
             f"Speed {v:.2f} m/s within CEMA range {v_min:.2f}–{v_max:.2f} m/s "
             f"[CEMA 375 §6]"))
 
-    # 3 — Centrifugal ratio (nominal)
-    if cr < 1.0:
-        checks.append(warn(f"CR={cr:.3f} < 1.0 — gravity/mixed discharge [CEMA 375 §3]"))
-    elif cr <= 1.8:
-        checks.append(ok(f"CR={cr:.3f} — optimal centrifugal range 1.0–1.8 [CEMA 375 §3]"))
-    elif cr <= 2.5:
-        checks.append(info(f"CR={cr:.3f} — centrifugal discharge acceptable [CEMA 375 §3]"))
+    # 3 — Centrifugal ratio — logic REVERSED for HF continuous discharge
+    if is_continuous:
+        # For HF elevators: CR must be BELOW 1.0. Any CR ≥ 1.0 causes centrifugal
+        # discharge (material is thrown, not poured) — defeats the HF design intent.
+        if cr >= 1.0:
+            checks.append(fail(
+                f"CR={cr:.3f} ≥ 1.0 — centrifugal discharge occurring in HF elevator. "
+                f"HF design requires CR < 1.0 (reduce belt speed or increase pulley D) "
+                f"[CEMA 375 §3.3]"))
+        elif cr >= 0.7:
+            checks.append(warn(
+                f"CR={cr:.3f} approaching 1.0 — centrifugal discharge onset risk in HF mode. "
+                f"Optimal HF range: CR 0.3–0.7 [CEMA 375 §3.3]"))
+        elif cr >= 0.3:
+            checks.append(ok(
+                f"CR={cr:.3f} — continuous discharge confirmed (HF optimal range 0.3–0.7) "
+                f"[CEMA 375 §3.3]"))
+        else:
+            checks.append(warn(
+                f"CR={cr:.3f} < 0.3 — very low belt speed; "
+                f"check material back-flow and filling efficiency [CEMA 375 §3.3]"))
     else:
-        checks.append(warn(f"CR={cr:.3f} > 2.5 — excessive scatter risk [CEMA 375 §3]"))
+        # Standard centrifugal discharge (CC, A, B, etc.)
+        if cr < 1.0:
+            checks.append(warn(f"CR={cr:.3f} < 1.0 — gravity/mixed discharge [CEMA 375 §3]"))
+        elif cr <= 1.8:
+            checks.append(ok(f"CR={cr:.3f} — optimal centrifugal range 1.0–1.8 [CEMA 375 §3]"))
+        elif cr <= 2.5:
+            checks.append(info(f"CR={cr:.3f} — centrifugal discharge acceptable [CEMA 375 §3]"))
+        else:
+            checks.append(warn(f"CR={cr:.3f} > 2.5 — excessive scatter risk [CEMA 375 §3]"))
 
-    # 4 — Effective CR for cohesive/moist materials (v1.2.0)
+    # 4 — Effective CR for cohesive/moist materials (v1.2.0 — centrifugal only)
     cr_eff_threshold = mat_behavior["effective_cr_threshold"]
-    if cr_eff_threshold > 1.05:
+    if not is_continuous and cr_eff_threshold > 1.05:
         cr_eff = cr / cr_eff_threshold
         if cr_eff < 1.0:
             checks.append(warn(
@@ -1030,6 +1104,17 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             checks.append(info(
                 f"Material rollback factor={cr_eff_threshold:.2f} "
                 f"— effective CR={cr_eff:.3f} — adequate for this material [CEMA 550 §A-12]"))
+    elif is_continuous:
+        # For HF: cohesion affects how cleanly material pours from the inverted bucket
+        cohesion = float(mat.get("cohesion", 0) or 0)
+        if cohesion > 0.5:
+            checks.append(warn(
+                f"Material cohesion {cohesion:.2f} kPa — bridging risk in inverted bucket. "
+                f"Consider vibrators on head-section casing [CEMA 550 §A-12]"))
+        elif cohesion > 0.2:
+            checks.append(info(
+                f"Material cohesion {cohesion:.2f} kPa — monitor bucket discharge; "
+                f"some residual retention expected [CEMA 550 §A-12]"))
 
     # 5 — Advisory fill vs material recommendation
     rec_fill = mat_behavior["recommended_fill_pct"]
@@ -1244,34 +1329,57 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             checks.append(ok(
                 f"Chute plugging: {plug} risk — {liner} liner specified"))
 
-    # 21 — Casing clearance (stream vs head-section wall)
+    # 21 — Casing clearance — different logic for continuous vs centrifugal
     if casing_clearance:
-        clears    = casing_clearance.get("clears", True)
-        clearance = casing_clearance.get("clearance_m", 0.0)
-        max_x     = casing_clearance.get("max_x_m", 0.0)
-        wall_x    = casing_clearance.get("casing_wall_x_m", 0.0)
-        if not clears:
-            sx = casing_clearance.get("strike_x_m")
-            sy = casing_clearance.get("strike_y_m")
-            loc = f" at x={sx:.3f}m, y={sy:.3f}m" if sx is not None else ""
-            checks.append(fail(
-                f"Casing clearance: stream strikes casing wall{loc} "
-                f"(stream max x={max_x:.3f}m, wall at {wall_x:.3f}m) — "
-                f"increase casing width or reduce belt speed [CEMA 375 §7]"))
-        elif clearance < 0.020:
-            checks.append(warn(
-                f"Casing clearance: only {clearance*1000:.0f}mm margin "
-                f"(stream max x={max_x:.3f}m, wall at {wall_x:.3f}m) — "
-                f"borderline; verify at maximum speed [CEMA 375 §7]"))
+        if is_continuous:
+            # HF: check is CR < 1.0 (continuous_casing_check result)
+            cent_risk = casing_clearance.get("centrifugal_risk", False)
+            cr_val    = casing_clearance.get("cr", cr)
+            if cent_risk:
+                checks.append(fail(
+                    f"HF casing: CR={cr_val:.3f} ≥ 1.0 — centrifugal discharge "
+                    f"will occur. Reduce belt speed below "
+                    f"v = {9.81 * inp.D_mm / 2000.0:.2f} m/s [CEMA 375 §3.3]"))
+            else:
+                checks.append(ok(
+                    f"HF casing: CR={cr_val:.3f} < 1.0 — continuous discharge "
+                    f"confirmed; no stream-strike risk [CEMA 375 §3.3]"))
         else:
-            checks.append(ok(
-                f"Casing clearance: {clearance*1000:.0f}mm — stream clears "
-                f"casing wall by adequate margin [CEMA 375 §7]"))
+            # Centrifugal: check stream vs casing wall (existing logic)
+            clears    = casing_clearance.get("clears", True)
+            clearance = casing_clearance.get("clearance_m", 0.0)
+            max_x     = casing_clearance.get("max_x_m", 0.0)
+            wall_x    = casing_clearance.get("casing_wall_x_m", 0.0)
+            if not clears:
+                sx = casing_clearance.get("strike_x_m")
+                sy = casing_clearance.get("strike_y_m")
+                loc = f" at x={sx:.3f}m, y={sy:.3f}m" if sx is not None else ""
+                checks.append(fail(
+                    f"Casing clearance: stream strikes casing wall{loc} "
+                    f"(stream max x={max_x:.3f}m, wall at {wall_x:.3f}m) — "
+                    f"increase casing width or reduce belt speed [CEMA 375 §7]"))
+            elif clearance < 0.020:
+                checks.append(warn(
+                    f"Casing clearance: only {clearance*1000:.0f}mm margin "
+                    f"(stream max x={max_x:.3f}m, wall at {wall_x:.3f}m) — "
+                    f"borderline; verify at maximum speed [CEMA 375 §7]"))
+            else:
+                checks.append(ok(
+                    f"Casing clearance: {clearance*1000:.0f}mm — stream clears "
+                    f"casing wall by adequate margin [CEMA 375 §7]"))
 
     # 22 — Stream interception (does discharge stream enter the chute?)
     if stream_chute:
         intercepted = stream_chute.get("intercepted", False)
-        if intercepted:
+        if is_continuous:
+            # HF chute always intercepts the pour (positioned behind the head pulley)
+            angle_rec = stream_chute.get("chute_angle_rec_deg")
+            note      = stream_chute.get("note", "")
+            ang_str   = f"Back plate ≥ {angle_rec:.0f}°" if angle_rec else ""
+            checks.append(ok(
+                f"Stream interception: HF continuous discharge — chute positioned "
+                f"behind head pulley captures pour. {ang_str} [CEMA 375 §5]"))
+        elif intercepted:
             ang = stream_chute.get("impact_angle_deg")
             vel = stream_chute.get("impact_velocity_mps")
             ang_str = f"{ang:.1f}°" if ang is not None else "—"

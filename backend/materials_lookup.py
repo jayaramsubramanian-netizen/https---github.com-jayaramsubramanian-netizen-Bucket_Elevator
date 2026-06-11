@@ -200,7 +200,7 @@ def get_material(mat_id: str) -> dict:
 def search_materials(
     query: str = "",
     category: str = "",
-    app: str = "be",
+    app: str = "",   # default: no filter — material properties span all modules
     limit: int = 50,
 ) -> list[dict]:
     """
@@ -236,9 +236,20 @@ def search_materials(
     sql = (
         f"SELECT mat_id, name, category, rho_bulk, abr_code, flowability "
         f"FROM materials WHERE {' AND '.join(filters)} "
-        f"ORDER BY name LIMIT ?"
+        f"ORDER BY "
+        f"  CASE "
+        f"    WHEN LOWER(name) = LOWER(?) THEN 0 "       # exact match first
+        f"    WHEN LOWER(name) LIKE LOWER(?) || '%' THEN 1 "  # starts-with second
+        f"    ELSE 2 "                                   # contains anywhere
+        f"  END, "
+        f"  name ASC "
+        f"LIMIT ?"
     )
-    params.append(limit)
+    # Relevance sort needs the query value twice (exact, starts-with),
+    # then the existing params already contain the %query% LIKE value.
+    q_exact  = query or ""
+    q_starts = query or ""
+    params = params + [q_exact, q_starts, limit]
 
     try:
         rows = con.execute(sql, params).fetchall()
@@ -257,7 +268,7 @@ def search_materials(
         return _search_static(query, category, limit)
 
 
-def list_categories(app: str = "be") -> list[str]:
+def list_categories(app: str = "") -> list[str]:
     """Return sorted list of distinct category codes for the given app module."""
     con = _get_connection()
     if con is None:

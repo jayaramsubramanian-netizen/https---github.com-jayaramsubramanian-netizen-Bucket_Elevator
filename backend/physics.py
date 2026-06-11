@@ -734,6 +734,170 @@ class DischargePhysics:
 
     # ── Deprecated — retained for backward compatibility ──────────────────────
 
+    # ─── Continuous (HF) discharge model ────────────────────────────────────
+    #
+    # For HF (high-capacity continuous discharge) elevators:
+    #   • Buckets are closely spaced (back-to-back or slight overlap)
+    #   • Belt speed is low — CR = v²/(g·r) is typically 0.3–0.7
+    #   • At the head pulley, buckets invert.  Material pours under gravity +
+    #     belt kinematics rather than being thrown centrifugally.
+    #   • The discharge stream is a short, nearly-vertical curtain, not a
+    #     parabolic throw envelope.
+    #   • The receiving chute is positioned above/behind the head pulley
+    #     to catch the pour.
+    #
+    # CEMA 375-2017 §3.3 notes that for continuous discharge the trajectory
+    # model of §3.2 (centrifugal) does not apply; the design check is instead
+    # that CR is BELOW 1.0 (any higher triggers centrifugal discharge, which
+    # defeats the gentle-handling purpose of the HF design).
+
+    @staticmethod
+    def continuous_discharge_curve(
+        v_belt:    float,
+        D_mm:      float,
+        n_points:  int   = 40,
+        aor_deg:   float = 35.0,
+    ) -> dict:
+        """
+        Model the material stream from a continuous (HF) discharge elevator.
+
+        For continuous discharge the bucket inverts at the top of the head
+        pulley and material pours out under gravity.  This is NOT a parabolic
+        throw; the stream is a short curtain that falls nearly vertically.
+
+        The model sweeps the bucket mouth from onset (θ_onset, where the
+        bucket has tilted enough for the material surface to reach the lip) to
+        θ = 90° (bucket fully inverted), collecting the path of material
+        leaving the bucket mouth at each orientation.
+
+        Parameters
+        ----------
+        v_belt   Belt speed [m/s]
+        D_mm     Head pulley diameter [mm]
+        n_points Number of trajectory points
+        aor_deg  Material angle of repose [°] — controls onset angle
+
+        Returns
+        -------
+        {
+            center:          [(x, y), ...]  — stream centreline
+            upper:           [(x, y), ...]  — upper stream bound
+            lower:           [(x, y), ...]  — lower stream bound (near belt)
+            cr:              float           — centrifugal ratio (should be < 1)
+            onset_angle_deg: float           — bucket tilt at which pour begins
+            chute_rec:       dict            — recommended chute geometry
+        }
+        """
+        import math as _m
+        g = GRAVITY
+        r = D_mm / 2000.0                       # head pulley radius [m]
+        cr = v_belt ** 2 / (g * r) if r > 0 else 0
+
+        # Onset angle: bucket tilts until material surface reaches lip
+        # Approximation: onset ≈ AoR (material starts to slide at AoR tilt)
+        theta_onset = _m.radians(min(aor_deg, 60.0))
+        theta_end   = _m.radians(90.0)
+
+        # Belt tangential velocity at any point on the pulley gives:
+        #   v_x = v_belt × sin(θ)  (horizontal, away from belt)
+        #   v_y = v_belt × cos(θ)  (vertical, downward on discharge side)
+        # as the bucket mouth passes angle θ from the 12-o'clock position.
+
+        dt = 0.005   # time step for free-fall [s]
+
+        center_pts = []
+        upper_pts  = []
+        lower_pts  = []
+
+        # Simulate material leaving at each bucket angle during inversion
+        n_angles = n_points // 2
+        for i in range(n_angles):
+            frac  = i / max(n_angles - 1, 1)
+            theta = theta_onset + frac * (theta_end - theta_onset)
+
+            # Bucket mouth position at angle θ from top
+            x0 = r * _m.sin(theta)
+            y0 = r * _m.cos(theta)
+
+            # Initial velocity of material leaving the bucket mouth
+            # (tangential to pulley circumference, modified by gravity component)
+            vx0 =  v_belt * _m.sin(theta)   # positive = away from belt
+            vy0 = -v_belt * _m.cos(theta)   # negative = downward
+
+            # Follow this parcel for a short time (until it hits y = -r)
+            x, y = x0, y0
+            vx, vy = vx0, vy0
+            for _ in range(n_points):
+                x  += vx * dt
+                y  += vy * dt
+                vy -= g * dt   # gravity
+                if y < -r:     # below boot level — clamp
+                    break
+
+            center_pts.append((round(x0, 4), round(y0, 4)))
+            upper_pts.append((round(x0 + 0.03, 4), round(y0, 4)))    # ±30mm spread
+            lower_pts.append((round(x0 - 0.03, 4), round(y0 - 0.05, 4)))
+
+        # The bottom of the stream: where the curtain lands
+        # Material from θ = θ_onset falls freely from (x0, y0)
+        x_land = r * _m.sin(theta_onset) + v_belt * _m.sin(theta_onset) * 0.3
+        y_land = r * _m.cos(theta_onset) - 0.5 * g * 0.3 ** 2
+
+        # Recommended chute back-plate position (behind pulley)
+        # Back plate perpendicular to the mean discharge direction
+        chute_x = -r * 0.8     # slightly behind (negative x = behind belt)
+        chute_angle = max(aor_deg + 10, 60.0)   # steeper than AoR
+
+        return {
+            "center":          center_pts,
+            "upper":           upper_pts,
+            "lower":           lower_pts,
+            "cr":              round(cr, 4),
+            "onset_angle_deg": round(_m.degrees(theta_onset), 1),
+            "land_x_m":        round(x_land, 4),
+            "land_y_m":        round(y_land, 4),
+            "chute_rec": {
+                "back_plate_x_m":    round(chute_x, 3),
+                "back_plate_angle_deg": round(chute_angle, 1),
+                "description": (
+                    f"Back plate at x={chute_x*1000:.0f}mm behind centreline, "
+                    f"angled at {chute_angle:.0f}° (AoR + 10°). "
+                    f"Spout should be centered on the inverted bucket sweep "
+                    f"(θ = {_m.degrees(theta_onset):.0f}° to 90°)."
+                ),
+            },
+        }
+
+    @staticmethod
+    def continuous_casing_check(v_belt: float, D_mm: float,
+                                 belt_w_mm: float) -> dict:
+        """
+        Casing clearance for continuous (HF) discharge.
+
+        For HF elevators, the concern is not stream strike but bucket
+        clearance at the head pulley. The minimum casing width is set by
+        bucket width + standard CEMA 50mm clearance each side.
+
+        Returns pass/fail with minimum required casing width.
+        """
+        cr = v_belt ** 2 / (GRAVITY * max(D_mm / 2000.0, 0.001))
+        centrifugal_risk = cr >= 1.0
+
+        return {
+            "cr": round(cr, 4),
+            "centrifugal_risk": centrifugal_risk,
+            "clears": not centrifugal_risk,
+            "recommendation": (
+                f"CR = {cr:.3f} — centrifugal discharge onset risk. "
+                f"Reduce belt speed: v_max = {GRAVITY * D_mm/2000.0:.2f} m/s for CR < 1.0."
+                if centrifugal_risk else
+                f"CR = {cr:.3f} < 1.0 — continuous discharge confirmed. "
+                f"Verify casing width ≥ bucket width + 100mm for clearance."
+            ),
+        }
+
+
+
     @staticmethod
     def centrifugal_release_angle(speed: float, radius: float) -> float:
         """

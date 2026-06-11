@@ -95,6 +95,22 @@ def _pct_change(current, target):
     return (target - current) / current * 100.0
 
 
+def _dir_label(noun: str, current: float, target: float) -> str:
+    """
+    Return 'Increase {noun}', 'Reduce {noun}', or 'Specify {noun}' based on
+    whether the target is higher, lower, or equal to the current value.
+    Avoids hardcoded 'Reduce' labels on corrections that actually increase the parameter.
+    """
+    if abs(current) < 1e-9:
+        return f"Set {noun}"
+    ratio = target / current
+    if ratio > 1.02:
+        return f"Increase {noun}"
+    if ratio < 0.98:
+        return f"Reduce {noun}"
+    return f"Specify {noun}"
+
+
 def _correction(param, label, current, target, unit, note, priority):
     """Build a standardised correction dict."""
     return {
@@ -233,11 +249,11 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                     f"↑{fill_std - fill_pct:.0f}% raises capacity proportionally", 2),
             ]
             corrections = [
-                _correction("n_rpm", "Increase shaft speed",
+                _correction("n_rpm", _dir_label("shaft speed", n_rpm, float(n_std)),
                     n_rpm, n_std, "rpm",
                     f"v = {_v_from_rpm(n_std, D_mm):.2f} m/s — check CR and bucket speed limits after change",
                     1),
-                _correction("fill_pct", "Increase fill factor",
+                _correction("fill_pct", _dir_label("fill factor", fill_pct, float(fill_std)),
                     fill_pct, fill_std, "%",
                     "Verify material flowability allows higher fill without bridging",
                     2),
@@ -283,7 +299,7 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                     f"Currently {v:.2f} m/s > v_max {v_max_bkt:.2f} m/s for {bkt_id} bucket", 1),
             ]
             corrections = [
-                _correction("n_rpm", "Reduce shaft speed",
+                _correction("n_rpm", _dir_label("shaft speed", n_rpm, float(n_std_L10)),
                     n_rpm, n_std, "rpm",
                     f"v = {_v_from_rpm(n_std, D_mm):.2f} m/s ≤ v_max {v_max_bkt:.2f} m/s (5% margin)",
                     1),
@@ -308,7 +324,7 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                     "Smaller D_mm raises CR at same v — reduces required RPM", 2),
             ]
             corrections = [
-                _correction("n_rpm", "Increase shaft speed to CR = 1.25",
+                _correction("n_rpm", _dir_label("shaft speed to CR=1.25", n_rpm, float(n_std)),
                     n_rpm, n_std, "rpm",
                     f"v = {v_need:.2f} m/s → CR = {cr_target:.2f} (optimal centrifugal range)",
                     1),
@@ -335,7 +351,7 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                     f"Larger D reduces CR at same v (CR ∝ v²/r, r = D/2)", 2),
             ]
             corrections = [
-                _correction("n_rpm", "Reduce shaft speed to CR = 1.80",
+                _correction("n_rpm", _dir_label("shaft speed to CR=1.80", n_rpm, float(n_std)),
                     n_rpm, n_std, "rpm",
                     f"v = {v_need:.2f} m/s → CR = {cr_target:.2f}",
                     1),
@@ -372,7 +388,7 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                     f"Increasing K raises T3; required T3 = {T3_euler:.0f} N vs current {T3:.0f} N", 3),
             ]
             corrections = [
-                _correction("mu", "Upgrade to ceramic lagging (μ≈0.50)",
+                _correction("mu", "Upgrade lagging to ceramic (μ≈0.50)",
                     mu, 0.50, "—",
                     f"Ceramic lagging μ = 0.50 provides e^(μθ) = {math.exp(0.50 * wrap_deg * _PI / 180):.2f} "
                     f"vs required {e_ratio:.2f}",
@@ -462,7 +478,7 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                     f"Next standard bar above calc min {d_calc_min:.0f} mm (+5% margin = {d_need:.0f} mm). "
                     f"Hub and key will be re-checked against this diameter.",
                     1),
-                _correction("n_rpm", "Increase speed to reduce torque",
+                _correction("n_rpm", _dir_label("shaft speed", n_rpm, float(n_for_shaft)),
                     n_rpm, float(n_for_shaft), "rpm",
                     f"Higher n_rpm reduces T_Nm = P·1000/ω; verify CR and capacity after change",
                     2),
@@ -556,7 +572,7 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                     f"CR = v²/(g·r), v = π·D·n/60; reducing n_rpm reduces CR and bolt stress", 2),
             ]
             corrections = [
-                _correction("n_rpm", "Reduce speed to CR = {:.2f}".format(cr_target_bf),
+                _correction("n_rpm", _dir_label("shaft speed", n_rpm, float(n_std_bf)),
                     n_rpm, float(n_std_bf), "rpm",
                     f"Lowers CR from {cr:.3f} to {cr_target_bf:.3f} → estimated Goodman ≈ {target_goodman:.2f}",
                     1),
@@ -572,56 +588,63 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
 
         # ─── 11. Casing clearance (stream strikes wall) ───────────────────────
         elif "casing clearance" in ml or ("stream" in ml and "strikes" in ml):
-            wall_x = _s(cc.get("casing_wall_x_m"), casing_wall_x)
+            wall_x  = _s(cc.get("casing_wall_x_m"), casing_wall_x)
+            max_x   = _s(cc.get("max_x_m"), wall_x * 2)   # actual stream extent
             r_pulley = D_mm / 2000.0
 
-            # Maximum CR where release x0 ≤ wall_x
-            # x0 = r × sin(acos(1/CR)) ≤ wall_x
-            # sin(acos(1/CR)) = sqrt(1 - 1/CR²)
-            # wall_x/r = sqrt(1 - 1/CR²) → CR_max = 1/sqrt(1 - (wall_x/r)²)
-            sin_val = wall_x / max(r_pulley, 0.001)
-            if sin_val < 1.0:
-                CR_max = 1.0 / math.sqrt(1.0 - sin_val ** 2)
+            # ── Speed correction ──────────────────────────────────────────────
+            # The trajectory max_x (not just the release point x0) must stay
+            # inside the casing wall.  max_x ≈ v × t_flight + x0; since the
+            # flight time is roughly constant, max_x scales with v.
+            # v_safe = v_current × (wall_x / max_x) × 0.95 (5% margin)
+            # This correctly gives a LOWER speed when max_x > wall_x.
+            if max_x > 0 and max_x > wall_x:
+                v_safe = v * (wall_x / max_x) * 0.95
             else:
-                CR_max = 1.0   # pulley too small for casing — use minimum CR
-            CR_max = min(CR_max * 0.95, 2.5)  # 5% margin
-
-            v_safe = _v_for_cr(CR_max, D_mm)
+                v_safe = v * 0.85   # generic 15% reduction if no data
             n_safe = _rpm_from_v(v_safe, D_mm)
-            n_std  = math.floor(n_safe / 5) * 5
+            n_std  = max(int(n_safe // 5) * 5, 10)
 
-            # Wider casing: how wide does BW need to be?
-            # wall_x_need = r × sqrt(1 - 1/CR²); BW_need = 2 × (wall_x_need - 0.050) × 1000
-            x_release = r_pulley * math.sqrt(max(0, 1.0 - 1.0 / max(cr, 0.01) ** 2))
-            BW_need = (x_release - 0.050) * 2000  # mm
+            # ── Belt/casing width correction ──────────────────────────────────
+            # Casing inner wall must be beyond max_x with 50mm clearance.
+            # wall_x = BW/2000 + 0.050  →  BW ≥ (max_x + 0.050) × 2000
+            BW_need = (max_x + 0.050) * 2000   # mm — use actual stream extent
             BW_std  = _next_std(BW_need, _STD_BW_MM)
+
+            x_release = r_pulley * math.sqrt(max(0, 1.0 - 1.0 / max(cr ** 2, 0.01)))
 
             drivers = [
                 _driver("n_rpm", "Shaft speed", n_rpm, "rpm",
-                    f"CR = {cr:.3f} → release x0 = {x_release*1000:.0f}mm > wall at {wall_x*1000:.0f}mm. "
-                    f"Max safe CR = {CR_max:.3f} at current casing width", 1),
-                _driver("belt_width_override_mm", "Belt (casing) width", belt_w, "mm",
-                    f"Wider casing moves wall outward; need BW ≥ {BW_std} mm for current CR", 2),
+                    f"Stream max extent = {max_x*1000:.0f}mm > casing wall at {wall_x*1000:.0f}mm. "
+                    f"Reduce speed so trajectory stays inside casing.", 1),
+                _driver("belt_width_override_mm", "Belt / casing width", belt_w, "mm",
+                    f"Wider head-section casing moves inner wall to ≥ {max_x*1000:.0f}mm; "
+                    f"need BW ≥ {BW_std:.0f}mm", 2),
             ]
             corrections = [
-                _correction("n_rpm", "Reduce shaft speed",
+                _correction("n_rpm", _dir_label("shaft speed", n_rpm, float(n_std)),
                     n_rpm, float(n_std), "rpm",
-                    f"CR reduces from {cr:.3f} to {CR_max:.3f}; "
-                    f"release point moves inside casing wall. Verify capacity after change.",
+                    f"Scales trajectory from {max_x*1000:.0f}mm to ≈ {wall_x*1000:.0f}mm. "
+                    f"Note: if n_std < {_rpm_from_v(_v_for_cr(1.0, D_mm), D_mm):.0f} rpm "
+                    f"(CR < 1.0), the elevator switches to gravity discharge — "
+                    f"consider widening casing instead.",
                     1),
-                _correction("belt_width_override_mm", "Specify wider belt / casing",
+                _correction("belt_width_override_mm",
+                    _dir_label("belt / casing width", belt_w, float(BW_std)),
                     belt_w, float(BW_std), "mm",
-                    f"Casing inner wall moves to {BW_std/2 + 50:.0f}mm from centreline — "
-                    f"clears current release point at {x_release*1000:.0f}mm",
+                    f"Head-section inner wall at {BW_std/2 + 50:.0f}mm from centreline — "
+                    f"clears stream at {max_x*1000:.0f}mm with 50mm margin.",
                     2),
             ]
             findings.append(_finding(i, msg, sev,
-                f"Stream release x0 = {x_release*1000:.0f}mm > casing wall at {wall_x*1000:.0f}mm",
+                f"Stream max x = {max_x*1000:.0f}mm > casing wall at {wall_x*1000:.0f}mm",
                 drivers, corrections,
-                f"At CR = {cr:.3f}, the material releases at x0 = {x_release*1000:.0f}mm from "
-                f"the pulley centreline, which is beyond the casing inner wall at {wall_x*1000:.0f}mm. "
-                f"Fix 1: reduce n_rpm to {n_std} rpm (CR = {CR_max:.3f}) so the release point "
-                f"is inside the casing. Fix 2: widen belt/casing to {BW_std}mm."))
+                f"The discharge stream reaches {max_x*1000:.0f}mm from the pulley centreline "
+                f"(release point x0 = {x_release*1000:.0f}mm, then extends further by centrifugal throw). "
+                f"The casing inner wall is at {wall_x*1000:.0f}mm (BW = {belt_w:.0f}mm + 50mm clearance). "
+                f"Fix 1: widen belt/casing to {BW_std}mm (practical for centrifugal elevators). "
+                f"Fix 2: reduce shaft speed to {n_std} rpm "
+                f"{'(note: CR < 1.0 — switches to gravity discharge)' if n_std < _rpm_from_v(_v_for_cr(1.0, D_mm), D_mm) else ''}. "))
 
         # ─── 12. Discharge chute plugging ─────────────────────────────────────
         elif ("chute" in ml or "discharge" in ml) and ("plugging" in ml or "funnel" in ml):
@@ -630,7 +653,8 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
             angle  = _s(perf.get("chute_angle_deg"), 65)
             min_a  = _s(perf.get("min_angle_deg"), 55)
             mass_a = _s(perf.get("mass_flow_angle_deg"), 70)
-            target_angle = mass_a + 5
+            # Target must clear BOTH thresholds: min flow angle AND mass-flow angle
+            target_angle = max(min_a, mass_a) + 5
 
             aor = _s(mat.get("angle_repose"), 35)
             drivers = [

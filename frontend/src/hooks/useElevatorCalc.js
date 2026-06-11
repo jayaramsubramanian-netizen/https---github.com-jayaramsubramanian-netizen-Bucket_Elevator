@@ -288,7 +288,9 @@ function normaliseResult(raw) {
     // BOM + maintenance schedule — Tier 2
     bom:         raw.bom         ?? null,
     maintenance: raw.maintenance ?? null,
-    root_cause:  raw.root_cause  ?? [],
+    root_cause:     raw.root_cause     ?? [],
+    discharge_type:  raw.discharge_type  ?? "centrifugal",
+    is_continuous:   raw.is_continuous   ?? false,
 
     checks,
     status,

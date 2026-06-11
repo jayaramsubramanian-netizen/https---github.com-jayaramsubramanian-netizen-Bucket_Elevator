@@ -3,14 +3,28 @@ VECTRIX™ — SQLite Database Layer
 Shared across Bucket Elevator and Screw Conveyor modules.
 """
 
+import os
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "vectrix.db"
+# ── DB path ───────────────────────────────────────────────────────────────────
+# Resolve once at import time.
+# Priority: VECTRIX_DB env var → sibling vectrix.db (standard deployment).
+# The explicit str() cast + "vectrix.db" default narrows the type to str,
+# preventing the Pylance reportArgumentType error on sqlite3.connect().
+_DB_PATH: str = os.getenv("VECTRIX_DB", str(Path(__file__).parent / "vectrix.db"))
+
+DB_PATH = Path(_DB_PATH)   # Path version for display / existence checks
 
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
+    # check_same_thread=False: FastAPI's contextmanager_in_threadpool runs
+    # the finally-block (conn.close) in a different thread than where the
+    # connection was created.  Without this flag sqlite3 raises
+    # ProgrammingError on every request teardown even though the 200 OK
+    # has already been sent.  The connection is request-scoped so there is
+    # no shared-state concurrency risk.
+    conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -33,15 +47,16 @@ def init_db():
         -- ─── DESIGNS TABLE ─────────────────────────────────────────────
         -- Stores serialised inputs + results for any conveyor module.
         CREATE TABLE IF NOT EXISTS designs (
-            id          TEXT PRIMARY KEY,
-            module      TEXT NOT NULL,           -- 'bucket_elevator' | 'screw_conveyor' | ...
-            name        TEXT NOT NULL,
-            project     TEXT,
-            inputs_json TEXT NOT NULL,
-            results_json TEXT NOT NULL,
-            notes       TEXT,
-            created_at  TEXT NOT NULL,
-            updated_at  TEXT NOT NULL
+            id                  TEXT PRIMARY KEY,
+            module              TEXT NOT NULL,
+            name                TEXT NOT NULL,
+            project             TEXT,
+            inputs_json         TEXT NOT NULL,
+            results_json        TEXT NOT NULL,
+            notes               TEXT,
+            calc_schema_version TEXT,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL
         );
 
         -- ─── MATERIALS TABLE (user-defined overrides) ──────────────────
@@ -59,11 +74,11 @@ def init_db():
 
         -- ─── CALCULATION LOG (optional audit trail) ────────────────────
         CREATE TABLE IF NOT EXISTS calc_log (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            module      TEXT NOT NULL,
-            inputs_json TEXT NOT NULL,
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            module       TEXT NOT NULL,
+            inputs_json  TEXT NOT NULL,
             results_json TEXT NOT NULL,
-            ts          TEXT NOT NULL
+            ts           TEXT NOT NULL
         );
 
         -- ─── INDEXES ───────────────────────────────────────────────────
