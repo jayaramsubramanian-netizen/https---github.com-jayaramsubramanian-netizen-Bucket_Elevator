@@ -94,6 +94,72 @@ class BucketElevatorInput(BaseModel):
         ),
     )
 
+    # ── v1.5.0 — Design overrides ─────────────────────────────────────────────
+    # All override fields default to 0 (= auto-calculate from first principles).
+    # When a non-zero value is supplied the solver uses that value and reports
+    # whether it satisfies the calculated minimum — giving the engineer full
+    # control over every dimension shown in the Equipment Tree.
+
+    # Take-up selection
+    takeup_type: Literal["gravity", "screw", "auto"] = Field(
+        "gravity",
+        description=(
+            "Take-up system type. "
+            "gravity: counterweight take-up (recommended for H > 15 m); "
+            "screw: threaded screw take-up (short elevators, H ≤ 15 m); "
+            "auto: solver selects based on H_m threshold."
+        ),
+    )
+    takeup_screw_d_mm: float = Field(
+        0.0, ge=0.0, le=200.0,
+        description=(
+            "Screw take-up core diameter override [mm]. "
+            "0 = auto-calculate from tension and buckling check. "
+            "Set to a standard commercial size (e.g. 32, 40, 50, 63, 80) "
+            "to specify and verify — solver reports pass/fail against calculated minimum."
+        ),
+    )
+    takeup_screw_len_m: float = Field(
+        0.0, ge=0.0, le=10.0,
+        description=(
+            "Screw take-up unsupported shank length for buckling check [m]. "
+            "0 = auto-derived from required travel (CEMA §4). "
+            "Set explicitly when the physical installation length is known."
+        ),
+    )
+
+    # Shaft
+    shaft_d_override_mm: float = Field(
+        0.0, ge=0.0, le=500.0,
+        description=(
+            "Head shaft diameter override [mm]. "
+            "0 = auto-calculate from torsion + bending stress. "
+            "Set to a preferred commercial bar diameter — solver reports whether "
+            "the specified diameter meets the calculated minimum."
+        ),
+    )
+
+    # Belt width
+    belt_width_override_mm: float = Field(
+        0.0, ge=0.0, le=1200.0,
+        description=(
+            "Belt width override [mm]. "
+            "0 = auto-select next standard width above bucket width. "
+            "Set to a specific value to check adequacy and fix belt selection."
+        ),
+    )
+
+    # Casing plate thickness
+    casing_t_override_mm: float = Field(
+        0.0, ge=0.0, le=50.0,
+        description=(
+            "Casing plate thickness override [mm]. "
+            "0 = auto-calculate from panel deflection analysis. "
+            "Set to a preferred standard plate thickness (e.g. 3, 4, 5, 6, 8) — "
+            "solver re-checks deflection with specified thickness."
+        ),
+    )
+
 
 class OptimizerRequest(BaseModel):
     base_input: BucketElevatorInput

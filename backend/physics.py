@@ -687,16 +687,40 @@ class DischargePhysics:
 
         strike_x = strike_y = None
         if not clears:
-            for i in range(len(trajectory) - 1):
-                x1, y1 = trajectory[i]
-                x2, y2 = trajectory[i + 1]
-                if x1 <= wall_x <= x2 or x2 <= wall_x <= x1:
-                    # Interpolate y at wall
-                    if abs(x2 - x1) > 1e-9:
-                        frac = (wall_x - x1) / (x2 - x1)
-                        strike_x = wall_x
-                        strike_y = y1 + frac * (y2 - y1)
-                    break
+            # High-CR case: release point already starts beyond the casing wall.
+            # No inside→outside transition exists in the trajectory — use the
+            # first point as the entry strike (material exits directly through wall).
+            if trajectory and trajectory[0][0] >= wall_x:
+                strike_x = trajectory[0][0]
+                strike_y = trajectory[0][1]
+            else:
+                for i in range(len(trajectory) - 1):
+                    x1, y1 = trajectory[i]
+                    x2, y2 = trajectory[i + 1]
+                    if x1 <= wall_x <= x2 or x2 <= wall_x <= x1:
+                        if abs(x2 - x1) > 1e-9:
+                            frac     = (wall_x - x1) / (x2 - x1)
+                            strike_x = wall_x
+                            strike_y = y1 + frac * (y2 - y1)
+                        break
+
+        # Build recommendation — guard against None strike coords
+        if not clears:
+            if strike_x is not None and strike_y is not None:
+                _rec = (
+                    f"Stream strikes casing at x={strike_x:.3f} m, "
+                    f"y={strike_y:.3f} m. "
+                    "Consider reducing belt speed, increasing casing width, "
+                    "or adding a curved hood to redirect the stream."
+                )
+            else:
+                _rec = (
+                    f"Stream exceeds casing wall (stream max x={max_x:.3f} m, "
+                    f"wall at {wall_x:.3f} m) — strike point not interpolated. "
+                    "Increase casing width or reduce belt speed."
+                )
+        else:
+            _rec = "Stream clears casing — no head-section impact risk."
 
         return {
             "clears":           clears,
@@ -705,13 +729,7 @@ class DischargePhysics:
             "strike_x_m":       strike_x,
             "strike_y_m":       strike_y,
             "casing_wall_x_m":  wall_x,
-            "recommendation": (
-                "Stream clears casing — no head-section impact risk."
-                if clears else
-                f"Stream strikes casing at x={strike_x:.3f} m, y={strike_y:.3f} m. "
-                "Consider reducing belt speed, increasing casing width, or "
-                "adding a curved hood to redirect the stream."
-            ),
+            "recommendation":   _rec,
         }
 
     # ── Deprecated — retained for backward compatibility ──────────────────────

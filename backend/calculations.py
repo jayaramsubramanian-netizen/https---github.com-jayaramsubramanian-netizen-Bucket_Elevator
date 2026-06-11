@@ -99,20 +99,24 @@ except ImportError:
         material_count,
     )
 try:
-    from .bom import generate_bom
+    from .bom import generate_bom  # type: ignore[assignment]
 except ImportError:
     try:
-        from bom import generate_bom
+        from bom import generate_bom  # type: ignore[assignment]
     except ImportError:
-        generate_bom = lambda r, i: None   # bom.py not deployed — skip silently
+        def generate_bom(results, inputs):  # type: ignore[misc]
+            """Stub — deploy bom.py to enable full BOM generation."""
+            return None
 
 try:
-    from .reliability import maintenance_schedule
+    from .reliability import maintenance_schedule  # type: ignore[assignment]
 except ImportError:
     try:
-        from reliability import maintenance_schedule
+        from reliability import maintenance_schedule  # type: ignore[assignment]
     except ImportError:
-        maintenance_schedule = lambda r, i, **kw: None  # reliability.py not deployed — skip silently
+        def maintenance_schedule(results, inputs, **kwargs):  # type: ignore[misc]
+            """Stub — deploy reliability.py to enable maintenance scheduling."""
+            return None
 
 try:
     from .material_behavior import MaterialBehaviorEngine
@@ -517,7 +521,13 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     # v1.2.0 FIX: actual catalogue bucket mass (not V × 1.5)
     # v1.2.1 FIX: mu and wrap_deg now passed through to Euler check
     bw_kg = bucket.get("bucket_mass_kg", bucket["V"] * 1.5)
-    BW_mm = select_belt_width(bucket["W"])
+
+    # ── Belt width — user override or auto-select ─────────────────────────────
+    # v1.5.0: belt_width_override_mm > 0 lets the engineer specify the exact
+    # belt width (e.g. to match existing stock or a specific conveyor standard).
+    _bw_override = getattr(inp, "belt_width_override_mm", 0) or 0
+    BW_mm = int(_bw_override) if _bw_override > 0 else select_belt_width(bucket["W"])
+
     tens  = calc_headshaft_tensions(
         Q, inp.H_m, v, bw_kg, spacing, BW_mm, inp.K_takeup,
         mu=inp.mu, wrap_deg=inp.wrap_deg,
@@ -536,18 +546,32 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     gov = StructuralStressEngine.shaft_diameter_governing(
         T_Nm, M_Nm, R_head, A_m, B_m
     )
-    d_mm         = gov["d_governing_mm"]
+    d_mm_calc    = gov["d_governing_mm"]
     d_stress_mm  = gov["d_stress_mm"]
     d_deflect_mm = gov["d_deflect_mm"]
     governed_by  = gov["governed_by"]
 
+    # v1.5.0 shaft diameter override ─────────────────────────────────────────
+    # If the engineer specifies a preferred shaft diameter, use it and flag
+    # adequacy against the calculated minimum.  Hub/key are re-derived from
+    # the actual diameter so all downstream checks remain consistent.
+    _shaft_override = getattr(inp, "shaft_d_override_mm", 0) or 0
+    if _shaft_override > 0:
+        d_mm = float(_shaft_override)
+        governed_by = f"user override ({_shaft_override:.0f}mm, calc min {d_mm_calc:.1f}mm)"
+    else:
+        d_mm = d_mm_calc
+
+    # Use the governing m-value consistently for hub/key (recalc if override)
+    d_governing_m = d_mm / 1000.0
+
     # ── Hub sizing & keyway check ─────────────────────────────────────────────
     hub = StructuralStressEngine.hub_diameter(
-        shaft_diameter_m = gov["d_governing_m"],
+        shaft_diameter_m = d_governing_m,
         torque_Nm        = T_Nm,
     )
     key = StructuralStressEngine.key_stress_check(
-        shaft_diameter_m = gov["d_governing_m"],
+        shaft_diameter_m = d_governing_m,
         torque_Nm        = T_Nm,
         key_length_m     = hub["L_hub_m"],
     )
@@ -587,17 +611,47 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     )
 
     # ── Take-up design ────────────────────────────────────────────────────────
+    # v1.5.0: takeup_type, takeup_screw_d_mm, takeup_screw_len_m overrides.
+    # "gravity" → counterweight design; "screw" → screw design; "auto" → H_m threshold.
+    _takeup_type  = getattr(inp, "takeup_type",       "gravity") or "gravity"
+    _screw_d_mm   = getattr(inp, "takeup_screw_d_mm", 0)  or 0
+    _screw_len_m  = getattr(inp, "takeup_screw_len_m", 0) or 0
+
+    # Auto-select: gravity for H ≥ 15m, screw otherwise
+    if _takeup_type == "auto":
+        _takeup_type = "gravity" if inp.H_m >= 15.0 else "screw"
+
     takeup_gravity = StructuralStressEngine.gravity_takeup(T3, inp.H_m, BW_mm)
-    takeup_screw   = StructuralStressEngine.screw_takeup(T3)
+
+    # Screw take-up — always calculated (shown as "alternative" when gravity chosen)
+    _screw_travel_m = takeup_gravity.get("travel_m", 0.5)          # match required travel
+    _screw_span_m   = float(_screw_len_m) if _screw_len_m > 0 else max(_screw_travel_m + 0.1, 0.6)
+    takeup_screw    = StructuralStressEngine.screw_takeup(
+        T_slack_N      = T3,
+        travel_m       = _screw_travel_m,
+        screw_length_m = _screw_span_m,
+        preferred_d_mm = float(_screw_d_mm),
+    )
+    # Tag which take-up is the primary selection
+    takeup_gravity["primary"] = _takeup_type == "gravity"
+    takeup_screw["primary"]   = _takeup_type == "screw"
 
     # ── Casing structural ─────────────────────────────────────────────────────
-    casing_t_m = StructuralStressEngine.casing_plate_thickness(BW_mm, rho, inp.H_m)
-    wind_pa    = getattr(inp, "wind_pressure_pa", 800.0)
+    # v1.5.0: casing_t_override_mm — engineer can specify preferred plate thickness.
+    wind_pa = getattr(inp, "wind_pressure_pa", 800.0)
+    _casing_t_override = getattr(inp, "casing_t_override_mm", 0) or 0
+    casing_t_m_calc = StructuralStressEngine.casing_plate_thickness(BW_mm, rho, inp.H_m)
+    casing_t_m      = (float(_casing_t_override) / 1000.0
+                       if _casing_t_override > 0 else casing_t_m_calc)
     casing_stiffener = StructuralStressEngine.casing_stiffener_spacing(casing_t_m, wind_pa)
     panel_span_m = casing_stiffener["recommended_mm"] / 1000.0
     casing_panel = StructuralStressEngine.casing_panel_deflection(
         panel_span_m, panel_span_m, casing_t_m, wind_pa,
     )
+    # Expose override status in casing_panel result
+    casing_panel["override_applied"] = _casing_t_override > 0
+    casing_panel["t_calc_mm"]        = round(casing_t_m_calc * 1000, 1)
+    casing_panel["t_use_mm"]         = round(casing_t_m * 1000, 1)
 
     # ── Belt & motor ──────────────────────────────────────────────────────────
     motor_kw = select_motor(P_total, inp.sf)

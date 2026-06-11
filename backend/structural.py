@@ -1230,63 +1230,77 @@ class StructuralStressEngine:
         eta_screw:    float = 0.85,
         travel_m:     float = 0.500,
         screw_length_m: float = 0.600,
+        preferred_d_mm: float = 0.0,
     ) -> dict:
         """
         CEMA 375 §4 — Screw take-up thread load and buckling check.
 
-        Screw take-up is used for short elevators (H < 15 m) where gravity
-        take-up is impractical.  The screw carries the full take-up reaction.
-
-        Screw load (both belt strands):
-          F_screw = 2 × T_slack / η_screw
-
-        Euler column buckling (unsupported screw shank):
-          F_euler = π² × E × I / (K × L)²
-          where K = 1 (pinned-pinned) or 0.7 (fixed-free guide)
-
-        Minimum screw core diameter from direct compressive stress:
-          d_core = √(4 × F_screw / (π × σ_allow))
-          σ_allow = Sy / 4 = 60 MPa (A36 screw, conservative)
+        v1.5.0: preferred_d_mm override.
+        When preferred_d_mm > 0 (user-specified), the buckling SF is recalculated
+        for that diameter and the result reports both the minimum required diameter
+        and the user's specified diameter, making the pass/fail immediately visible.
 
         Parameters
         ----------
-        T_slack_N     Required slack-side tension [N]
-        screw_pitch_mm Screw thread pitch [mm]
-        eta_screw     Screw thread efficiency (0.8–0.9 typical for ACME/Tr thread)
-        travel_m      Required take-up adjustment range [m]
-        screw_length_m Unsupported shank length for buckling check [m]
+        preferred_d_mm  User-specified screw core diameter [mm]. 0 = auto.
         """
         E = _shaft_E()
 
         F_screw = 2.0 * T_slack_N / eta_screw
 
         # Minimum core diameter from direct compressive stress (conservative)
-        sigma_allow = 60e6  # MPa, A36
-        d_core = math.sqrt(4.0 * F_screw / (math.pi * sigma_allow))
+        sigma_allow = 60e6   # Pa, A36
+        d_core_min  = math.sqrt(4.0 * F_screw / (math.pi * sigma_allow))  # m
 
-        # Euler buckling check (pinned-pinned K=1)
-        r_core = d_core / 4.0                    # approx. radius of gyration
-        I_core = math.pi * d_core ** 4 / 64.0    # mm→m already in d_core
-        F_euler = (math.pi ** 2 * E * I_core) / (screw_length_m ** 2)
+        # Actual diameter to use: preferred (if given) or calculated minimum
+        d_core_use  = (max(d_core_min, preferred_d_mm / 1000.0)
+                       if preferred_d_mm > 0 else d_core_min)
+        override_applied = preferred_d_mm > 0
+        override_adequate = (preferred_d_mm / 1000.0) >= d_core_min if override_applied else True
+
+        # Euler buckling check with actual diameter
+        I_use       = math.pi * d_core_use ** 4 / 64.0
+        F_euler     = (math.pi ** 2 * E * I_use) / (screw_length_m ** 2)
         SF_buckling = F_euler / max(F_screw, 1.0)
+        buckling_ok = SF_buckling >= 3.0
 
         turns_required = travel_m / (screw_pitch_mm / 1000.0)
 
+        # Recommended commercial diameter: next standard above d_core_min
+        _stds = [20, 25, 32, 40, 50, 63, 80, 100]
+        d_recommend_mm = next((s for s in _stds if s >= d_core_min * 1000), 100)
+
+        if buckling_ok:
+            rec = f"PASS — buckling SF={SF_buckling:.1f} ≥ 3.0"
+        elif override_applied and not buckling_ok:
+            rec = (
+                f"FAIL — specified Ø{preferred_d_mm:.0f} mm gives "
+                f"buckling SF={SF_buckling:.1f} < 3.0. "
+                f"Increase to ≥ Ø{d_recommend_mm} mm "
+                f"(set takeup_screw_d_mm = {d_recommend_mm}) "
+                f"or add an intermediate guide support to halve the effective length."
+            )
+        else:
+            rec = (
+                f"FAIL — buckling SF={SF_buckling:.1f} < 3.0 "
+                f"(auto min Ø{d_core_min*1000:.0f} mm). "
+                f"Set takeup_screw_d_mm = {d_recommend_mm} in Design Overrides "
+                f"or add an intermediate guide support."
+            )
+
         return {
-            "F_screw_N":         round(F_screw,         0),
-            "d_core_min_mm":     round(d_core * 1000,   1),
-            "F_euler_N":         round(F_euler,          0),
-            "SF_buckling":       round(SF_buckling,      2),
-            "turns_required":    round(turns_required,   0),
+            "F_screw_N":         round(F_screw,              0),
+            "d_core_min_mm":     round(d_core_min * 1000,    1),
+            "d_core_use_mm":     round(d_core_use * 1000,    1),
+            "d_core_recommend_mm": d_recommend_mm,
+            "F_euler_N":         round(F_euler,               0),
+            "SF_buckling":       round(SF_buckling,           2),
+            "turns_required":    round(turns_required,        0),
             "travel_m":          travel_m,
-            "buckling_safe":     SF_buckling >= 3.0,
-            "recommendation": (
-                f"PASS — buckling SF={SF_buckling:.1f} ≥ 3.0"
-                if SF_buckling >= 3.0 else
-                f"FAIL — buckling SF={SF_buckling:.1f} < 3.0. "
-                f"Increase screw diameter to ≥ {d_core*1000*1.25:.0f} mm "
-                f"or add intermediate guide support."
-            ),
+            "override_applied":  override_applied,
+            "override_adequate": override_adequate,
+            "buckling_safe":     buckling_ok,
+            "recommendation":    rec,
         }
 
     # ── 12. Casing Panel Deflection and Stiffeners ────────────────────────────

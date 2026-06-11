@@ -48,6 +48,15 @@ export const DEFAULT_INPUTS = {
   environment: "dry", // "dry" | "humid" | "wet" | "submerged"  (lagging selection)
   belt_type: "EP", // "EP" | "ST"  (lagging selection)
   wind_pressure_pa: 800, // [Pa]  (casing panel check — typical industrial site)
+
+  // ── v1.5.0 Design Overrides ─────────────────────────────────────
+  // All 0 = auto-calculate from first principles. Set > 0 to specify.
+  takeup_type: "gravity", // "gravity" | "screw" | "auto"
+  takeup_screw_d_mm: 0, // Screw core diameter override [mm]
+  takeup_screw_len_m: 0, // Screw shank length for buckling [m]
+  shaft_d_override_mm: 0, // Head shaft diameter override [mm]
+  belt_width_override_mm: 0, // Belt width override [mm]
+  casing_t_override_mm: 0, // Casing plate thickness override [mm]
 };
 
 // ─────────────────────────────────────────────────────────────────
