@@ -1,0 +1,732 @@
+"""
+VECTRIX™ Root Cause Analysis Engine — root_cause.py
+AKSHAYVIPRA EL-MEC · VECTOMEC™
+
+analyse(results, inputs) → list[RootCauseFinding]
+
+For every failed or warned engineering check, this module:
+
+  1. Identifies which input parameters are the dominant drivers
+  2. Applies closed-form analytical relationships (no re-solve required)
+     to compute the exact parameter value that would just pass the check
+  3. Maps that value to the nearest practical standard size / setting
+  4. Ranks all corrective options by impact and ease of application
+  5. Returns structured data consumed by RootCausePanel.jsx and the PDF report
+
+Philosophy
+──────────
+Results over generics.  Every finding specifies WHAT to change and BY HOW MUCH,
+not just "increase belt speed".  A correction like:
+    "Set n_rpm = 72 (currently 60, +20%) → capacity 103 t/h ≥ 100 t/h required"
+is a commercial-grade recommendation.  A correction like "increase RPM" is noise.
+
+Analytical relationships used (all CEMA 375-2017 / ASME / ISO 281):
+  Capacity:      Q = v/s × V × η × ρ × 3.6
+  Belt speed:    v = π × D × n / 60
+  CR:            CR = v² / (g × r)
+  Euler slip:    e^(μθ) — minimum T3 from belt-pulley friction
+  Shaft torque:  T = P × 1000 / ω
+  Shaft stress:  d_min from Von Mises combined (τ + σ_b) criterion
+  Bearing L10:   L10 = (C/R)^p × 10^6 / (60n)  [ISO 281]
+  Bolt Goodman:  ratio = σ_a/σ_e + σ_m/σ_u      [Goodman criterion]
+  Casing CR:     CR_max from x0 = r·sin(acos(1/CR)) ≤ wall_x
+  Screw Euler:   d_core from F_euler = π²EI/L² ≥ 3×F_screw
+  Plate:         t_min from Timoshenko plate theory δ = α·q·a⁴/(E·t³)
+"""
+
+import math
+from typing import Any
+
+# ─── Physical constants ────────────────────────────────────────────────────────
+_G   = 9.81        # m/s²
+_PI  = math.pi
+_E   = 200e9       # Pa, steel Young's modulus
+
+# Standard commercial bar diameters (mm) for shaft recommendations
+_STD_SHAFT_MM  = [20,25,30,35,40,45,50,55,60,65,70,75,80,90,100,110,120]
+# Standard screw core diameters (mm)
+_STD_SCREW_MM  = [20,25,32,40,50,63,80,100]
+# Standard plate thicknesses (mm)
+_STD_PLATE_MM  = [3,4,5,6,8,10,12,16,20]
+# Standard belt widths (mm)
+_STD_BW_MM     = [300,350,400,450,500,600,650,750,800,900,1000,1200]
+
+
+# ─── Helpers ─────────────────────────────────────────────────────────────────
+
+def _s(v, default=0.0):
+    """Safe float conversion with fallback."""
+    try:
+        return float(v) if v is not None else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _next_std(value, std_list):
+    """Return the smallest standard size ≥ value."""
+    for s in sorted(std_list):
+        if s >= value:
+            return s
+    return sorted(std_list)[-1]
+
+
+def _v_from_rpm(n_rpm, D_mm):
+    return _PI * (D_mm / 1000.0) * n_rpm / 60.0
+
+
+def _rpm_from_v(v_ms, D_mm):
+    denom = _PI * max(D_mm, 1) / 1000.0
+    return v_ms * 60.0 / denom
+
+
+def _cr(v_ms, D_mm):
+    r = D_mm / 2000.0
+    return v_ms ** 2 / (_G * max(r, 1e-6))
+
+
+def _v_for_cr(cr_target, D_mm):
+    r = D_mm / 2000.0
+    return math.sqrt(cr_target * _G * r)
+
+
+def _pct_change(current, target):
+    if abs(current) < 1e-9:
+        return 0.0
+    return (target - current) / current * 100.0
+
+
+def _correction(param, label, current, target, unit, note, priority):
+    """Build a standardised correction dict."""
+    return {
+        "param":       param,
+        "label":       label,
+        "current":     round(current, 2) if isinstance(current, float) else current,
+        "target":      round(target, 2)  if isinstance(target, float)  else target,
+        "unit":        unit,
+        "change_pct":  round(_pct_change(current, target), 1)
+                       if isinstance(current, (int, float)) else 0,
+        "note":        note,
+        "priority":    priority,
+    }
+
+
+def _driver(param, label, current, unit, impact_desc, priority):
+    """Build a standardised driver dict."""
+    return {
+        "param":    param,
+        "label":    label,
+        "current":  round(current, 2) if isinstance(current, float) else current,
+        "unit":     unit,
+        "impact":   impact_desc,
+        "priority": priority,
+    }
+
+
+def _finding(index, msg, severity, metric, drivers, corrections, explanation):
+    return {
+        "check_index":    index,
+        "check_msg":      msg,
+        "severity":       severity,
+        "failure_metric": metric,
+        "primary_driver": drivers[0]["param"] if drivers else "—",
+        "drivers":        drivers,
+        "corrections":    sorted(corrections, key=lambda c: c["priority"]),
+        "explanation":    explanation,
+    }
+
+
+# ─── Main entry point ─────────────────────────────────────────────────────────
+
+def analyse(results: dict, inputs: dict) -> list[dict]:
+    """
+    Analyse all failed/warned engineering checks and return root-cause findings.
+
+    Parameters
+    ----------
+    results : dict    — output of solve_elevator()
+    inputs  : dict    — BucketElevatorInput.model_dump()
+
+    Returns
+    -------
+    list of RootCauseFinding dicts (one per failed/warned check).
+    Empty list when all checks pass.
+    """
+    r   = results or {}
+    inp = inputs  or {}
+
+    checks = r.get("checks", [])
+    if not checks:
+        return []
+
+    # ── Extract result values ─────────────────────────────────────────────────
+    Q       = _s(r.get("Q"))
+    v       = _s(r.get("v"))
+    cr      = _s(r.get("cr"))
+    d_mm    = _s(r.get("d_mm"))
+    L10     = _s(r.get("L10"))
+    T1      = _s(r.get("T1"))
+    T2      = _s(r.get("T2"))
+    T3      = _s(r.get("T3"))
+    F_eff   = _s(r.get("F_eff"))
+    R_head  = _s(r.get("R_headshaft"))
+    T_Nm    = _s(r.get("T_Nm"))
+    P_total = _s(r.get("P_total"))
+    spacing = _s(r.get("spacing"), 0.25)
+    rho     = _s(r.get("rho"), 750)
+    belt_w  = _s(r.get("belt_w"), 400)
+    euler_chk = r.get("euler_check") or {}
+    bf      = r.get("bolt_fatigue") or {}
+    ts      = r.get("takeup_screw") or {}
+    cc      = r.get("casing_clearance") or {}
+    cp      = r.get("casing_panel") or {}
+    dc      = r.get("discharge_chute") or {}
+    bucket  = r.get("bucket") or {}
+    mat     = r.get("mat") or {}
+
+    # ── Extract input values ──────────────────────────────────────────────────
+    Q_req     = _s(inp.get("Q_req"), 100)
+    H_m       = _s(inp.get("H_m"), 25)
+    D_mm      = _s(inp.get("D_mm"), 500)
+    n_rpm     = _s(inp.get("n_rpm"), 60)
+    fill_pct  = _s(inp.get("fill_pct"), 75)
+    mu        = _s(inp.get("mu"), 0.35)
+    wrap_deg  = _s(inp.get("wrap_deg"), 180)
+    sf        = _s(inp.get("sf"), 1.25)
+    K_takeup  = _s(inp.get("K_takeup"), 0.7)
+
+    V_bkt    = _s(bucket.get("V"), 3.3)
+    v_min_bkt = _s(bucket.get("v_min"), 1.0)
+    v_max_bkt = _s(bucket.get("v_max"), 2.5)
+    bkt_id   = bucket.get("id", "B")
+    bw_kg    = _s(r.get("bucket_mass_kg"), 2.5)
+
+    # Casing inner wall x-coord (half BW + 50mm)
+    casing_wall_x = belt_w / 2000.0 + 0.050
+
+    findings = []
+
+    for i, check in enumerate(checks):
+        sev = check.get("type", "ok")
+        if sev not in ("fail", "warn"):
+            continue
+        msg = check.get("msg", "")
+        ml  = msg.lower()
+
+        # ─── 1. Capacity insufficient ────────────────────────────────────────
+        if "capacity" in ml and ("< required" in ml or "< " in ml):
+            # Minimum belt speed to meet Q_req
+            if spacing > 0 and V_bkt > 0 and fill_pct > 0 and rho > 0:
+                v_need = Q_req * spacing / (V_bkt / 1000.0 * fill_pct / 100.0 * rho * 3.6)
+            else:
+                v_need = v * (Q_req / max(Q, 0.1))
+            n_need = _rpm_from_v(v_need, D_mm)
+            n_std  = math.ceil(n_need / 5) * 5   # round up to next 5 rpm
+
+            # Alternative: increase fill_pct
+            fill_need = fill_pct * (Q_req / max(Q, 0.1)) if Q > 0 else fill_pct
+            fill_std  = min(math.ceil(fill_need / 5) * 5, 90)
+
+            drivers = [
+                _driver("n_rpm", "Shaft speed", n_rpm, "rpm",
+                    f"↑{n_std - n_rpm:.0f} rpm raises Q from {Q:.1f} to {Q_req:.0f} t/h", 1),
+                _driver("fill_pct", "Bucket fill", fill_pct, "%",
+                    f"↑{fill_std - fill_pct:.0f}% raises capacity proportionally", 2),
+            ]
+            corrections = [
+                _correction("n_rpm", "Increase shaft speed",
+                    n_rpm, n_std, "rpm",
+                    f"v = {_v_from_rpm(n_std, D_mm):.2f} m/s — check CR and bucket speed limits after change",
+                    1),
+                _correction("fill_pct", "Increase fill factor",
+                    fill_pct, fill_std, "%",
+                    "Verify material flowability allows higher fill without bridging",
+                    2),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"Q = {Q:.1f} t/h < {Q_req:.0f} t/h required",
+                drivers, corrections,
+                f"Capacity is {Q:.1f} t/h, {Q_req - Q:.1f} t/h short of requirement. "
+                f"At current fill {fill_pct:.0f}% and bucket series {bkt_id}, "
+                f"minimum belt speed is {v_need:.2f} m/s (n = {n_need:.0f} rpm). "
+                f"Check that the new speed is within bucket series limits "
+                f"({v_min_bkt:.2f}–{v_max_bkt:.2f} m/s)."))
+
+        # ─── 2. Belt speed below v_min ────────────────────────────────────────
+        elif ("speed" in ml or "v_min" in ml or "back-legging" in ml) and "below" in ml:
+            n_need = _rpm_from_v(v_min_bkt * 1.05, D_mm)  # 5% margin above v_min
+            n_std  = math.ceil(n_need / 5) * 5
+            drivers = [
+                _driver("n_rpm", "Shaft speed", n_rpm, "rpm",
+                    f"Currently {v:.2f} m/s < v_min {v_min_bkt:.2f} m/s for {bkt_id} bucket", 1),
+                _driver("D_mm", "Head pulley dia", D_mm, "mm",
+                    "Smaller D_mm reduces v at same RPM — opposite effect needed here", 2),
+            ]
+            corrections = [
+                _correction("n_rpm", "Increase shaft speed",
+                    n_rpm, n_std, "rpm",
+                    f"v = {_v_from_rpm(n_std, D_mm):.2f} m/s ≥ v_min {v_min_bkt:.2f} m/s (5% margin)",
+                    1),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"v = {v:.2f} m/s < v_min {v_min_bkt:.2f} m/s for {bkt_id} bucket",
+                drivers, corrections,
+                f"Belt speed {v:.2f} m/s is below the CEMA minimum {v_min_bkt:.2f} m/s "
+                f"for {bkt_id} series buckets. Back-legging risk: material slides back "
+                f"before reaching the discharge point. Raise n_rpm to {n_std} rpm."))
+
+        # ─── 3. Belt speed above v_max ────────────────────────────────────────
+        elif ("speed" in ml or "v_max" in ml or "scatter" in ml) and ("exceed" in ml or "above" in ml):
+            n_need = _rpm_from_v(v_max_bkt * 0.95, D_mm)  # 5% margin below v_max
+            n_std  = math.floor(n_need / 5) * 5
+            drivers = [
+                _driver("n_rpm", "Shaft speed", n_rpm, "rpm",
+                    f"Currently {v:.2f} m/s > v_max {v_max_bkt:.2f} m/s for {bkt_id} bucket", 1),
+            ]
+            corrections = [
+                _correction("n_rpm", "Reduce shaft speed",
+                    n_rpm, n_std, "rpm",
+                    f"v = {_v_from_rpm(n_std, D_mm):.2f} m/s ≤ v_max {v_max_bkt:.2f} m/s (5% margin)",
+                    1),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"v = {v:.2f} m/s > v_max {v_max_bkt:.2f} m/s for {bkt_id} bucket",
+                drivers, corrections,
+                f"Belt speed {v:.2f} m/s exceeds the CEMA maximum {v_max_bkt:.2f} m/s "
+                f"for {bkt_id} series. Material scatter risk increases significantly above v_max. "
+                f"Reduce n_rpm to {n_std} rpm."))
+
+        # ─── 4. CR < 1 (gravity/mixed discharge) ─────────────────────────────
+        elif ("cr=" in ml or "cr =" in ml) and "< 1" in ml:
+            cr_target = 1.25
+            v_need = _v_for_cr(cr_target, D_mm)
+            n_need = _rpm_from_v(v_need, D_mm)
+            n_std  = math.ceil(n_need / 5) * 5
+            drivers = [
+                _driver("n_rpm", "Shaft speed", n_rpm, "rpm",
+                    f"CR = v²/(g·r) = {cr:.3f}; need ≥ 1.0 for centrifugal discharge", 1),
+                _driver("D_mm", "Head pulley dia", D_mm, "mm",
+                    "Smaller D_mm raises CR at same v — reduces required RPM", 2),
+            ]
+            corrections = [
+                _correction("n_rpm", "Increase shaft speed to CR = 1.25",
+                    n_rpm, n_std, "rpm",
+                    f"v = {v_need:.2f} m/s → CR = {cr_target:.2f} (optimal centrifugal range)",
+                    1),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"CR = {cr:.3f} < 1.0 (gravity/mixed discharge mode)",
+                drivers, corrections,
+                f"CR = v²/(g·r) = {cr:.3f}. For clean centrifugal discharge, CR ≥ 1.0 is required "
+                f"(optimal: 1.2–1.5). At D_mm = {D_mm:.0f}mm, minimum speed is "
+                f"{v_need:.2f} m/s (n = {n_std} rpm) for CR = {cr_target:.2f}."))
+
+        # ─── 5. CR > 2.5 (excessive scatter) ────────────────────────────────
+        elif ("cr=" in ml or "cr =" in ml) and ("> 2.5" in ml or "excessive" in ml or "scatter" in ml):
+            cr_target = 1.80
+            v_need = _v_for_cr(cr_target, D_mm)
+            n_need = _rpm_from_v(v_need, D_mm)
+            n_std  = math.floor(n_need / 5) * 5
+            D_need = D_mm * (cr / cr_target)   # larger D at same n
+            D_std  = _next_std(D_need, _STD_BW_MM[:6])  # rough pulley sizes
+            drivers = [
+                _driver("n_rpm", "Shaft speed", n_rpm, "rpm",
+                    f"CR = {cr:.3f} > 2.5; reduce speed to bring CR to 1.5–1.8 range", 1),
+                _driver("D_mm", "Head pulley dia", D_mm, "mm",
+                    f"Larger D reduces CR at same v (CR ∝ v²/r, r = D/2)", 2),
+            ]
+            corrections = [
+                _correction("n_rpm", "Reduce shaft speed to CR = 1.80",
+                    n_rpm, n_std, "rpm",
+                    f"v = {v_need:.2f} m/s → CR = {cr_target:.2f}",
+                    1),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"CR = {cr:.3f} > 2.5 (excessive scatter risk)",
+                drivers, corrections,
+                f"CR = {cr:.3f} causes material to scatter into the casing head section "
+                f"before entering the chute. CEMA recommends CR ≤ 2.5 for standard service. "
+                f"Reduce n_rpm to {n_std} rpm for CR = {cr_target:.2f}."))
+
+        # ─── 6. Belt slip (Euler-Eytelwein) ──────────────────────────────────
+        elif "slip" in ml or "euler" in ml:
+            T3_euler = _s(euler_chk.get("T2_minimum"), T3 * 1.2)
+            e_ratio  = _s(euler_chk.get("euler_ratio"), math.exp(mu * wrap_deg * _PI / 180))
+            T3_deficit = T3_euler - T3
+
+            # Required mu at current wrap and tension ratio
+            ratio = F_eff / max(T3, 1)
+            mu_req = math.log(max(ratio, 1.001)) / (wrap_deg * _PI / 180) if wrap_deg > 0 else mu
+            # Required wrap at current mu
+            wrap_req = math.log(max(ratio, 1.001)) / max(mu, 0.01) * 180 / _PI if mu > 0 else wrap_deg
+            wrap_req = min(wrap_req, 240)
+            # Required K_takeup to increase T3
+            K_need = K_takeup * (T3_euler / max(T3, 1))
+            K_need = min(K_need, 0.9)
+
+            drivers = [
+                _driver("mu", "Lagging friction coeff", mu, "—",
+                    f"Required μ = {mu_req:.3f} at wrap {wrap_deg:.0f}° to prevent slip", 1),
+                _driver("wrap_deg", "Wrap angle", wrap_deg, "°",
+                    f"Required wrap = {wrap_req:.0f}° at μ = {mu:.2f} to prevent slip", 2),
+                _driver("K_takeup", "Take-up factor K", K_takeup, "—",
+                    f"Increasing K raises T3; required T3 = {T3_euler:.0f} N vs current {T3:.0f} N", 3),
+            ]
+            corrections = [
+                _correction("mu", "Upgrade to ceramic lagging (μ≈0.50)",
+                    mu, 0.50, "—",
+                    f"Ceramic lagging μ = 0.50 provides e^(μθ) = {math.exp(0.50 * wrap_deg * _PI / 180):.2f} "
+                    f"vs required {e_ratio:.2f}",
+                    1),
+                _correction("wrap_deg", "Add snub pulley — increase wrap angle",
+                    wrap_deg, round(wrap_req + 5), "°",
+                    f"Snub pulley raises wrap from {wrap_deg:.0f}° to ~{wrap_req+5:.0f}°; "
+                    f"verify geometry allows snub placement",
+                    2),
+                _correction("K_takeup", "Increase take-up tension factor",
+                    K_takeup, round(K_need, 2), "—",
+                    f"Raises T3 to ≥ {T3_euler:.0f} N required for no-slip; "
+                    f"gravity take-up: increase counterweight",
+                    3),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"T3 = {T3:.0f} N < Euler min {T3_euler:.0f} N (deficit {T3_deficit:.0f} N)",
+                drivers, corrections,
+                f"The drive pulley will slip under load. T3 = {T3:.0f} N is "
+                f"{T3_deficit:.0f} N below the Euler-Eytelwein minimum of {T3_euler:.0f} N "
+                f"(μ={mu:.2f}, wrap={wrap_deg:.0f}°, e^μθ={e_ratio:.2f}). "
+                f"Primary fix: upgrade lagging to ceramic (μ≈0.50). "
+                f"Secondary: add snub pulley to increase wrap angle."))
+
+        # ─── 7. Headshaft load ───────────────────────────────────────────────
+        elif "headshaft load" in ml:
+            T_total = T1 + T2 + T3
+            limit   = 80000 if "80" in ml else 50000
+            excess  = T_total - limit
+            # % reduction needed
+            pct_red = excess / T_total * 100
+            # Required fill to reduce by pct_red (T1 ∝ Q ∝ fill)
+            fill_red = fill_pct * (1.0 - pct_red / 200)  # partial — fill only affects T1
+            fill_red = max(fill_red, 40)
+
+            drivers = [
+                _driver("fill_pct", "Bucket fill", fill_pct, "%",
+                    f"T1 (material) ∝ fill_pct; reducing fill by {pct_red/2:.0f}% reduces T1 proportionally", 1),
+                _driver("Q_req", "Required capacity", Q_req, "t/h",
+                    "Lower Q_req reduces material tension T1 and power", 2),
+                _driver("H_m", "Lift height", H_m, "m",
+                    "H_m is a process constraint — typically not adjustable", 3),
+            ]
+            corrections = [
+                _correction("fill_pct", "Reduce fill factor",
+                    fill_pct, round(fill_red), "%",
+                    "Reduces material mass per bucket → lower T1; verify capacity still meets Q_req",
+                    1),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"T_total = {T_total/1000:.1f} kN (T1={T1/1000:.1f} + T2={T2/1000:.1f} + T3={T3/1000:.1f} kN)",
+                drivers, corrections,
+                f"Total headshaft tension {T_total/1000:.1f} kN exceeds the recommended limit. "
+                f"The dominant component is T1 (material tension = {T1/1000:.1f} kN), "
+                f"driven by capacity and lift height. Consider a heavier-duty belt rating "
+                f"or reducing fill factor to {fill_red:.0f}%."))
+
+        # ─── 8. Shaft sizing ─────────────────────────────────────────────────
+        elif "shaft" in ml and ("governed" in ml or "stress" in ml or "deflect" in ml):
+            # At higher n_rpm, same power → lower torque → smaller required shaft
+            # T_Nm = P × 1000 / ω; ω = 2π × n/60
+            # If we increase n_rpm by factor k, T_Nm reduces by factor k
+            d_calc_min = _s(r.get("d_stress_mm"), d_mm)
+            d_need     = d_calc_min * 1.05   # 5% design margin
+            d_std      = _next_std(d_need, _STD_SHAFT_MM)
+
+            # RPM needed to reduce T_Nm so that current d_mm is adequate
+            # d ∝ (T_Nm)^(1/3); to reduce d_min by factor (d_mm/d_calc_min):
+            # need T_Nm reduced by factor (d_mm/d_calc_min)^3
+            if d_calc_min > d_mm and d_mm > 0:
+                torque_reduction_factor = (d_mm / d_calc_min) ** 3
+                # T_Nm = P × 1000 / (2π × n / 60) → n_need = n × (1/reduction_factor)
+                n_for_shaft = n_rpm / torque_reduction_factor
+                n_for_shaft = math.ceil(n_for_shaft / 5) * 5
+            else:
+                n_for_shaft = n_rpm
+
+            drivers = [
+                _driver("shaft_d_override_mm", "Shaft diameter override", d_mm, "mm",
+                    f"Specify d ≥ {d_std} mm (calc min {d_calc_min:.0f} mm + 5% margin)", 1),
+                _driver("n_rpm", "Shaft speed", n_rpm, "rpm",
+                    f"Higher n_rpm → lower T_Nm at same power → smaller d_min required", 2),
+            ]
+            corrections = [
+                _correction("shaft_d_override_mm", "Specify shaft diameter",
+                    d_mm, float(d_std), "mm",
+                    f"Next standard bar above calc min {d_calc_min:.0f} mm (+5% margin = {d_need:.0f} mm). "
+                    f"Hub and key will be re-checked against this diameter.",
+                    1),
+                _correction("n_rpm", "Increase speed to reduce torque",
+                    n_rpm, float(n_for_shaft), "rpm",
+                    f"Higher n_rpm reduces T_Nm = P·1000/ω; verify CR and capacity after change",
+                    2),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"d_min = {d_calc_min:.0f} mm, current shaft = {d_mm:.0f} mm",
+                drivers, corrections,
+                f"The calculated minimum shaft diameter is {d_calc_min:.0f} mm (governed by "
+                f"{r.get('governed_by','combined stress')}). "
+                f"Specify shaft_d_override_mm = {d_std} mm in Design Overrides "
+                f"(next standard commercial bar size above {d_need:.0f} mm with 5% margin)."))
+
+        # ─── 9. Bearing L10 ──────────────────────────────────────────────────
+        elif "bearing" in ml and "l10" in ml:
+            L10_target = 40000  # h design target
+            # Proportional: L10 ∝ 1/n (constant load) → n_for_target = n × L10_actual / L10_target
+            n_for_L10  = n_rpm * (L10 / max(L10_target, 1))
+            n_std_L10  = max(int(n_for_L10 // 5) * 5, 10)
+            practical  = n_std_L10 >= 35   # below 35 rpm impractical for bucket elevators
+
+            # Bearing upgrade: C needed for L10_target at current n and R
+            # L10 = (C/R)^3 × 10^6 / (60n) → C_need = R × (L10_target × 60n / 10^6)^(1/3)
+            C_need_kN = R_head / 1000.0 * (L10_target * 60.0 * n_rpm / 1e6) ** (1.0 / 3.0)
+
+            if practical:
+                drivers = [
+                    _driver("n_rpm", "Shaft speed", n_rpm, "rpm",
+                        f"L10 ∝ 1/n; reduce from {n_rpm} to {n_std_L10} rpm "
+                        f"→ L10 ≈ {L10_target:,}h (proportional scaling)", 1),
+                    _driver("R_headshaft", "Headshaft radial load", round(R_head/1000,1), "kN",
+                        f"L10 ∝ (C/R)³; lower load by reducing fill_pct reduces R", 2),
+                ]
+                corrections = [
+                    _correction("n_rpm", "Reduce shaft speed",
+                        n_rpm, float(n_std_L10), "rpm",
+                        f"L10 ∝ 1/n → estimated L10 ≈ {L10_target:,}h. "
+                        f"Verify capacity ≥ Q_req after change.", 1),
+                ]
+            else:
+                # RPM fix impractical — bearing upgrade is primary correction
+                drivers = [
+                    _driver("bearing", "Bearing catalogue selection", "current", "—",
+                        f"L10 = {L10:,.0f}h << {L10_target:,}h target. "
+                        f"Upgrading to C ≥ {C_need_kN:.0f} kN resolves without RPM change", 1),
+                    _driver("fill_pct", "Bucket fill", fill_pct, "%",
+                        "Lower fill → lower R_head → higher L10 (partial fix)", 2),
+                    _driver("n_rpm", "Shaft speed", n_rpm, "rpm",
+                        f"Reducing to {n_std_L10} rpm would achieve target but is impractical", 3),
+                ]
+                corrections = [
+                    _correction("fill_pct", "Reduce fill to lower headshaft load",
+                        fill_pct, max(fill_pct - 10, 40), "%",
+                        f"Reduces R_head proportionally; combine with bearing upgrade for full fix", 1),
+                ]
+
+            findings.append(_finding(i, msg, sev,
+                f"L10 = {L10:,.0f} h < {20000:,} h minimum",
+                drivers, corrections,
+                f"Bearing L10 = {L10:,.0f} h is below the 20,000 h minimum "
+                f"(design target ≥ {L10_target:,} h). "
+                + (f"Reduce n_rpm to {n_std_L10} rpm (L10 ∝ 1/n)."
+                   if practical else
+                   f"RPM reduction to {n_std_L10} rpm is impractical. "
+                   f"Primary fix: specify a bearing frame with C ≥ {C_need_kN:.0f} kN "
+                   f"for bore {d_mm:.0f}mm (consult SKF/NSK catalogue). "
+                   f"Also reduce fill_pct to lower headshaft radial load.")))
+
+        # ─── 10. Bolt fatigue (Goodman) ───────────────────────────────────────
+        elif "bolt" in ml and ("fatigue" in ml or "goodman" in ml):
+            goodman = _s(bf.get("goodman_ratio"), 1.1)
+            # Goodman ∝ σ_a ∝ F_dynamic ∝ CR (for same bucket mass)
+            # Need CR for Goodman = 0.70 (safe)
+            target_goodman = 0.70
+            cr_target_bf   = cr * (target_goodman / max(goodman, 0.01))
+            cr_target_bf   = max(1.10, min(cr_target_bf, 2.5))  # must stay centrifugal
+            v_for_bf       = _v_for_cr(cr_target_bf, D_mm)
+            n_for_bf       = _rpm_from_v(v_for_bf, D_mm)
+            n_std_bf       = round(n_for_bf / 5) * 5
+
+            bolt_dia    = _s(bf.get("bolt_dia_mm"), 12)
+            n_bolts     = _s(bf.get("n_bolts"), 2)
+            bolt_grade  = bf.get("bolt_grade", "8.8")
+            # Upgrading to grade 10.9 raises σ_e → lower Goodman
+            new_grade   = "10.9" if "8.8" in str(bolt_grade) else "12.9"
+
+            drivers = [
+                _driver("cr", "Centrifugal ratio (CR)", cr, "—",
+                    f"F_dynamic = m_bucket × CR × g; Goodman ∝ CR. "
+                    f"Target CR = {cr_target_bf:.2f} for Goodman = {target_goodman:.2f}", 1),
+                _driver("n_rpm", "Shaft speed", n_rpm, "rpm",
+                    f"CR = v²/(g·r), v = π·D·n/60; reducing n_rpm reduces CR and bolt stress", 2),
+            ]
+            corrections = [
+                _correction("n_rpm", "Reduce speed to CR = {:.2f}".format(cr_target_bf),
+                    n_rpm, float(n_std_bf), "rpm",
+                    f"Lowers CR from {cr:.3f} to {cr_target_bf:.3f} → estimated Goodman ≈ {target_goodman:.2f}",
+                    1),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"Goodman ratio = {goodman:.3f} > 1.0 (infinite life)",
+                drivers, corrections,
+                f"Bucket bolt fatigue: Goodman ratio {goodman:.3f} exceeds 1.0 "
+                f"(grade {bolt_grade}, {n_bolts:.0f}×M{bolt_dia:.0f} per bucket). "
+                f"The dynamic load F = m×CR×g is driven by CR = {cr:.3f}. "
+                f"Reducing n_rpm to {n_std_bf} rpm lowers CR to {cr_target_bf:.3f}. "
+                f"Alternative: specify grade {new_grade} bolts in the BOM."))
+
+        # ─── 11. Casing clearance (stream strikes wall) ───────────────────────
+        elif "casing clearance" in ml or ("stream" in ml and "strikes" in ml):
+            wall_x = _s(cc.get("casing_wall_x_m"), casing_wall_x)
+            r_pulley = D_mm / 2000.0
+
+            # Maximum CR where release x0 ≤ wall_x
+            # x0 = r × sin(acos(1/CR)) ≤ wall_x
+            # sin(acos(1/CR)) = sqrt(1 - 1/CR²)
+            # wall_x/r = sqrt(1 - 1/CR²) → CR_max = 1/sqrt(1 - (wall_x/r)²)
+            sin_val = wall_x / max(r_pulley, 0.001)
+            if sin_val < 1.0:
+                CR_max = 1.0 / math.sqrt(1.0 - sin_val ** 2)
+            else:
+                CR_max = 1.0   # pulley too small for casing — use minimum CR
+            CR_max = min(CR_max * 0.95, 2.5)  # 5% margin
+
+            v_safe = _v_for_cr(CR_max, D_mm)
+            n_safe = _rpm_from_v(v_safe, D_mm)
+            n_std  = math.floor(n_safe / 5) * 5
+
+            # Wider casing: how wide does BW need to be?
+            # wall_x_need = r × sqrt(1 - 1/CR²); BW_need = 2 × (wall_x_need - 0.050) × 1000
+            x_release = r_pulley * math.sqrt(max(0, 1.0 - 1.0 / max(cr, 0.01) ** 2))
+            BW_need = (x_release - 0.050) * 2000  # mm
+            BW_std  = _next_std(BW_need, _STD_BW_MM)
+
+            drivers = [
+                _driver("n_rpm", "Shaft speed", n_rpm, "rpm",
+                    f"CR = {cr:.3f} → release x0 = {x_release*1000:.0f}mm > wall at {wall_x*1000:.0f}mm. "
+                    f"Max safe CR = {CR_max:.3f} at current casing width", 1),
+                _driver("belt_width_override_mm", "Belt (casing) width", belt_w, "mm",
+                    f"Wider casing moves wall outward; need BW ≥ {BW_std} mm for current CR", 2),
+            ]
+            corrections = [
+                _correction("n_rpm", "Reduce shaft speed",
+                    n_rpm, float(n_std), "rpm",
+                    f"CR reduces from {cr:.3f} to {CR_max:.3f}; "
+                    f"release point moves inside casing wall. Verify capacity after change.",
+                    1),
+                _correction("belt_width_override_mm", "Specify wider belt / casing",
+                    belt_w, float(BW_std), "mm",
+                    f"Casing inner wall moves to {BW_std/2 + 50:.0f}mm from centreline — "
+                    f"clears current release point at {x_release*1000:.0f}mm",
+                    2),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"Stream release x0 = {x_release*1000:.0f}mm > casing wall at {wall_x*1000:.0f}mm",
+                drivers, corrections,
+                f"At CR = {cr:.3f}, the material releases at x0 = {x_release*1000:.0f}mm from "
+                f"the pulley centreline, which is beyond the casing inner wall at {wall_x*1000:.0f}mm. "
+                f"Fix 1: reduce n_rpm to {n_std} rpm (CR = {CR_max:.3f}) so the release point "
+                f"is inside the casing. Fix 2: widen belt/casing to {BW_std}mm."))
+
+        # ─── 12. Discharge chute plugging ─────────────────────────────────────
+        elif ("chute" in ml or "discharge" in ml) and ("plugging" in ml or "funnel" in ml):
+            perf   = dc.get("performance") or {}
+            maint  = dc.get("maintenance") or {}
+            angle  = _s(perf.get("chute_angle_deg"), 65)
+            min_a  = _s(perf.get("min_angle_deg"), 55)
+            mass_a = _s(perf.get("mass_flow_angle_deg"), 70)
+            target_angle = mass_a + 5
+
+            aor = _s(mat.get("angle_repose"), 35)
+            drivers = [
+                _driver("discharge chute angle", "Back-plate angle", angle, "°",
+                    f"Mass-flow requires ≥ {mass_a:.0f}°; currently {angle:.0f}° — "
+                    f"steepen by {target_angle - angle:.0f}°", 1),
+                _driver("fill_pct", "Bucket fill", fill_pct, "%",
+                    "Lower fill reduces material head pressure on chute — less plugging risk", 2),
+            ]
+            # Chute angle is a fabrication parameter, not a solver input
+            # The only solver inputs that affect this: fill_pct
+            fill_target = max(fill_pct - 10, 40)
+            corrections = [
+                _correction("fill_pct", "Reduce fill factor",
+                    fill_pct, float(fill_target), "%",
+                    "Reduces chute loading and cohesive arch formation risk",
+                    1),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"Chute angle {angle:.0f}° — flow regime at risk (min {min_a:.0f}°, mass-flow {mass_a:.0f}°)",
+                drivers, corrections,
+                f"Discharge chute back-plate angle {angle:.0f}° is insufficient for mass flow "
+                f"(requires {mass_a:.0f}°+). This is driven by the material's angle of repose "
+                f"({aor:.0f}°) and cohesion. "
+                f"Corrective action is primarily a fabrication change: steepen back-plate to {target_angle:.0f}°. "
+                f"Also reduce fill_pct to {fill_target:.0f}% to lower cohesive bridging risk."))
+
+        # ─── 13. Screw take-up buckling ──────────────────────────────────────
+        elif "screw" in ml and ("buckling" in ml or "fail" in ml):
+            SF_cur   = _s(ts.get("SF_buckling"), 1.0)
+            d_min    = _s(ts.get("d_core_min_mm"), 30)
+            d_rec    = _s(ts.get("d_core_recommend_mm"), _next_std(d_min, _STD_SCREW_MM))
+            F_screw  = _s(ts.get("F_screw_N"), T3 * 2)
+            span_m   = _s(ts.get("travel_m"), 0.5) + 0.1
+
+            # Diameter for SF = 3.0:
+            # F_euler = π²EI/L² ≥ 3 × F_screw
+            # I = π/64 × d^4; F_euler = π³E×d^4 / (64 × L²)
+            # d = (3 × F_screw × 64 × L² / (π³ × E))^0.25
+            d_sf3 = (3.0 * F_screw * 64.0 * span_m ** 2 / (_PI ** 3 * _E)) ** 0.25 * 1000  # mm
+            d_sf3_std = _next_std(d_sf3, _STD_SCREW_MM)
+
+            drivers = [
+                _driver("takeup_screw_d_mm", "Screw core diameter", d_min, "mm",
+                    f"Required d ≥ {d_sf3:.0f}mm for SF_buckling ≥ 3.0 at span {span_m:.2f}m", 1),
+                _driver("takeup_screw_len_m", "Screw span length", span_m, "m",
+                    "Shorter effective length (guide support) raises F_euler → better SF", 2),
+            ]
+            corrections = [
+                _correction("takeup_screw_d_mm", "Specify screw core diameter",
+                    d_min, float(d_sf3_std), "mm",
+                    f"SF_buckling ≥ 3.0 requires d ≥ {d_sf3:.0f}mm. "
+                    f"Next standard size {d_sf3_std}mm from TR (ACME/Tr thread series).",
+                    1),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"SF_buckling = {SF_cur:.2f} < 3.0 (d_core = {d_min:.0f}mm, span = {span_m:.2f}m)",
+                drivers, corrections,
+                f"Screw take-up buckling SF = {SF_cur:.2f} is below the required 3.0. "
+                f"The screw core diameter {d_min:.0f}mm is insufficient for the "
+                f"Euler column load {F_screw:.0f}N over span {span_m:.2f}m. "
+                f"Set takeup_screw_d_mm = {d_sf3_std}mm in Design Overrides."))
+
+        # ─── 14. Casing panel deflection ─────────────────────────────────────
+        elif "casing panel" in ml or "panel" in ml and "δ" in ml:
+            delta_a  = _s(cp.get("delta_actual_mm"), 10)
+            delta_l  = _s(cp.get("delta_allow_mm"), 5)
+            t_use    = _s(cp.get("t_use_mm"), 5)
+            a_mm     = _s(cp.get("a_mm"), 600)
+            # δ ∝ 1/t³ (Timoshenko plate); need t_new³ = t_use³ × δ_actual/δ_allow
+            t_need   = t_use * (delta_a / max(delta_l, 0.01)) ** (1.0 / 3.0)
+            t_std    = _next_std(t_need, _STD_PLATE_MM)
+
+            # Alt: reduce panel span — δ ∝ a⁴; a_need = a × (δ_allow/δ_actual)^0.25
+            a_need   = a_mm * (delta_l / max(delta_a, 0.01)) ** 0.25
+            a_need   = math.floor(a_need / 50) * 50  # round to nearest 50mm
+
+            drivers = [
+                _driver("casing_t_override_mm", "Casing plate thickness", t_use, "mm",
+                    f"δ ∝ 1/t³; need t ≥ {t_need:.1f}mm for δ ≤ L/360", 1),
+            ]
+            corrections = [
+                _correction("casing_t_override_mm", "Specify plate thickness",
+                    t_use, float(t_std), "mm",
+                    f"Next standard plate above {t_need:.1f}mm. "
+                    f"Reduces δ from {delta_a:.1f}mm to ≤{delta_l:.1f}mm (L/360 limit).",
+                    1),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"δ = {delta_a:.1f}mm > L/360 = {delta_l:.1f}mm at {a_mm:.0f}mm panel span",
+                drivers, corrections,
+                f"Casing panel deflection {delta_a:.1f}mm exceeds the L/360 = {delta_l:.1f}mm "
+                f"serviceability limit at {a_mm:.0f}mm stiffener pitch with t = {t_use:.0f}mm plate. "
+                f"Plate deflection scales as 1/t³ — increasing from {t_use:.0f}mm to "
+                f"{t_std}mm reduces δ by a factor of ({t_std}/{t_use:.0f})³ = "
+                f"{(t_std/max(t_use,1))**3:.1f}×. "
+                f"Set casing_t_override_mm = {t_std} in Design Overrides."))
+
+    return findings

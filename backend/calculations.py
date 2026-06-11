@@ -99,6 +99,16 @@ except ImportError:
         material_count,
     )
 try:
+    from .root_cause import analyse as _rca
+except ImportError:
+    try:
+        from root_cause import analyse as _rca
+    except ImportError:
+        def _rca(results, inputs):  # type: ignore[misc]
+            """Stub — deploy root_cause.py to enable root cause analysis."""
+            return []
+
+try:
     from .bom import generate_bom  # type: ignore[assignment]
 except ImportError:
     try:
@@ -924,6 +934,26 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         # BOM + Maintenance schedule — Tier 2
         "bom":               bom_result,
         "maintenance":       maintenance_result,
+        "root_cause":        _rca(
+            # Pass the result dict built so far — checks must be present
+            # (checks is assembled in _build_checks above and referenced here)
+            {**{k: v for k, v in {
+                "Q":Q, "v":v, "cr":cr, "d_mm":d_mm, "L10":L10,
+                "T1":T1, "T2":T2, "T3":T3, "F_eff":F_eff,
+                "R_headshaft":R_head, "T_Nm":T_Nm, "P_total":P_total,
+                "spacing":spacing, "rho":rho, "belt_w":BW_mm,
+                "bucket":bucket, "mat":mat,
+                "euler_check":euler_chk, "bolt_fatigue":bolt_fatigue,
+                "takeup_screw":takeup_screw,
+                "casing_clearance":casing_clearance,
+                "casing_panel":casing_panel,
+                "discharge_chute":discharge_chute,
+                "bucket_mass_kg":bw_kg,
+                "governed_by":governed_by,
+                "d_stress_mm":d_stress_mm,
+            }.items()}, "checks": checks},
+            inp.model_dump(),
+        ),
         # Checks
         "checks": checks,
         # Context
