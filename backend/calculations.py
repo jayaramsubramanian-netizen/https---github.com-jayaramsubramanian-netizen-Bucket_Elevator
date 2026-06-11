@@ -81,7 +81,7 @@ except ImportError:
 
 # ── Material database (400+ entries) ─────────────────────────────────────────
 try:
-    from .materials import (
+    from .materials_lookup import (
         MATERIALS,
         get_material as _materials_get,
         search_materials,
@@ -90,7 +90,7 @@ try:
         material_count,
     )
 except ImportError:
-    from materials import (
+    from materials_lookup import (  # type: ignore[no-redef]
         MATERIALS,
         get_material as _materials_get,
         search_materials,

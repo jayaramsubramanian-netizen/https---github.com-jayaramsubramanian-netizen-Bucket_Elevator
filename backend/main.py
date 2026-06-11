@@ -330,6 +330,63 @@ def _motor_sizes_payload():   return {"motor_sizes":   MOTOR_SIZES}
 @v1.get("/materials")
 def get_materials():     return _materials_payload()
 
+
+@v1.get("/materials/search")
+def search_materials_api(
+    q:        str = "",
+    category: str = "",
+    app:      str = "be",
+    limit:    int = 40,
+):
+    """
+    Live material search for the frontend dropdown.
+    Returns compact rows: {mat_id, name, category, rho_loose, abr_code, flowability}.
+
+    Query params
+    ────────────
+    q         Partial name match (case-insensitive, empty = all)
+    category  Filter by category code (e.g. GRAIN, MIN, CHEM) — empty = all
+    app       Module tag filter: "be" (bucket elevator), "sc" (screw), "" (all)
+    limit     Max results (default 40, max 200)
+    """
+    try:
+        from .materials_lookup import search_materials
+    except ImportError:
+        from materials_lookup import search_materials
+    return search_materials(
+        query    = q,
+        category = category,
+        app      = app,
+        limit    = min(int(limit), 200),
+    )
+
+
+@v1.get("/materials/categories")
+def list_material_categories(app: str = "be"):
+    """
+    Return sorted distinct category codes for the given module.
+    Used to populate category filter chips in the material search UI.
+    """
+    try:
+        from .materials_lookup import list_categories
+    except ImportError:
+        from materials_lookup import list_categories
+    return {"categories": list_categories(app=app)}
+
+
+@v1.get("/materials/{mat_id}")
+def get_material_by_id(mat_id: str):
+    """Return a single material dict by its slug ID (e.g. 'wheat')."""
+    try:
+        from .materials_lookup import get_material
+    except ImportError:
+        from materials_lookup import get_material
+    mat = get_material(mat_id)
+    if not mat or mat.get("_source") == "fallback":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Material '{mat_id}' not found")
+    return mat
+
 @v1.get("/bucket-series")
 def get_bucket_series(): return _bucket_series_payload()
 
