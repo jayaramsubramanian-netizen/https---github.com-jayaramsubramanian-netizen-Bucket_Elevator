@@ -59,20 +59,31 @@ function ElevationView({ inputs, results, W, H }) {
   const r   = results || {};
   const bkt = r.bucket || {};
 
-  // Layout constants
-  const margin = { top: 30, bottom: 50, left: 48, right: 80 };
+  // Layout constants — increased top margin so HEAD SECTION text never clips
+  const margin = { top: 52, bottom: 52, left: 48, right: 80 };
   const cx     = W * 0.38;
-  const rHead  = Math.min(30, W * 0.065);
-  const rBoot  = rHead * 0.72;
-  const casW   = rHead + 14;
-  const topY   = margin.top + rHead + 8;
-  const botY   = H - margin.bottom - rBoot - 8;
-  const elevH  = botY - topY;
-  const bltX_L = cx - rHead * 0.6;
-  const bltX_R = cx + rHead * 0.6;
+
+  // ── Pulley radii — proportional to actual input diameters ─────────────────
+  const headD_mm  = Number(inp.D_mm  || 500);
+  const bootD_mm  = Number(inp.boot_pulley_same_as_head
+                      ? headD_mm
+                      : (inp.boot_pulley_D_mm || 300));
+  const _pScale   = Math.min(30, W * 0.065) / headD_mm;
+  const rHead     = Math.max(12, Math.min(30, headD_mm * _pScale));
+  const rBoot     = Math.max(8,  Math.min(26, bootD_mm * _pScale));
+  const casW      = rHead + 14;
+  const topY      = margin.top + rHead;
+  const botY      = H - margin.bottom - rBoot;
+  const elevH     = botY - topY;
+  const bltX_L    = cx - rHead * 0.6;
+  const bltX_R    = cx + rHead * 0.6;
+
+  // Bucket spacing in px for dimension annotation
+  const spacingMm = r.spacing != null ? Math.round(r.spacing * 1000) : null;
+  const spacingPx = spacingMm != null ? (spacingMm / 1000) * (elevH / Math.max(inp.H_m || 25, 1)) : null;
 
   // Trajectory
-  const traj = r.trajectory || [];
+  const traj    = r.trajectory || [];
   const trajPts = traj.slice(0, 25);
   const trajStr = (() => {
     if (!trajPts.length) return "";
@@ -88,135 +99,155 @@ function ElevationView({ inputs, results, W, H }) {
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ display: "block" }}>
-      {/* Background */}
-      <rect width={W} height={H} fill={C.bg} />
-
-      {/* ── Casing ──────────────────────────────────────────────────────── */}
-      <rect
-        x={cx - casW} y={topY}
-        width={casW * 2} height={elevH}
-        fill={C.casFill} stroke={C.casing} strokeWidth={1.5}
-      />
-
-      {/* ── Belt lines ──────────────────────────────────────────────────── */}
-      <line x1={bltX_L} y1={topY} x2={bltX_L} y2={botY}
-        stroke={C.belt} strokeWidth={2.5} />
-      <line x1={bltX_R} y1={topY} x2={bltX_R} y2={botY}
-        stroke={C.belt} strokeWidth={2.5} />
-
-      {/* ── Buckets (ascending left side) ────────────────────────────────── */}
-      {[0, 1, 2, 3, 4, 5, 6].map(i => {
-        const by = botY - 20 - i * (elevH - 40) / 6;
-        return (
-          <g key={i}>
-            <rect
-              x={bltX_L - 16} y={by - 8}
-              width={16} height={10}
-              fill={C.bucket} fillOpacity={0.75}
-              stroke={C.casing} strokeWidth={0.8}
-              rx={1}
-            />
-          </g>
-        );
-      })}
-
-      {/* ── Boot pulley ─────────────────────────────────────────────────── */}
-      <circle cx={cx} cy={botY} r={rBoot} fill={C.pulley} fillOpacity={0.9}
-        stroke={C.hub} strokeWidth={1.5} />
-      <circle cx={cx} cy={botY} r={rBoot * 0.3} fill={C.hub} />
-
-      {/* ── Head pulley ─────────────────────────────────────────────────── */}
-      <circle cx={cx} cy={topY} r={rHead} fill={C.pulley} fillOpacity={0.9}
-        stroke={C.hub} strokeWidth={1.5} />
-      <circle cx={cx} cy={topY} r={rHead * 0.28} fill={C.hub} />
-
-      {/* ── Motor ───────────────────────────────────────────────────────── */}
-      <rect x={cx + casW + 20} y={topY - 11} width={44} height={22}
-        fill={C.motor} fillOpacity={0.85} rx={3}
-        stroke={"#0a7040"} strokeWidth={1} />
-      <line x1={cx + rHead} y1={topY} x2={cx + casW + 20} y2={topY}
-        stroke={C.dim} strokeWidth={1.5} strokeDasharray="4 2" />
-      <text x={cx + casW + 42} y={topY + 4} fontSize={9} fill="white"
-        textAnchor="middle" fontWeight="700">
-        {r.motor_kw ?? r.motor_kW ?? "—"} kW
-      </text>
-
-      {/* ── Discharge trajectory ─────────────────────────────────────────── */}
-      {trajStr && (
-        <path d={trajStr} fill="none"
-          stroke={C.traj} strokeWidth={1.5} strokeDasharray="5 3"
-          opacity={0.9} />
-      )}
-
-      {/* ── Dimension: height ────────────────────────────────────────────── */}
-      <line x1={cx - casW - 22} y1={botY} x2={cx - casW - 22} y2={topY}
-        stroke={C.dim} strokeWidth={0.8} />
-      {[botY, topY].map((y, i) => (
-        <g key={i}>
-          <line x1={cx - casW - 27} y1={y} x2={cx - casW - 17} y2={y}
-            stroke={C.dim} strokeWidth={0.8} />
-        </g>
-      ))}
-      <text
-        x={cx - casW - 26} y={(topY + botY) / 2}
-        fontSize={9} fill={C.labelBr} textAnchor="middle"
-        fontWeight="600"
-        transform={`rotate(-90, ${cx - casW - 26}, ${(topY + botY) / 2})`}
-      >
-        H = {f(inp.H_m, 0)} m
-      </text>
-
-      {/* ── Belt width dimension ──────────────────────────────────────────── */}
-      <line x1={bltX_L} y1={topY - rHead - 16} x2={bltX_R} y2={topY - rHead - 16}
-        stroke={C.dim} strokeWidth={0.7} />
-      <text x={cx} y={topY - rHead - 20} fontSize={7.5} fill={C.label}
-        textAnchor="middle">
-        BW = {r.belt_w ?? r.belt_width_mm ?? inp.D_mm ?? "—"} mm
-      </text>
-
-      {/* ── Section labels ────────────────────────────────────────────────── */}
-      <text x={cx} y={topY - rHead - 34} fontSize={9} fill={C.labelBr}
-        textAnchor="middle" fontWeight="700" letterSpacing="0.06em">
-        HEAD SECTION
-      </text>
-      <text x={cx} y={botY + rBoot + 20} fontSize={9} fill={C.labelBr}
-        textAnchor="middle" fontWeight="700" letterSpacing="0.06em">
-        BOOT
-      </text>
-
-      {/* ── Feed arrow ────────────────────────────────────────────────────── */}
-      <line x1={cx - casW - 30} y1={botY} x2={cx - casW - 4} y2={botY}
-        stroke={C.feed} strokeWidth={2} markerEnd="url(#arr)" />
-      <text x={cx - casW - 34} y={botY - 6} fontSize={7} fill={C.feed}
-        textAnchor="end" fontWeight="700">FEED</text>
-
-      {/* ── D label ──────────────────────────────────────────────────────── */}
-      <text x={cx + rHead + 8} y={topY + 4} fontSize={7.5} fill={C.text3}
-        textAnchor="start">
-        D = {inp.D_mm ?? "—"} mm
-      </text>
-
-      {/* ── DISCHARGE label (away from HEAD SECTION) ─────────────────────── */}
-      <text x={cx + rHead + 10} y={topY - 12} fontSize={7.5} fill={C.feed}
-        textAnchor="start" fontWeight="700">DISCHARGE</text>
-      <text x={cx + rHead + 10} y={topY - 2} fontSize={7}
-        fill={C.label}>
-        θ = {f(r.theta_rel ?? r.release_angle_deg, 1)}°
-      </text>
-
-      {/* ── Bucket info strip at bottom ──────────────────────────────────── */}
-      <text x={W / 2} y={H - 8} fontSize={8} fill={C.label} textAnchor="middle">
-        BUCKET {bkt.id ?? "—"} · {bkt.W ?? "—"}×{bkt.H ?? "—"}mm · {bkt.V ?? "—"}L  —  SPACING {
-          r.spacing != null ? Math.round(r.spacing * 1000) : "—"
-        }mm
-      </text>
-
       {/* Arrowhead marker */}
       <defs>
         <marker id="arr" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
           <path d="M0,0 L6,3 L0,6 Z" fill={C.feed} />
         </marker>
+        <marker id="dimArr" markerWidth="5" markerHeight="5" refX="2.5" refY="2.5" orient="auto">
+          <path d="M0,0 L5,2.5 L0,5 Z" fill={C.dim} />
+        </marker>
+        <marker id="dimArrR" markerWidth="5" markerHeight="5" refX="2.5" refY="2.5" orient="auto-start-reverse">
+          <path d="M0,0 L5,2.5 L0,5 Z" fill={C.dim} />
+        </marker>
       </defs>
+
+      {/* Background */}
+      <rect width={W} height={H} fill={C.bg} />
+
+      {/* ── Casing ──────────────────────────────────────────────────────── */}
+      <rect x={cx - casW} y={topY} width={casW * 2} height={elevH}
+        fill={C.casFill} stroke={C.casing} strokeWidth={1.5} />
+
+      {/* ── Belt lines ──────────────────────────────────────────────────── */}
+      <line x1={bltX_L} y1={topY} x2={bltX_L} y2={botY} stroke={C.belt} strokeWidth={2.5} />
+      <line x1={bltX_R} y1={topY} x2={bltX_R} y2={botY} stroke={C.belt} strokeWidth={2.5} />
+
+      {/* ── Buckets (ascending left side) ──────────────────────────────── */}
+      {[0, 1, 2, 3, 4, 5, 6].map(i => {
+        const by = botY - 20 - i * (elevH - 40) / 6;
+        return (
+          <g key={i}>
+            <rect x={bltX_L - 16} y={by - 8} width={16} height={10}
+              fill={C.bucket} fillOpacity={0.75} stroke={C.casing} strokeWidth={0.8} rx={1} />
+          </g>
+        );
+      })}
+
+      {/* ── Boot pulley ──────────────────────────────────────────────────── */}
+      <circle cx={cx} cy={botY} r={rBoot} fill={C.pulley} fillOpacity={0.9}
+        stroke={C.hub} strokeWidth={1.5} />
+      <circle cx={cx} cy={botY} r={rBoot * 0.3} fill={C.hub} />
+
+      {/* ── Head pulley ──────────────────────────────────────────────────── */}
+      <circle cx={cx} cy={topY} r={rHead} fill={C.pulley} fillOpacity={0.9}
+        stroke={C.hub} strokeWidth={1.5} />
+      <circle cx={cx} cy={topY} r={rHead * 0.28} fill={C.hub} />
+
+      {/* ── Motor symbol only (power shown in KPI panel, not here) ──────── */}
+      <rect x={cx + casW + 16} y={topY - 10} width={36} height={20}
+        fill={C.motor} fillOpacity={0.7} rx={3} stroke={"#0a7040"} strokeWidth={1} />
+      <text x={cx + casW + 34} y={topY + 4} fontSize={8} fill="white"
+        textAnchor="middle" fontWeight="700">M</text>
+      <line x1={cx + rHead} y1={topY} x2={cx + casW + 16} y2={topY}
+        stroke={C.dim} strokeWidth={1.5} strokeDasharray="4 2" />
+
+      {/* ── Discharge trajectory ─────────────────────────────────────────── */}
+      {trajStr && (
+        <path d={trajStr} fill="none"
+          stroke={C.traj} strokeWidth={1.5} strokeDasharray="5 3" opacity={0.9} />
+      )}
+
+      {/* ── Dimension: lift height (left of casing) ──────────────────────── */}
+      <line x1={cx - casW - 22} y1={botY} x2={cx - casW - 22} y2={topY}
+        stroke={C.dim} strokeWidth={0.8} />
+      {[botY, topY].map((y, i) => (
+        <line key={i} x1={cx - casW - 27} y1={y} x2={cx - casW - 17} y2={y}
+          stroke={C.dim} strokeWidth={0.8} />
+      ))}
+      <text x={cx - casW - 30} y={(topY + botY) / 2} fontSize={9} fill={C.labelBr}
+        textAnchor="middle" fontWeight="600"
+        transform={`rotate(-90, ${cx - casW - 30}, ${(topY + botY) / 2})`}>
+        H = {f(inp.H_m, 0)} m
+      </text>
+
+      {/* ── Dimension: bucket spacing (right of casing) ──────────────────── */}
+      {spacingPx != null && spacingPx > 12 && (() => {
+        const spX   = cx + casW + 62;
+        const spY1  = botY - 28;
+        const spY2  = spY1 - spacingPx;
+        return (
+          <g>
+            {/* vertical dimension line */}
+            <line x1={spX} y1={spY1} x2={spX} y2={spY2}
+              stroke={C.dim} strokeWidth={0.8}
+              markerEnd="url(#dimArr)" markerStart="url(#dimArrR)" />
+            {/* tick marks */}
+            <line x1={spX - 4} y1={spY1} x2={spX + 4} y2={spY1}
+              stroke={C.dim} strokeWidth={0.8} />
+            <line x1={spX - 4} y1={spY2} x2={spX + 4} y2={spY2}
+              stroke={C.dim} strokeWidth={0.8} />
+            {/* label */}
+            <text x={spX + 6} y={(spY1 + spY2) / 2 + 3} fontSize={7.5}
+              fill={C.text3} textAnchor="start">
+              {spacingMm}mm
+            </text>
+            <text x={spX + 6} y={(spY1 + spY2) / 2 - 5} fontSize={6.5}
+              fill={C.label} textAnchor="start">SPACING</text>
+          </g>
+        );
+      })()}
+
+      {/* ── Dimension: belt width ─────────────────────────────────────────── */}
+      <line x1={bltX_L} y1={topY - rHead - 14} x2={bltX_R} y2={topY - rHead - 14}
+        stroke={C.dim} strokeWidth={0.7} />
+      <text x={cx} y={topY - rHead - 18} fontSize={7.5} fill={C.label}
+        textAnchor="middle">
+        BW = {r.belt_w ?? r.belt_width_mm ?? inp.D_mm ?? "—"} mm
+      </text>
+
+      {/* ── HEAD SECTION label — anchored to top margin, never clips ──────── */}
+      <text x={cx} y={14} fontSize={8.5} fill={C.labelBr}
+        textAnchor="middle" fontWeight="700" letterSpacing="0.06em">
+        HEAD SECTION
+      </text>
+      <text x={cx} y={24} fontSize={7} fill={C.label} textAnchor="middle">
+        BW = {r.belt_w ?? "—"} mm
+      </text>
+
+      {/* ── BOOT label ───────────────────────────────────────────────────── */}
+      <text x={cx} y={botY + rBoot + 16} fontSize={8.5} fill={C.labelBr}
+        textAnchor="middle" fontWeight="700" letterSpacing="0.06em">
+        BOOT
+      </text>
+
+      {/* ── Feed arrow ───────────────────────────────────────────────────── */}
+      <line x1={cx - casW - 30} y1={botY} x2={cx - casW - 4} y2={botY}
+        stroke={C.feed} strokeWidth={2} markerEnd="url(#arr)" />
+      <text x={cx - casW - 34} y={botY - 6} fontSize={7} fill={C.feed}
+        textAnchor="end" fontWeight="700">FEED</text>
+
+      {/* ── D label — head (right of pulley, below motor) ──────────────── */}
+      <text x={cx + casW + 16} y={topY + 18} fontSize={7.5} fill={C.text3}
+        textAnchor="start">
+        D<tspan fontSize={6}>H</tspan> = {headD_mm} mm
+      </text>
+
+      {/* ── D label — boot (right of boot pulley) ─────────────────────── */}
+      <text x={cx + rBoot + 6} y={botY + 4} fontSize={7.5} fill={C.text3}
+        textAnchor="start">
+        D<tspan fontSize={6}>B</tspan> = {bootD_mm} mm
+        {bootD_mm !== headD_mm && (
+          <tspan fontSize={6.5} fill={bootD_mm < headD_mm ? C.warning : C.success}>
+            {" "}({bootD_mm < headD_mm ? "< DH" : "> DH"})
+          </tspan>
+        )}
+      </text>
+
+      {/* ── Bucket strip at bottom ─────────────────────────────────────── */}
+      <text x={W / 2} y={H - 8} fontSize={7.5} fill={C.label} textAnchor="middle">
+        BUCKET {bkt.id ?? "—"} · {bkt.W ?? "—"}×{bkt.H ?? "—"}mm · {bkt.V ?? "—"}L
+      </text>
     </svg>
   );
 }
@@ -573,24 +604,40 @@ export default function ElevatorSchematic({ inputs, results }) {
         pointerEvents: "none",
       }}>
         {[
-          { label: "BELT SPEED", value: `${Number(r.v ?? r.v_ms ?? 0).toFixed(2)}`, unit: "m/s",
-            color: C.pulley },
-          { label: "CAPACITY",   value: `${Number(r.Q ?? r.Q_th ?? 0).toFixed(0)}`,  unit: "t/h",
-            color: r.Q >= (inputs?.Q_req ?? 0) ? C.success : C.danger },
+          { label: "BELT SPEED",
+            value: `${Number(r.v ?? r.v_ms ?? 0).toFixed(2)}`,
+            unit: "m/s", color: C.pulley },
+          { label: "CAPACITY",
+            value: `${Number(r.Q ?? r.Q_th ?? 0).toFixed(0)}`,
+            unit: "t/h",
+            color: (r.Q ?? 0) >= (inputs?.Q_req ?? 0) ? C.success : C.danger },
+          { label: "MOTOR",
+            value: `${r.motor_kw ?? r.motor_kW ?? "—"}`,
+            unit: "kW", color: C.motor },
+          { label: "DISCHARGE",
+            value: `${r.theta_rel != null ? Number(r.theta_rel).toFixed(1) : "—"}`,
+            unit: "° from vert", color: C.feed },
+          { label: "CR",
+            value: `${r.cr != null ? Number(r.cr).toFixed(3) : "—"}`,
+            unit: r.is_continuous ? "HF mode" : "centrifugal",
+            color: r.is_continuous
+              ? (r.cr < 1.0 ? C.success : C.danger)
+              : (r.cr >= 1.0 && r.cr <= 2.5 ? C.success : C.warning) },
         ].map(k => (
           <div key={k.label} style={{
-            background: "rgba(7,17,30,.85)", backdropFilter: "blur(4px)",
+            background: "rgba(7,17,30,.88)", backdropFilter: "blur(4px)",
             border: `1px solid ${C.border}`, borderRadius: 5,
             padding: "4px 10px", textAlign: "right",
           }}>
-            <div style={{ fontSize: 8, color: C.text3, letterSpacing: ".06em" }}>
+            <div style={{ fontSize: 7.5, color: C.text3, letterSpacing: ".06em" }}>
               {k.label}
             </div>
-            <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 18,
+            <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 16,
               fontWeight: 700, color: k.color, lineHeight: 1.2 }}>
               {k.value}
             </div>
-            <div style={{ fontSize: 8, color: C.text3, fontFamily: "JetBrains Mono,monospace" }}>
+            <div style={{ fontSize: 7.5, color: C.text3,
+              fontFamily: "JetBrains Mono,monospace" }}>
               {k.unit}
             </div>
           </div>

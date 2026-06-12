@@ -1,26 +1,21 @@
-// BucketElevatorPage.jsx — v1.3.0
+// BucketElevatorPage.jsx — v1.4.0
 // Tab-driven 3-column workstation layout
 //
-// CHANGE FROM v1.2.0
+// CHANGE FROM v1.3.0
 // ─────────────────────────────────────────────────────────────────
-// v1.2.0: Middle column = ALWAYS schematic + charts.
-//         Right column  = 360px, tab drives ALL content.
+// Added 5th nav pill: "Report"
+//   Middle column → ReportView (Executive summary + Detailed calcs,
+//                    both collapsible sections)
+//   Right column  → DesignReview (persistent) + BOMCard
 //
-// v1.3.0: Middle column = TAB-DRIVEN main content area.
-//         Right column  = 280px, DesignReview + compact tab summary.
+// BOMCard MOVED from Components tab → Report tab right column.
+// Components tab right column ("ComponentHealth") unchanged.
+// Components tab middle column no longer renders BOMCard —
+// now: ComponentPanel, StructuralDetailCard, TakeupCasingCard,
+//      ChuteFlowCard, MaintenanceCard (BOMCard removed).
 //
-// Tab → Middle content          → Right summary
-// ─────────────────────────────────────────────────────────────────
-// Results    → Schematic (pan/zoom, 4 views) + chart strip
-//           → KPI grid (compact 2-col)
-// Optimizer  → Full OptimizerPanel (wider, more room for table)
-//           → Best candidate summary
-// Components → All component cards (scrollable, full width)
-//           → Component health grid
-// Checks     → ChecksPanel (5-col SF table, full width)
-//           → Pass/warn/fail counts + compliance %
-//
-// DesignReview is persistent at the top of the right column in ALL tabs.
+// RootCausePanel and MaintenanceCard redesigned for readability +
+// conflict detection (see those files for details).
 // ─────────────────────────────────────────────────────────────────
 
 import { useState, useEffect } from "react";
@@ -41,7 +36,8 @@ import StructuralDetailCard         from "./components/StructuralDetailCard";
 import TakeupCasingCard             from "./components/TakeupCasingCard";
 import ChuteFlowCard                from "./components/ChuteFlowCard";
 import BOMCard                      from "./components/BOMCard";
-import MaintenanceCard              from "./components/MaintenanceCard";
+import MaintenanceCard               from "./components/MaintenanceCard";
+import ReportView                   from "./components/ReportView";
 
 // ─── Nav tab definitions ────────────────────────────────────────────────────
 const TABS = [
@@ -49,6 +45,7 @@ const TABS = [
   { id: "optimizer",  label: "Optimizer", badge: "AI" },
   { id: "components", label: "Components" },
   { id: "checks",     label: "Checks",    failBadge: true },
+  { id: "report",     label: "Report"     },
 ];
 
 // ─── Shared column header ────────────────────────────────────────────────────
@@ -79,7 +76,6 @@ function ColHeader({ label, sub, action }) {
 
 // ─── Right-col summary panels ────────────────────────────────────────────────
 
-// "Checks" tab — pass/warn/fail counts + quick CEMA compliance metric
 function ChecksSummary({ results }) {
   const checks = results?.checks || [];
   const pass = checks.filter(c => c.type === "ok").length;
@@ -91,10 +87,8 @@ function ChecksSummary({ results }) {
 
   const Tile = ({ count, label, color, dim }) => (
     <div style={{
-      flex: 1, textAlign: "center",
-      padding: "8px 4px",
-      background: dim, borderRadius: 5,
-      border: `1px solid ${color}30`,
+      flex: 1, textAlign: "center", padding: "8px 4px",
+      background: dim, borderRadius: 5, border: `1px solid ${color}30`,
     }}>
       <div style={{ fontSize: 22, fontWeight: 700, color, lineHeight: 1,
         fontFamily: "JetBrains Mono, monospace" }}>{count}</div>
@@ -111,10 +105,10 @@ function ChecksSummary({ results }) {
       }}>Check Summary</div>
 
       <div style={{ display: "flex", gap: 5, marginBottom: 10 }}>
-        <Tile count={pass}  label="Pass" color="var(--success)" dim="rgba(31,184,110,.08)" />
-        <Tile count={warn}  label="Warn" color="var(--warning)" dim="rgba(217,142,0,.08)" />
-        <Tile count={fail}  label="Fail" color="var(--danger)"  dim="rgba(224,82,82,.08)" />
-        <Tile count={info}  label="Info" color="var(--text3)"   dim="rgba(90,122,154,.08)" />
+        <Tile count={pass}  label="Pass" color="var(--success)" dim="rgba(16,185,129,.08)" />
+        <Tile count={warn}  label="Warn" color="var(--warning)" dim="rgba(245,158,11,.08)" />
+        <Tile count={fail}  label="Fail" color="var(--danger)"  dim="rgba(239,68,68,.08)" />
+        <Tile count={info}  label="Info" color="var(--text3)"   dim="rgba(100,116,139,.08)" />
       </div>
 
       {pct !== null && (
@@ -127,8 +121,7 @@ function ChecksSummary({ results }) {
           </div>
           <div style={{ height: 5, borderRadius: 3, background: "var(--border)" }}>
             <div style={{
-              height: "100%", borderRadius: 3,
-              width: `${pct}%`,
+              height: "100%", borderRadius: 3, width: `${pct}%`,
               background: pct >= 90 ? "var(--success)" : pct >= 70 ? "var(--warning)" : "var(--danger)",
               transition: "width .4s",
             }} />
@@ -139,19 +132,18 @@ function ChecksSummary({ results }) {
   );
 }
 
-// "Components" tab — compact health grid
 function ComponentHealth({ results }) {
   const r = results || {};
   const items = [
-    { label: "Shaft",      ok: r.key_check?.pass !== false && r.shaft_d_mm > 0 },
-    { label: "Hub / Key",  ok: r.key_check?.pass !== false },
-    { label: "Bearings",   ok: (r.L10 ?? 0) >= 17500 },
-    { label: "Lagging",    ok: r.lagging?.slip_safe !== false },
-    { label: "End Disc",   ok: r.end_disc != null },
+    { label: "Shaft",        ok: r.key_check?.pass !== false && r.shaft_d_mm > 0 },
+    { label: "Hub / Key",    ok: r.key_check?.pass !== false },
+    { label: "Bearings",     ok: (r.L10 ?? 0) >= 17500 },
+    { label: "Lagging",      ok: r.lagging?.slip_safe !== false },
+    { label: "End Disc",     ok: r.end_disc != null },
     { label: "Bolt Fatigue", ok: r.bolt_fatigue?.pass_infinite_life !== false },
-    { label: "Gravity T/U", ok: r.takeup_gravity != null },
-    { label: "Casing",     ok: r.casing_panel?.status !== "fail" },
-    { label: "Chute",      ok: r.discharge_chute != null },
+    { label: "Gravity T/U",  ok: r.takeup_gravity != null },
+    { label: "Casing",       ok: r.casing_panel?.status !== "fail" },
+    { label: "Chute",        ok: r.discharge_chute != null },
   ];
 
   return (
@@ -163,10 +155,9 @@ function ComponentHealth({ results }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
         {items.map(({ label, ok }) => (
           <div key={label} style={{
-            display: "flex", alignItems: "center", gap: 7,
-            padding: "4px 7px",
+            display: "flex", alignItems: "center", gap: 7, padding: "4px 7px",
             background: "var(--panel2)", borderRadius: 4,
-            border: `1px solid ${ok ? "rgba(31,184,110,.2)" : "rgba(90,122,154,.15)"}`,
+            border: `1px solid ${ok ? "rgba(16,185,129,.2)" : "rgba(100,116,139,.15)"}`,
           }}>
             <span style={{
               width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
@@ -177,9 +168,7 @@ function ComponentHealth({ results }) {
             <span style={{
               fontSize: 8, color: !results ? "var(--text3)" : ok ? "var(--success)" : "var(--warning)",
               fontWeight: 700,
-            }}>
-              {!results ? "—" : ok ? "OK" : "CHK"}
-            </span>
+            }}>{!results ? "—" : ok ? "OK" : "CHK"}</span>
           </div>
         ))}
       </div>
@@ -187,7 +176,6 @@ function ComponentHealth({ results }) {
   );
 }
 
-// "Optimizer" tab — best candidate summary
 function OptimizerSummary({ results }) {
   if (!results) return (
     <div style={{ padding: 12, fontSize: 10, color: "var(--text3)" }}>
@@ -210,8 +198,7 @@ function OptimizerSummary({ results }) {
       ].map(([k, v]) => (
         <div key={k} style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",
-          padding: "4px 0", borderBottom: "1px solid var(--border)",
-          fontSize: 10,
+          padding: "4px 0", borderBottom: "1px solid var(--border)", fontSize: 10,
         }}>
           <span style={{ color: "var(--text3)" }}>{k}</span>
           <span style={{ color: "var(--text)", fontFamily: "JetBrains Mono, monospace",
@@ -248,6 +235,7 @@ export default function BucketElevatorPage({ onResultsChange }) {
     optimizer:  "Design Optimizer",
     components: "Component Design",
     checks:     "Engineering Checks",
+    report:     "Engineering Report",
   }[activeTab];
 
   const middleSub = {
@@ -255,8 +243,9 @@ export default function BucketElevatorPage({ onResultsChange }) {
       ? `Bucket ${results.bucket?.id} · ${results.bucket?.W}×${results.bucket?.H}mm · ${results.bucket?.V}L`
       : "Calculating…",
     optimizer:  "RPM × Series × Fill grid search",
-    components: `${results ? "Structural + chute detail" : "Run calculation first"}`,
+    components: `${results ? "Structural + chute + maintenance detail" : "Run calculation first"}`,
     checks:     results ? `${results.checks?.length ?? 0} CEMA 375-2017 checks` : "—",
+    report:     "Executive summary + full calculation record",
   }[activeTab];
 
   return (
@@ -283,11 +272,8 @@ export default function BucketElevatorPage({ onResultsChange }) {
         {/* Tab pills */}
         <div style={{
           display: "flex", gap: 2,
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-pill)",
-          padding: "3px",
-          marginRight: 14,
+          background: "var(--surface)", border: "1px solid var(--border)",
+          borderRadius: "var(--r-pill)", padding: "3px", marginRight: 14,
         }}>
           {TABS.map(t => {
             const active = activeTab === t.id;
@@ -472,19 +458,14 @@ export default function BucketElevatorPage({ onResultsChange }) {
           {/* ── RESULTS TAB — schematic + chart strip ─────────────────── */}
           {activeTab === "design" && (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-              {/* Schematic — takes remaining height above chart strip */}
               <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
                 <ElevatorSchematic inputs={inputs} results={results} />
               </div>
-
-              {/* Chart strip — pinned at bottom */}
               <div style={{
                 flexShrink: 0, height: 220,
-                borderTop: "1px solid var(--border)",
-                background: "var(--bg)",
+                borderTop: "1px solid var(--border)", background: "var(--bg)",
                 display: "flex", flexDirection: "column",
               }}>
-                {/* Chart sub-tabs */}
                 <div style={{
                   display: "flex", borderBottom: "1px solid var(--border)",
                   background: "var(--panel2)", padding: "0 10px", flexShrink: 0,
@@ -516,14 +497,14 @@ export default function BucketElevatorPage({ onResultsChange }) {
             </div>
           )}
 
-          {/* ── OPTIMIZER TAB — full width optimizer ──────────────────── */}
+          {/* ── OPTIMIZER TAB ──────────────────────────────────────────── */}
           {activeTab === "optimizer" && (
             <div style={{ flex: 1, overflowY: "auto" }}>
               <OptimizerPanel inputs={inputs} onApply={applyOptimizer} />
             </div>
           )}
 
-          {/* ── COMPONENTS TAB — full-width component cards ───────────── */}
+          {/* ── COMPONENTS TAB ─────────────────────────────────────────── */}
           {activeTab === "components" && (
             <div style={{ flex: 1, overflowY: "auto" }}>
               <ComponentPanel results={results} inputs={inputs} />
@@ -540,15 +521,14 @@ export default function BucketElevatorPage({ onResultsChange }) {
                   <StructuralDetailCard results={results} />
                   <TakeupCasingCard results={results} />
                   <ChuteFlowCard results={results} />
-                  {/* Tier 2 additions */}
-                  <BOMCard results={results} />
+                  {/* BOMCard moved to Report tab (v1.4.0) */}
                   <MaintenanceCard results={results} />
                 </>
               )}
             </div>
           )}
 
-          {/* ── CHECKS TAB — full-width SF checks table ───────────────── */}
+          {/* ── CHECKS TAB ─────────────────────────────────────────────── */}
           {activeTab === "checks" && (
             <div style={{ flex: 1, overflowY: "auto" }}>
               <RootCausePanel results={results} setField={setField} />
@@ -557,6 +537,13 @@ export default function BucketElevatorPage({ onResultsChange }) {
               />
               <ChecksPanel results={results} inputs={inputs} />
             </div>
+          )}
+
+          {/* ── REPORT TAB (v1.4.0 / Task 9) ──────────────────────────────
+              Executive summary + Detailed calculation record.
+              Both sections collapsible via ReportView's own toggles. ── */}
+          {activeTab === "report" && (
+            <ReportView results={results} inputs={inputs} />
           )}
         </div>
 
@@ -582,11 +569,9 @@ export default function BucketElevatorPage({ onResultsChange }) {
           <div style={{ flex: 1, overflowY: "auto", borderTop: "1px solid var(--border)" }}>
 
             {activeTab === "design" && (
-              <>
-                <div style={{ padding: "0 0 8px" }}>
-                  <KpiGrid results={results} inputs={inputs} compact />
-                </div>
-              </>
+              <div style={{ padding: "0 0 8px" }}>
+                <KpiGrid results={results} inputs={inputs} compact />
+              </div>
             )}
 
             {activeTab === "optimizer" && (
@@ -599,6 +584,11 @@ export default function BucketElevatorPage({ onResultsChange }) {
 
             {activeTab === "checks" && (
               <ChecksSummary results={results} />
+            )}
+
+            {/* Report tab right column: preliminary BOM (v1.4.0) */}
+            {activeTab === "report" && (
+              <BOMCard results={results} />
             )}
           </div>
         </div>

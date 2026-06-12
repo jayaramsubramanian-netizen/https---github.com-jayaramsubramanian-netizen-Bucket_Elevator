@@ -35,6 +35,17 @@ export const DEFAULT_INPUTS = {
   H_m: 25,
   mat_id: "wheat",
   custom_rho: 0,
+
+  // ── v1.6.0 Custom material property overrides ──────────────────────────
+  custom_mat_name:    "",   // display label (reports only)
+  custom_aor:         0,    // angle of repose [°]   — 0 = use DB
+  custom_abr:         0,    // abrasiveness code 1-7 — 0 = use DB
+  custom_flowability: 0,    // flowability class 1-4 — 0 = use DB
+  custom_moisture:   -1,    // moisture content [%]  — -1 = use DB
+  custom_cohesion:   -1,    // cohesion index [kPa]  — -1 = use DB
+
+  // ── v1.6.0 Boot pulley ──────────────────────────────────────────────────
+  boot_pulley_same_as_head: false,
   D_mm: 500,
   n_rpm: 60,
   fill_pct: 75,
@@ -286,6 +297,7 @@ function normaliseResult(raw) {
     stream_chute:     raw.stream_chute     ?? null,
 
     // BOM + maintenance schedule — Tier 2
+    boot_pulley:     raw.boot_pulley     ?? null,
     bom:         raw.bom         ?? null,
     maintenance: raw.maintenance ?? null,
     root_cause:     raw.root_cause     ?? [],

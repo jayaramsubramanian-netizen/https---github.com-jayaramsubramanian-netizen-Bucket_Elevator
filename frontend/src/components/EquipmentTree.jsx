@@ -201,42 +201,42 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
       height: "100%",
       overflowY: "auto",
       overflowX: "hidden",
-      fontSize: 11,
+      fontSize: 12,
       userSelect: "none",
     }}>
       {/* ── Equipment header ──────────────────────────────────────────────── */}
       <div style={{
-        padding: "8px 10px 6px",
+        padding: "10px 12px 8px",
         borderBottom: "1px solid var(--border, #1c3050)",
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
-          <span style={{ fontSize: 14, color: "var(--primary, #4a9eff)" }}>⛏</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+          <span style={{ fontSize: 16, color: "var(--primary, #4a9eff)" }}>⛏</span>
           <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text, #ddeaf6)" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text, #ddeaf6)" }}>
               Bucket Elevator
             </div>
-            <div style={{ fontSize: 9, color: "var(--text3)", letterSpacing: ".04em" }}>
+            <div style={{ fontSize: 10, color: "var(--text3)", letterSpacing: ".04em" }}>
               VECTOMEC™ BE-001
             </div>
           </div>
         </div>
         <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
           {failCount > 0 && (
-            <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 6px",
+            <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 7px",
               borderRadius: 999, background: "var(--danger-dim, #1a0808)",
               color: "var(--danger)", border: "1px solid var(--danger-border, #4a1515)" }}>
               {failCount} FAIL
             </span>
           )}
           {warnCount > 0 && (
-            <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 6px",
+            <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 7px",
               borderRadius: 999, background: "var(--warning-dim, #1a1205)",
               color: "var(--warning)", border: "1px solid var(--warning-border, #4a3005)" }}>
               {warnCount} WARN
             </span>
           )}
           {failCount === 0 && warnCount === 0 && okCount > 0 && (
-            <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 6px",
+            <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 7px",
               borderRadius: 999, background: "var(--success-dim, #081a10)",
               color: "var(--success)", border: "1px solid var(--success-border, #1a4a28)" }}>
               {okCount} OK
@@ -247,267 +247,149 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
 
       {/* ── PROCESS ───────────────────────────────────────────────────────── */}
       <Section id="process" label="Process" status={st_process}>
-        <Leaf
-          label="Material"
+        <Leaf label="Material"
           sub={`${mat.name || inp.mat_id || "—"}  ρ=${f(r.rho, 0)} kg/m³`}
-          status="none"
-          depth={2}
-        />
-        <Leaf
-          label="Capacity"
+          status="none" depth={2} />
+        <Leaf label="Capacity"
           sub={`${f(r.Q ?? r.Q_th, 1)} t/h  req ${inp.Q_req ?? "—"} t/h`}
-          status={s_capacity.status}
-          onClick={() => onNodeClick?.("process")}
-          depth={2}
-        />
-        <Leaf
-          label="Belt Speed"
+          status={s_capacity.status} onClick={() => onNodeClick?.("process")} depth={2} />
+        <Leaf label="Belt Speed"
           sub={`${f(r.v ?? r.v_ms, 2)} m/s`}
-          status={s_speed.status}
-          onClick={() => onNodeClick?.("process")}
-          depth={2}
-        />
-        <Leaf
-          label="Centrifugal Ratio"
+          status={s_speed.status} onClick={() => onNodeClick?.("process")} depth={2} />
+        <Leaf label="Centrifugal Ratio"
           sub={`CR = ${f(r.cr ?? r.centrifugal_ratio, 3)}`}
-          status={s_cr.status}
-          onClick={() => onNodeClick?.("process")}
-          depth={2}
-        />
+          status={s_cr.status} onClick={() => onNodeClick?.("process")} depth={2} />
       </Section>
 
-      {/* ── MECHANICAL ─────────────────────────────────────────────────────── */}
-      <Section id="mechanical" label="Mechanical" status={st_mech} defaultOpen>
+      {/* ── MECHANICAL DESIGN (group) ──────────────────────────────────────── */}
+      <Section id="mechanical" label="Mechanical Design" status={st_mech} defaultOpen>
 
-        {/* Head Assembly */}
+        {/* 2a Head & Tail Pulley */}
         <Section id="head" label="Head Assembly" status={st_head} depth={1} defaultOpen>
-          <Leaf
-            label="Head Pulley"
+          <Leaf label="Head Pulley"
             sub={`Ø${inp.D_mm ?? "—"}mm  ${inp.n_rpm ?? "—"} rpm`}
-            status="none" depth={3}
-          />
-          <Leaf
-            label="Head Shaft"
+            status="none" depth={3} />
+          <Leaf label="Head Shaft"
             sub={`Ø${f(r.d_mm, 1)}mm  ${r.governed_by ?? "—"}`}
-            status={s_shaft.status}
-            onClick={() => onNodeClick?.("mechanical")}
-            depth={3}
-          />
-          <Leaf
-            label="Hub & Key"
+            status={s_shaft.status} onClick={() => onNodeClick?.("mechanical")} depth={3} />
+          <Leaf label="Hub & Key"
             sub={hub.d_hub_mm
               ? `Hub Ø${f(hub.d_hub_mm, 1)}mm  key ${hub.b_key_mm}×${hub.h_key_mm}mm`
               : "—"}
-            status={s_key.status}
-            onClick={() => onNodeClick?.("mechanical")}
-            depth={3}
-          />
-          <Leaf
-            label="Bearings"
+            status={s_key.status} onClick={() => onNodeClick?.("mechanical")} depth={3} />
+          <Leaf label="Bearings"
             sub={`L10 ${r.L10 != null ? Number(r.L10).toLocaleString() : "—"} h`}
-            status={s_bearing.status}
-            onClick={() => onNodeClick?.("mechanical")}
-            depth={3}
-          />
-          <Leaf
-            label="Lagging"
+            status={s_bearing.status} onClick={() => onNodeClick?.("mechanical")} depth={3} />
+          <Leaf label="Lagging"
             sub={lag.lagging_type
               ? `${lag.lagging_type.replace(/_/g," ")}  μ=${f(lag.mu_operating,2)}`
               : "—"}
-            status={s_lagging.status}
-            onClick={() => onNodeClick?.("mechanical")}
-            depth={3}
-          />
-          <Leaf
-            label="End Disc"
-            sub={r.end_disc?.t_governing_mm
-              ? `min t=${f(r.end_disc.t_governing_mm, 1)}mm`
-              : "—"}
-            status={s_end_disc.status}
-            onClick={() => onNodeClick?.("mechanical")}
-            depth={3}
-          />
+            status={s_lagging.status} onClick={() => onNodeClick?.("mechanical")} depth={3} />
+          <Leaf label="End Disc"
+            sub={r.end_disc?.t_governing_mm ? `min t=${f(r.end_disc.t_governing_mm, 1)}mm` : "—"}
+            status={s_end_disc.status} onClick={() => onNodeClick?.("mechanical")} depth={3} />
         </Section>
 
-        {/* Drive */}
-        <Section id="drive" label="Drive" status={st_drive}>
-          <Leaf
-            label="Motor"
-            sub={`${r.motor_kw ?? r.motor_kW ?? "—"} kW  SF ${inp.sf ?? "—"}`}
-            status={s_motor.status}
-            onClick={() => onNodeClick?.("mechanical")}
-            depth={3}
-          />
-          <Leaf
-            label="Gearbox"
-            sub={`${f(r.T_Nm, 0)} Nm  ${inp.n_rpm ?? "—"} rpm output`}
-            status="none" depth={3}
-          />
-        </Section>
-
-        {/* Belt & Buckets */}
-        <Section id="belt" label="Belt & Buckets" status={st_belt}>
-          <Leaf
-            label="Belt"
+        {/* 2b Belt Selection */}
+        <Section id="belt_sel" label="Belt Selection" status={st_belt} depth={1}>
+          <Leaf label="Belt"
             sub={`${r.belt_class ?? (r.belt_ply ? r.belt_ply + " PLY" : "—")}  ${r.belt_w ?? r.belt_width_mm ?? "—"}mm`}
-            status={s_belt.status}
-            onClick={() => onNodeClick?.("mechanical")}
-            depth={3}
-          />
-          <Leaf
-            label="Bucket Series"
-            sub={bkt.id
-              ? `${bkt.id}  ${bkt.W}×${bkt.H}mm  ${bkt.V}L`
-              : "—"}
-            status="none" depth={3}
-          />
-          <Leaf
-            label="Bolt Fatigue"
-            sub={r.bolt_fatigue?.goodman_ratio != null
-              ? `Goodman ${f(r.bolt_fatigue.goodman_ratio, 3)}`
-              : "—"}
-            status={s_bolt.status}
-            onClick={() => onNodeClick?.("mechanical")}
-            depth={3}
-          />
-          <Leaf
-            label="Belt Slip"
+            status={s_belt.status} onClick={() => onNodeClick?.("mechanical")} depth={3} />
+          <Leaf label="Belt Slip"
             sub={r.euler_ratio != null
               ? `e^μθ=${f(r.euler_ratio,3)}  ${r.slip_safe ? "✓ Safe" : "✗ Risk"}`
               : "—"}
-            status={s_slip.status}
-            onClick={() => onNodeClick?.("mechanical")}
-            depth={3}
-          />
+            status={s_slip.status} onClick={() => onNodeClick?.("mechanical")} depth={3} />
         </Section>
 
-        {/* Take-Up */}
-        <Section id="takeup" label="Take-Up" status={st_takeup}>
-          <Leaf
-            label="Gravity Take-Up"
+        {/* 2c Bucket Selection */}
+        <Section id="bucket_sel" label="Bucket Selection" status="none" depth={1}>
+          <Leaf label="Bucket Series"
+            sub={bkt.id ? `${bkt.id}  ${bkt.W}×${bkt.H}mm  ${bkt.V}L` : "—"}
+            status="none" depth={3} />
+          <Leaf label="Bolt Fatigue"
+            sub={r.bolt_fatigue?.goodman_ratio != null
+              ? `Goodman ${f(r.bolt_fatigue.goodman_ratio, 3)}`
+              : "—"}
+            status={s_bolt.status} onClick={() => onNodeClick?.("mechanical")} depth={3} />
+        </Section>
+
+        {/* 2d Take-Up Selection */}
+        <Section id="takeup_sel" label="Take-Up Selection" status={st_takeup} depth={1}>
+          <Leaf label="Gravity Take-Up"
             sub={tg.W_counterweight_kg_gross
               ? `${f(tg.W_counterweight_kg_gross, 0)} kg  travel ${f((tg.travel_m ?? 0)*1000, 0)} mm`
               : "—"}
-            status={s_takeup.status}
-            onClick={() => onNodeClick?.("mechanical")}
-            depth={3}
-          />
-          <Leaf
-            label="Screw Alternative"
+            status={s_takeup.status} onClick={() => onNodeClick?.("mechanical")} depth={3} />
+          <Leaf label="Screw Alternative"
             sub={r.takeup_screw?.d_core_min_mm
               ? `d_core ${f(r.takeup_screw.d_core_min_mm, 1)}mm  SF ${f(r.takeup_screw.SF_buckling, 2)}`
               : "—"}
-            status={r.takeup_screw?.buckling_safe === false ? "warn" : "none"}
-            depth={3}
-          />
+            status={r.takeup_screw?.buckling_safe === false ? "warn" : "none"} depth={3} />
         </Section>
+
+        {/* 2e Discharge Section */}
+        <Section id="discharge_sec" label="Discharge Section" status={st_chute} depth={1}>
+          <Leaf label="Type"
+            sub={r.is_continuous ? `HF Continuous  CR=${f(r.cr,3)}` : `Centrifugal  CR=${f(r.cr,3)}`}
+            status="none" depth={3} />
+          <Leaf label="Chute"
+            sub={dcperf.chute_angle_deg
+              ? `${f(dcperf.chute_angle_deg, 1)}°  ${dcperf.flow_regime?.replace(/_/g," ") ?? "—"}`
+              : "—"}
+            status={s_chute.status} onClick={() => onNodeClick?.("chute")} depth={3} />
+          <Leaf label="Liner"
+            sub={dcmnt.liner_material ? `${dcmnt.liner_material}  ${dcmnt.liner_thickness_mm ?? "—"}mm` : "—"}
+            status="none" depth={3} />
+        </Section>
+
+        {/* 2f Feed Design (stub) */}
+        <Section id="feed_sec" label="Feed Design" status="none" depth={1}>
+          <Leaf label="Boot Pulley"
+            sub={`Ø${inp.boot_pulley_same_as_head ? inp.D_mm : (inp.boot_pulley_D_mm ?? "—")}mm  Take-up point`}
+            status="none" depth={3} />
+          <Leaf label="Boot Volume"
+            sub={r.boot_vol_min_m3 ? `${f(r.boot_vol_min_m3, 4)} m³ min` : "—"}
+            status="none" depth={3} />
+          <Leaf label="Feed Design"
+            sub="Pending — next release"
+            status="none" depth={3} />
+        </Section>
+
+        {/* 2g Casing Design */}
+        <Section id="casing_sec" label="Casing Design" status={st_casing} depth={1}>
+          <Leaf label="Casing Panel"
+            sub={r.casing_panel
+              ? `δ=${f(r.casing_panel.delta_actual_mm,1)}mm  t=${f(r.casing_panel.t_use_mm,0)}mm`
+              : "—"}
+            status={st_casing} onClick={() => onNodeClick?.("mechanical")} depth={3} />
+          <Leaf label="Drive"
+            sub={`${r.motor_kw ?? r.motor_kW ?? "—"} kW  SF ${inp.sf ?? "—"}`}
+            status={s_motor.status} onClick={() => onNodeClick?.("mechanical")} depth={3} />
+        </Section>
+
       </Section>
 
-      {/* ── BOOT ASSEMBLY ─────────────────────────────────────────────────── */}
-      <Section id="boot" label="Boot Assembly" status="none">
-        <Leaf
-          label="Boot Pulley"
-          sub={`Ø${inp.boot_pulley_D_mm ?? "—"}mm  Take-up point`}
-          status="none" depth={2}
-        />
-        <Leaf
-          label="Boot Volume"
-          sub={r.boot_vol_min_m3
-            ? `${f(r.boot_vol_min_m3, 4)} m³ min`
-            : "—"}
-          status="none" depth={2}
-        />
-      </Section>
-
-      {/* ── DISCHARGE CHUTE ───────────────────────────────────────────────── */}
-      <Section id="chute" label="Discharge Chute" status={st_chute}>
-        <Leaf
-          label="Chute Angle"
-          sub={dcperf.chute_angle_deg
-            ? `${f(dcperf.chute_angle_deg, 1)}°  ${dcperf.flow_regime?.replace(/_/g," ") ?? "—"}`
-            : "—"}
-          status={dcperf.angle_adequate === false ? "warn" : (dcperf.flow_regime === "PLUGGING_RISK" ? "fail" : s_chute.status)}
-          onClick={() => onNodeClick?.("chute")}
-          depth={2}
-        />
-        <Leaf
-          label="Liner"
-          sub={dcmnt.liner_material
-            ? `${dcmnt.liner_material}  ${dcmnt.liner_thickness_mm ?? "—"}mm`
-            : "—"}
-          status="none" depth={2}
-        />
-        <Leaf
-          label="Plugging Risk"
-          sub={dcmnt.plugging_risk ?? "—"}
-          status={
-            dcmnt.plugging_risk === "SEVERE" ? "fail" :
-            dcmnt.plugging_risk === "HIGH"   ? "fail" :
-            dcmnt.plugging_risk === "MODERATE" ? "warn" : "none"
-          }
-          onClick={() => onNodeClick?.("chute")}
-          depth={2}
-        />
-        <Leaf
-          label="Dust Risk"
-          sub={dcmnt.dust_risk ?? "—"}
-          status={
-            dcmnt.dust_risk === "HIGH" || dcmnt.dust_risk === "SEVERE" ? "warn" : "none"
-          }
-          onClick={() => onNodeClick?.("chute")}
-          depth={2}
-        />
-      </Section>
-
-      {/* ── CASING & STRUCTURE ────────────────────────────────────────────── */}
-      <Section id="casing" label="Casing & Structure" status={st_casing}>
-        <Leaf
-          label="Casing Plate"
-          sub={r.casing_t_mm ? `${r.casing_t_mm} mm` : "—"}
-          status="none" depth={2}
-        />
-        <Leaf
-          label="Stiffener Pitch"
-          sub={r.casing_stiffener?.recommended_mm
-            ? `${r.casing_stiffener.recommended_mm} mm (rec)`
-            : "—"}
-          status={r.casing_panel?.status === "fail" ? "warn" : "none"}
-          onClick={() => onNodeClick?.("casing")}
-          depth={2}
-        />
-        <Leaf
-          label="Panel Deflection"
-          sub={r.casing_panel
-            ? `δ=${f(r.casing_panel.delta_actual_mm, 2)}mm  lim ${f(r.casing_panel.delta_allow_mm, 2)}mm`
-            : "—"}
-          status={r.casing_panel?.status === "ok" ? "ok" : (r.casing_panel ? "warn" : "none")}
-          onClick={() => onNodeClick?.("casing")}
-          depth={2}
-        />
-        {s_abr.status !== "none" && (
-          <Leaf
-            label="Abrasion Rating"
-            sub={`Class ${(r.mat || r.material)?.abr_code ?? "—"}/7`}
-            status={s_abr.status}
-            onClick={() => onNodeClick?.("casing")}
-            depth={2}
-          />
-        )}
+      {/* ── SERVICE CONDITIONS ─────────────────────────────────────────────── */}
+      <Section id="service" label="Service Conditions" status={s_atex.status !== "none" ? s_atex.status : "none"}>
+        <Leaf label="Environment"
+          sub={`${inp.environment ?? "dry"}  μ=${inp.mu ?? "—"}`}
+          status="none" depth={2} />
         {s_atex.status !== "none" && (
-          <Leaf
-            label="Hazard Flags"
-            sub="ATEX / dust control"
-            status={s_atex.status}
-            onClick={() => onNodeClick?.("casing")}
-            depth={2}
-          />
+          <Leaf label="Hazard Flags" sub="ATEX / dust control"
+            status={s_atex.status} onClick={() => onNodeClick?.("casing")} depth={2} />
+        )}
+        {s_abr.status !== "none" && (
+          <Leaf label="Abrasion Rating"
+            sub={`Class ${(r.mat || r.material)?.abr_code ?? "—"}/7`}
+            status={s_abr.status} depth={2} />
         )}
       </Section>
 
       {/* ── Footer ──────────────────────────────────────────────────────────── */}
       <div style={{
-        padding: "8px 10px",
-        fontSize: 8, color: "var(--text3)", letterSpacing: ".04em",
+        padding: "8px 12px",
+        fontSize: 10, color: "var(--text3)", letterSpacing: ".04em",
         borderTop: "1px solid var(--border)", marginTop: 4,
       }}>
         CEMA 375-2017  ·  ISO 281  ·  ASME B17.1
