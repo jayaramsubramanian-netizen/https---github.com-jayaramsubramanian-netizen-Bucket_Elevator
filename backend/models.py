@@ -34,16 +34,29 @@ class BucketElevatorInput(BaseModel):
     mat_id:         str   = Field("wheat",                  description="Material ID (from VECTRIX material database)")
     custom_rho:     float = Field(0,     ge=0,    le=5000,  description="Custom bulk density kg/m³ (0 = use material database value)")
 
+    # ── Custom material property overrides (v1.6.0) ──────────────────────────
+    # These fields allow the engineer to specify site-specific material
+    # properties that override or supplement the database values.
+    # All default to sentinel values meaning "use DB value".
+
+    custom_mat_name:    str   = Field("", description="Display name for a non-DB or custom material")
+    custom_aor:         float = Field(0,   ge=0,   le=90,   description="Angle of repose override [°] (0 = use DB value)")
+    custom_abr:         int   = Field(0,   ge=0,   le=7,    description="Abrasiveness code override 1-7 (0 = use DB value)")
+    custom_flowability: int   = Field(0,   ge=0,   le=4,    description="Flowability class override 1-4: 1=very free, 4=sluggish (0 = use DB value)")
+    custom_moisture:    float = Field(-1,  ge=-1,  le=100,  description="Moisture content override [%] (-1 = use DB value)")
+    custom_cohesion:    float = Field(-1,  ge=-1,  le=100,  description="Cohesion index override [kPa] (-1 = use DB value)")
+
     # Head pulley
     D_mm:           float = Field(500,   ge=100,  le=1500,  description="Head pulley diameter (mm)")
     n_rpm:          float = Field(60,    ge=10,   le=300,   description="Head shaft speed (rpm)")
 
     # Boot pulley (CEMA 375 LEQ method requires boot diameter)
-    boot_pulley_D_mm: float = Field(300, ge=100,  le=1000,  description="Boot (tail) pulley diameter (mm)")
+    boot_pulley_D_mm:       float = Field(300, ge=100,  le=1000,  description="Boot (tail) pulley diameter (mm)")
+    boot_pulley_same_as_head: bool = Field(False, description="Lock boot pulley diameter to match head pulley")
 
     # Bucket
     fill_pct:       float = Field(75,    ge=30,   le=100,   description="Bucket fill factor (%)")
-    bucket_gap:     float = Field(25,    ge=0,    le=200,   description="Extra gap added to bucket projection for spacing (mm)")
+    bucket_gap:     float = Field(25,    ge=0,    le=600,   description="Extra gap added to bucket projection for spacing (mm)")
     auto_bucket:    bool  = Field(True,                      description="Auto-select bucket series from required capacity")
     bucket_id:      str   = Field("B",                       description="Manual bucket series ID (used when auto_bucket=False)")
 
@@ -157,6 +170,72 @@ class BucketElevatorInput(BaseModel):
             "0 = auto-calculate from panel deflection analysis. "
             "Set to a preferred standard plate thickness (e.g. 3, 4, 5, 6, 8) — "
             "solver re-checks deflection with specified thickness."
+        ),
+    )
+
+    # ── v1.7.0 — Component selector overrides ────────────────────────────────
+    # When set, these lock a specific catalogue component instead of the
+    # solver's auto-select.  All default to "" / 0 meaning "auto".
+    # The solver reads these and reports pass/fail against the calculated
+    # minimum — the engineer retains full control over every component.
+
+    # Belt grade selection
+    belt_grade: str = Field(
+        "",
+        description=(
+            "Belt grade override. Empty = auto-select. "
+            "Options: 'M' (abrasion-resistant), 'N' (general), 'W' (oil/heat). "
+            "Used by belt_ply selection and BOM."
+        ),
+    )
+
+    # Motor override — locks motor kW to a specific standard frame size
+    motor_kw_override: float = Field(
+        0.0, ge=0.0, le=1000.0,
+        description=(
+            "Motor kW override [kW]. 0 = auto-select next standard size above P_total × SF. "
+            "Set to a specific standard size (e.g. 11, 15, 22, 30) to fix motor selection. "
+            "Solver reports PASS/WARN if override is adequate for the calculated load."
+        ),
+    )
+
+    # Gearbox selection — by model ID from the gearboxes table
+    gearbox_model: str = Field(
+        "",
+        description=(
+            "Gearbox model override. Empty = auto-select by output torque. "
+            "Set to a model ID from the gearboxes database table (e.g. 'H3-250'). "
+            "Solver verifies Tn ≥ required torque."
+        ),
+    )
+
+    # Bearing selection — by name from the bearings table
+    bearing_name: str = Field(
+        "",
+        description=(
+            "Head shaft bearing override. Empty = auto-select by bore and C rating. "
+            "Set to a bearing name from the bearings database table (e.g. 'SY 60 TF'). "
+            "Solver verifies C/P ratio and L10 against design life."
+        ),
+    )
+
+    # Drive (VFD/DOL/SS) selection
+    drive_model: str = Field(
+        "",
+        description=(
+            "Drive/starter model override. Empty = auto-select by motor kW. "
+            "Set to a model ID from the drives database table."
+        ),
+    )
+
+    # Discharge type override — allows forcing continuous mode on non-HF buckets
+    # or centrifugal on HF (engineer override for non-standard applications)
+    discharge_type_override: str = Field(
+        "",
+        description=(
+            "Discharge type override. Empty = auto from bucket style. "
+            "'centrifugal' or 'continuous'. "
+            "Use only when the bucket series alone does not determine the design intent."
         ),
     )
 

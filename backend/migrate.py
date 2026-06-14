@@ -290,26 +290,37 @@ def be_to_unified(m: dict) -> dict:
 # ─── Main migration function ──────────────────────────────────────────────────
 
 def migrate(sc_db_path: str, be_materials_path: str, out_db_path: str,
-            force: bool = False) -> None:
+            force: bool = False, be_only: bool = False) -> None:
 
     # ── 1. Read source databases ──────────────────────────────────────────
-    print(f"Reading SC database: {sc_db_path}")
-    sc_con = sqlite3.connect(sc_db_path)
-    sc_con.row_factory = sqlite3.Row
-    sc_mats    = [dict(r) for r in sc_con.execute("SELECT * FROM materials").fetchall()]
-    sc_brgs    = [dict(r) for r in sc_con.execute("SELECT * FROM bearings").fetchall()]
-    sc_gbxs    = [dict(r) for r in sc_con.execute("SELECT * FROM gearboxes").fetchall()]
-    sc_mots    = [dict(r) for r in sc_con.execute("SELECT * FROM motors").fetchall()]
-    sc_drvs    = [dict(r) for r in sc_con.execute("SELECT * FROM drives").fetchall()]
-    sc_costs   = [dict(r) for r in sc_con.execute("SELECT * FROM cost_items").fetchall()]
-    sc_con.close()
-    print(f"  {len(sc_mats)} materials, {len(sc_brgs)} bearings, "
-          f"{len(sc_gbxs)} gearboxes, {len(sc_mots)} motors, "
-          f"{len(sc_drvs)} drives, {len(sc_costs)} cost items")
+    sc_mats = sc_brgs = sc_gbxs = sc_mots = sc_drvs = sc_costs = []
+
+    if not be_only:
+        sc_size = os.path.getsize(sc_db_path) if os.path.exists(sc_db_path) else 0
+        if sc_size == 0:
+            print(f"WARNING: {sc_db_path} is empty or missing — running in BE-only mode.")
+            be_only = True
+
+    if not be_only:
+        print(f"Reading SC database: {sc_db_path}")
+        sc_con = sqlite3.connect(sc_db_path)
+        sc_con.row_factory = sqlite3.Row
+        sc_mats  = [dict(r) for r in sc_con.execute("SELECT * FROM materials").fetchall()]
+        sc_brgs  = [dict(r) for r in sc_con.execute("SELECT * FROM bearings").fetchall()]
+        sc_gbxs  = [dict(r) for r in sc_con.execute("SELECT * FROM gearboxes").fetchall()]
+        sc_mots  = [dict(r) for r in sc_con.execute("SELECT * FROM motors").fetchall()]
+        sc_drvs  = [dict(r) for r in sc_con.execute("SELECT * FROM drives").fetchall()]
+        sc_costs = [dict(r) for r in sc_con.execute("SELECT * FROM cost_items").fetchall()]
+        sc_con.close()
+        print(f"  {len(sc_mats)} materials, {len(sc_brgs)} bearings, "
+              f"{len(sc_gbxs)} gearboxes, {len(sc_mots)} motors, "
+              f"{len(sc_drvs)} drives, {len(sc_costs)} cost items")
+    else:
+        print("BE-only mode: skipping SC database.")
 
     print(f"Reading BE materials: {be_materials_path}")
     be_mod = types.ModuleType("be_materials")
-    exec(open(be_materials_path).read(), be_mod.__dict__)
+    exec(open(be_materials_path, encoding="utf-8").read(), be_mod.__dict__)
     be_list = be_mod.MATERIALS
     print(f"  {len(be_list)} BE materials")
 
@@ -673,6 +684,11 @@ if __name__ == "__main__":
         help="Output database path (default: ./vectrix.db)",
     )
     parser.add_argument(
+        "--be-only",
+        action="store_true",
+        help="Skip SC database — build vectrix.db from BE materials.py only",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Drop and rebuild the output database from scratch",
@@ -683,4 +699,5 @@ if __name__ == "__main__":
         be_materials_path= args.be_materials,
         out_db_path      = args.out,
         force            = args.force,
+        be_only          = args.be_only,
     )

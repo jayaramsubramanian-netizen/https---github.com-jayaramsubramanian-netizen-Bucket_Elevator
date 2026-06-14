@@ -394,7 +394,91 @@ def get_bucket_series(): return _bucket_series_payload()
 def get_motor_sizes():   return _motor_sizes_payload()
 
 
-# ── Calculations ──────────────────────────────────────────────────────────────
+# ── Components ────────────────────────────────────────────────────────────────
+# Query the component catalogue tables (bearings, gearboxes, motors, drives)
+# with constraint-based filtering so the frontend only shows options that are
+# adequate for the calculated design — e.g. bearings with bore ≥ shaft d_mm.
+# All four endpoints use Depends(get_db) for the same SQLite connection that
+# serves design records.
+
+@v1.get("/components/motors")
+def list_motors(
+    pkw_min: float = 0.0,
+    pkw_max: float = 9999.0,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Standard IEC motors filtered by power range [kW], ordered smallest first."""
+    rows = db.execute(
+        "SELECT * FROM motors WHERE Pkw >= ? AND Pkw <= ? ORDER BY Pkw",
+        (pkw_min, pkw_max),
+    ).fetchall()
+    return {"motors": [dict(r) for r in rows], "count": len(rows)}
+
+
+@v1.get("/components/gearboxes")
+def list_gearboxes(
+    torque_min: float = 0.0,
+    ratio_min:  float = 0.0,
+    ratio_max:  float = 9999.0,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """
+    Shaft-mount gearboxes where:
+      Tn  ≥ torque_min   [Nm]  — rated output torque covers required torque
+      ratio range overlaps [ratio_min, ratio_max]
+    Ordered by Tn ascending (smallest adequate first).
+    """
+    rows = db.execute(
+        """SELECT * FROM gearboxes
+           WHERE Tn >= ?
+             AND ratio_max >= ?
+             AND ratio_min <= ?
+           ORDER BY Tn""",
+        (torque_min, ratio_min, ratio_max),
+    ).fetchall()
+    return {"gearboxes": [dict(r) for r in rows], "count": len(rows)}
+
+
+@v1.get("/components/bearings")
+def list_bearings(
+    bore_min: float = 0.0,
+    bore_max: float = 9999.0,
+    role:     str   = "",
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """
+    Pillow-block bearings filtered by bore range [mm] and optional role tag.
+    role="" returns all; role="head" filters to head-shaft pillow blocks.
+    Ordered by bore ASC, basic dynamic load C DESC (best life first).
+    """
+    if role:
+        rows = db.execute(
+            """SELECT * FROM bearings
+               WHERE bore >= ? AND bore <= ? AND role LIKE ?
+               ORDER BY bore, C DESC""",
+            (bore_min, bore_max, f"%{role}%"),
+        ).fetchall()
+    else:
+        rows = db.execute(
+            """SELECT * FROM bearings
+               WHERE bore >= ? AND bore <= ?
+               ORDER BY bore, C DESC""",
+            (bore_min, bore_max),
+        ).fetchall()
+    return {"bearings": [dict(r) for r in rows], "count": len(rows)}
+
+
+@v1.get("/components/drives")
+def list_drives(
+    pkw_min: float = 0.0,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Drive/starter units where rated power ≥ pkw_min [kW], ordered smallest first."""
+    rows = db.execute(
+        "SELECT * FROM drives WHERE Pkw_max >= ? ORDER BY Pkw_max",
+        (pkw_min,),
+    ).fetchall()
+    return {"drives": [dict(r) for r in rows], "count": len(rows)}
 
 @v1.post("/bucket-elevator/calculate", response_model=CalcResponse)
 def calculate(
@@ -624,6 +708,10 @@ _R: dict[str, Any] = {"include_in_schema": False}   # typed Any — Pylance need
 _compat.add_api_route("/materials",                       get_materials,           methods=["GET"],    **_R)
 _compat.add_api_route("/bucket-series",                   get_bucket_series,       methods=["GET"],    **_R)
 _compat.add_api_route("/motor-sizes",                     get_motor_sizes,         methods=["GET"],    **_R)
+_compat.add_api_route("/components/motors",               list_motors,             methods=["GET"],    **_R)
+_compat.add_api_route("/components/gearboxes",            list_gearboxes,          methods=["GET"],    **_R)
+_compat.add_api_route("/components/bearings",             list_bearings,           methods=["GET"],    **_R)
+_compat.add_api_route("/components/drives",               list_drives,             methods=["GET"],    **_R)
 _compat.add_api_route("/bucket-elevator/report",          generate_report,         methods=["POST"],   **_R)
 _compat.add_api_route("/bucket-elevator/report-variants", generate_variant_report, methods=["POST"],   **_R)
 _compat.add_api_route("/designs/save",                    save_design,             methods=["POST"],   **_R)

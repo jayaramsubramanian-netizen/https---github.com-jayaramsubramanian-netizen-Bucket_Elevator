@@ -180,12 +180,13 @@ class DischargePhysics:
 
     @staticmethod
     def calculate_release_point(
-        speed:               float,
-        radius:              float,
-        bucket_projection_m: float = 0.14,
-        elevator_type:       DischargeType = "centrifugal",
-        cohesion_index:      float = 0.0,
-        moisture_pct:        float = 0.0,
+        speed:                  float,
+        radius:                 float,
+        bucket_projection_m:    float = 0.14,
+        bucket_front_angle_deg: float = 30.0,
+        elevator_type:          DischargeType = "centrifugal",
+        cohesion_index:         float = 0.0,
+        moisture_pct:           float = 0.0,
     ) -> ReleasePoint:
         """
         Full material release state — CEMA 375 §3.
@@ -223,21 +224,32 @@ class DischargePhysics:
           → at θ = 90° (side) : vx = 0,   vy = −v   (straight down) ✓
         ═══════════════════════════════════════════════════════════════════
 
-        Continuous discharge (CR < 1 or elevator_type = "continuous")
-        ──────────────────────────────────────────────────────────────
-        Material is positively displaced by bucket inversion over the casing.
-        Not governed by the centrifugal formula.  CEMA §3 guidance: effective
-        release at approximately 30–40° past top for standard bucket geometry;
-        larger projection → earlier release (smaller θ).
+        v1.3.0 — bucket_front_angle_deg replaces projection-based approximation
+        ────────────────────────────────────────────────────────────────────────
+        For continuous discharge the onset angle is now taken directly from the
+        bucket face angle (Martin catalog H-149/H-150):
+            MF bucket: front_angle_deg = 30° → onset θ ≈ 30°
+            HF bucket: front_angle_deg = 45° → onset θ ≈ 45°
+            SC bucket: front_angle_deg = 35° → onset θ ≈ 35°
+
+        This replaces the old approximation:
+            proj_adj_deg = min(10, projection_m × 40)
+            theta = max(20, 35 − proj_adj_deg)
+        which produced the same ~25–35° for all continuous styles regardless
+        of their actual face geometry.
 
         Parameters
         ----------
-        speed               Belt speed [m/s]
-        radius              Head pulley radius [m]
-        bucket_projection_m Radial projection of bucket from belt surface [m]
-        elevator_type       "centrifugal" | "continuous" | "positive"
-        cohesion_index      0 = free-flowing, 1 = highly cohesive
-        moisture_pct        Material moisture content [%]
+        speed                   Belt speed [m/s]
+        radius                  Head pulley radius [m]
+        bucket_projection_m     Radial projection of bucket from belt [m]
+                                Used for stream spread in stream_envelope().
+        bucket_front_angle_deg  Bucket face angle from vertical [°].
+                                From Martin catalog: MF=30, HF=45, SC=35, AA=30.
+                                Used as discharge onset angle for continuous elevators.
+        elevator_type           "centrifugal" | "continuous" | "positive"
+        cohesion_index          0 = free-flowing, 1 = highly cohesive
+        moisture_pct            Material moisture content [%]
         """
         cr      = DischargePhysics.centrifugal_ratio(speed, radius)
         d_class = DischargePhysics.discharge_class(cr)
@@ -261,10 +273,15 @@ class DischargePhysics:
                 theta = math.acos(1.0 / cr)
 
         elif elevator_type == "continuous":
-            # CEMA §3: positive displacement at 30–40° past top.
-            # Larger bucket projection → slightly earlier opening → smaller θ.
-            proj_adj_deg = min(10.0, bucket_projection_m * 40.0)
-            theta = math.radians(max(20.0, 35.0 - proj_adj_deg))
+            # CEMA §3.3: material discharges as bucket inverts at head pulley.
+            # The bucket face angle from vertical (from Martin catalog) gives
+            # the onset angle directly — steeper face = later release.
+            #   MF (30°): gentle slope → pours at ~30° past 12 o'clock
+            #   HF (45°): steeper face → pours at ~45° past 12 o'clock
+            #   SC (35°): intermediate
+            # Clamped to [20°, 60°] — below 20° the belt is still rising,
+            # above 60° the bucket is over-rotated past the practical discharge zone.
+            theta = math.radians(max(20.0, min(60.0, bucket_front_angle_deg)))
 
         elif elevator_type == "positive":
             # Very slow, mechanically displaced — near-vertical at top of casing
@@ -296,42 +313,36 @@ class DischargePhysics:
 
     @staticmethod
     def trajectory(
-        speed:          float,
-        radius:         float,
-        dt:             float = 0.005,
-        floor_y:        float | None = None,
-        elevator_type:  DischargeType = "centrifugal",
-        cohesion_index: float = 0.0,
-        moisture_pct:   float = 0.0,
+        speed:                  float,
+        radius:                 float,
+        dt:                     float = 0.005,
+        floor_y:                float | None = None,
+        elevator_type:          DischargeType = "centrifugal",
+        cohesion_index:         float = 0.0,
+        moisture_pct:           float = 0.0,
+        bucket_front_angle_deg: float = 30.0,
     ) -> list[tuple[float, float]]:
         """
         CEMA 375 §3 — Projectile trajectory from head pulley.
 
         Parameters
         ----------
-        speed           Belt speed [m/s]
-        radius          Head pulley radius [m]
-        dt              Time step [s].  0.005 s ≈ 5–20 mm spatial resolution
-                        depending on speed.  Reduce to 0.002 for visual plots.
-        floor_y         Terminate when y drops below this value [m from pulley
-                        centre].  PASS THE ACTUAL chute or casing floor y.
-                        If None: defaults to −3·radius (v1.0 had the same proxy;
-                        it is retained here as a fallback only — callers should
-                        provide the real coordinate).
-        elevator_type   "centrifugal" | "continuous" | "positive"
-        cohesion_index  0 = free-flowing, 1 = highly cohesive
-        moisture_pct    Moisture content [%]
-
-        Returns
-        -------
-        List of (x, y) tuples [m] relative to pulley centre.
-        Terminates at floor_y or after 5 s (safety limit → ~1 000 points max).
+        speed                   Belt speed [m/s]
+        radius                  Head pulley radius [m]
+        dt                      Time step [s].
+        floor_y                 Terminate when y drops below this value [m].
+        elevator_type           "centrifugal" | "continuous" | "positive"
+        cohesion_index          0 = free-flowing, 1 = highly cohesive
+        moisture_pct            Moisture content [%]
+        bucket_front_angle_deg  Bucket face angle [°] — passed to
+                                calculate_release_point() for continuous mode.
         """
         rp     = DischargePhysics.calculate_release_point(
             speed, radius,
-            elevator_type  = elevator_type,
-            cohesion_index = cohesion_index,
-            moisture_pct   = moisture_pct,
+            elevator_type          = elevator_type,
+            cohesion_index         = cohesion_index,
+            moisture_pct           = moisture_pct,
+            bucket_front_angle_deg = bucket_front_angle_deg,
         )
         stop_y = floor_y if floor_y is not None else -3.0 * radius
 
@@ -340,10 +351,10 @@ class DischargePhysics:
         while t < 5.0:
             x = rp.x0 + rp.vx * t
             y = rp.y0 + rp.vy * t - 0.5 * GRAVITY * t ** 2
-            points.append((x, y))          # full precision — round at API layer
+            points.append((x, y))
             if y < stop_y:
                 break
-            t = round(t + dt, 6)           # t rounding prevents float accumulation
+            t = round(t + dt, 6)
 
         return points
 
@@ -351,14 +362,15 @@ class DischargePhysics:
 
     @staticmethod
     def stream_envelope(
-        speed:               float,
-        radius:              float,
-        bucket_projection_m: float = 0.14,
-        particle_size_mm:    float = 10.0,
-        cohesion_index:      float = 0.0,
-        elevator_type:       DischargeType = "centrifugal",
-        floor_y:             float | None = None,
-        material:            "dict | None" = None,
+        speed:                  float,
+        radius:                 float,
+        bucket_projection_m:    float = 0.14,
+        bucket_front_angle_deg: float = 30.0,
+        particle_size_mm:       float = 10.0,
+        cohesion_index:         float = 0.0,
+        elevator_type:          DischargeType = "centrifugal",
+        floor_y:                float | None = None,
+        material:               "dict | None" = None,
     ) -> dict:
         """
         CEMA 375 §3 — Discharge stream envelope (centre, upper, lower bounds).
@@ -421,9 +433,10 @@ class DischargePhysics:
 
         center = DischargePhysics.trajectory(
             speed, radius,
-            elevator_type  = elevator_type,
-            cohesion_index = cohesion_index,
-            floor_y        = floor_y,
+            elevator_type          = elevator_type,
+            cohesion_index         = cohesion_index,
+            floor_y                = floor_y,
+            bucket_front_angle_deg = bucket_front_angle_deg,
         )
 
         # Full precision — no rounding in physics layer
