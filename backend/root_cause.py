@@ -153,6 +153,62 @@ def _finding(index, msg, severity, metric, drivers, corrections, explanation):
 
 # ─── Main entry point ─────────────────────────────────────────────────────────
 
+def _detect_conflicts(findings: list[dict]) -> list[dict]:
+    """
+    Cross-check corrections across all findings for conflicting direction.
+    When Finding A says "increase fill_pct" and Finding B says "reduce fill_pct",
+    mark both corrections with a conflict note so the engineer knows.
+
+    This catches the common limestone-powder scenario: capacity check wants
+    higher fill, chute plugging check wants lower fill — both are valid but
+    mutually exclusive for a given design.
+    """
+    # Collect (param, direction, finding_index, correction_index) tuples
+    # direction: +1 = increase, -1 = decrease
+    param_directions: dict[str, list[tuple]] = {}
+
+    for fi, f in enumerate(findings):
+        for ci, c in enumerate(f["corrections"]):
+            param = c.get("param")
+            cur   = c.get("current")
+            tgt   = c.get("target")
+            if not param or cur is None or tgt is None:
+                continue
+            try:
+                direction = 1 if float(tgt) > float(cur) * 1.02 else (
+                            -1 if float(tgt) < float(cur) * 0.98 else 0)
+            except (TypeError, ValueError):
+                continue
+            if direction == 0:
+                continue
+            param_directions.setdefault(param, []).append((direction, fi, ci))
+
+    # Find params with conflicting directions
+    conflicts: dict[tuple, str] = {}   # (fi, ci) → conflict message
+    for param, entries in param_directions.items():
+        dirs = {e[0] for e in entries}
+        if len(dirs) < 2:
+            continue   # all same direction — no conflict
+        for direction, fi, ci in entries:
+            other_checks = [
+                f["check_msg"][:50] for (d, f_i, c_i) in entries
+                if d != direction
+                for f in [findings[f_i]]
+            ]
+            verb = "increasing" if direction == 1 else "reducing"
+            conflicts[(fi, ci)] = (
+                f"Conflicts with: {other_checks[0] if other_checks else 'another check'} "
+                f"({verb} {param} worsens that check)"
+            )
+
+    # Annotate findings with conflict notes
+    for (fi, ci), note in conflicts.items():
+        c = findings[fi]["corrections"][ci]
+        c["conflict"] = note
+
+    return findings
+
+
 def analyse(results: dict, inputs: dict) -> list[dict]:
     """
     Analyse all failed/warned engineering checks and return root-cause findings.
@@ -299,7 +355,7 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                     f"Currently {v:.2f} m/s > v_max {v_max_bkt:.2f} m/s for {bkt_id} bucket", 1),
             ]
             corrections = [
-                _correction("n_rpm", _dir_label("shaft speed", n_rpm, float(n_std_L10)),
+                _correction("n_rpm", _dir_label("shaft speed", n_rpm, float(n_std)),
                     n_rpm, n_std, "rpm",
                     f"v = {_v_from_rpm(n_std, D_mm):.2f} m/s ≤ v_max {v_max_bkt:.2f} m/s (5% margin)",
                     1),
@@ -753,4 +809,4 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                 f"{(t_std/max(t_use,1))**3:.1f}×. "
                 f"Set casing_t_override_mm = {t_std} in Design Overrides."))
 
-    return findings
+    return _detect_conflicts(findings)

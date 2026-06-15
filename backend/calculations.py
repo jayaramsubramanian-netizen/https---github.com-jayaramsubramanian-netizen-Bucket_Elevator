@@ -152,506 +152,66 @@ def get_material(mat_id: str) -> Dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 BUCKET_SERIES = [
-    # ═══════════════════════════════════════════════════════════════════════════
-    # STYLE AA — Centrifugal, curved bottom, general purpose
-    # Source: Martin catalog H-146. front_angle≈30°.
-    # Applications: grain, aggregate, sand, coal, fertiliser, salt
-    # ═══════════════════════════════════════════════════════════════════════════
-    {"id":"AA_6x4",  "style":"AA","catalog":"AA 6×4",
-     "W":152,"H":108,"P":102,"V":0.85,"depth_mm":108,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":2.54,"v_opt":1.78,"pitch_mm":191,"bucket_mass_kg":1.8,
-     "recommended_materials":["grain","seed","chemicals"],
-     "note":"Small AA — fine granular, light duty"},
+    # id   W(mm) H(mm) P(mm)  V(L)  type  v_min v_max v_opt  mass(kg)
+    {"id":"AA","name":"Series AA — Super Capacity",
+     "W":305,"H":203,"P":190,"V": 7.4,"type":"CC",
+     "v_min":1.14,"v_max":1.91,"v_opt":1.52,
+     "bucket_mass_kg": 5.8,    # MAXI-LIFT AA-305, 4mm MS
+     "note":"CEMA super-capacity, low-speed grain service"},
 
-    {"id":"AA_8x5",  "style":"AA","catalog":"AA 8×5",
-     "W":203,"H":140,"P":127,"V":1.98,"depth_mm":140,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":2.54,"v_opt":1.78,"pitch_mm":229,"bucket_mass_kg":3.2,
-     "recommended_materials":["grain","fertiliser","sand","salt"],
-     "note":"Medium-small AA — grain and fine minerals"},
+    {"id":"A", "name":"Series A — Extra Capacity",
+     "W":254,"H":178,"P":165,"V": 5.0,"type":"CC",
+     "v_min":1.14,"v_max":1.91,"v_opt":1.52,
+     "bucket_mass_kg": 3.9,    # MAXI-LIFT A-254, 3.5mm MS
+     "note":"High-capacity grain/feed service"},
 
-    {"id":"AA_10x6", "style":"AA","catalog":"AA 10×6",
-     "W":254,"H":159,"P":152,"V":3.40,"depth_mm":159,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":2.03,"v_opt":1.65,"pitch_mm":279,"bucket_mass_kg":4.4,
-     "recommended_materials":["grain","fertiliser","aggregate","coal"],
-     "note":"Medium AA — general grain and mineral service"},
+    {"id":"B", "name":"Series B — Medium Capacity",
+     "W":203,"H":152,"P":140,"V": 3.3,"type":"CC",
+     "v_min":1.02,"v_max":2.54,"v_opt":1.78,
+     "bucket_mass_kg": 2.6,    # standard B-203, 3mm MS
+     "note":"General purpose — grain, fertiliser, light mineral"},
 
-    {"id":"AA_12x7", "style":"AA","catalog":"AA 12×7",
-     "W":305,"H":184,"P":178,"V":5.38,"depth_mm":184,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":1.91,"v_opt":1.52,"pitch_mm":305,"bucket_mass_kg":6.3,
-     "recommended_materials":["wheat","corn","aggregate","coal","fertiliser"],
-     "note":"Standard AA — most common grain elevator size"},
+    {"id":"C", "name":"Series C — Centrifugal",
+     "W":152,"H":127,"P":115,"V": 1.9,"type":"CC",
+     "v_min":1.02,"v_max":3.05,"v_opt":2.03,
+     "bucket_mass_kg": 1.5,    # C-152, 2.5mm MS
+     "note":"Standard centrifugal — seed, granular chemicals"},
 
-    {"id":"AA_14x8", "style":"AA","catalog":"AA 14×8",
-     "W":356,"H":216,"P":203,"V":9.06,"depth_mm":216,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":1.91,"v_opt":1.52,"pitch_mm":356,"bucket_mass_kg":8.5,
-     "recommended_materials":["wheat","corn","soybeans","aggregate"],
-     "note":"Large AA — high-capacity grain/mineral"},
+    {"id":"D", "name":"Series D — Centrifugal Sm.",
+     "W":102,"H": 89,"P": 89,"V": 0.77,"type":"CC",
+     "v_min":1.02,"v_max":3.56,"v_opt":2.54,
+     "bucket_mass_kg": 0.7,    # D-102, 2mm MS
+     "note":"Small/high-speed — pellets, fine chemicals"},
 
-    {"id":"AA_16x8", "style":"AA","catalog":"AA 16×8",
-     "W":406,"H":216,"P":203,"V":10.21,"depth_mm":216,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":1.91,"v_opt":1.52,"pitch_mm":381,"bucket_mass_kg":9.8,
-     "recommended_materials":["grain","aggregate","coal"],
-     "note":"Extra-wide AA"},
+    {"id":"MF","name":"Series MF — Milk of Lime",
+     "W":254,"H":152,"P":152,"V": 4.0,"type":"CC",
+     "v_min":0.51,"v_max":4.57,"v_opt":1.78,
+     "bucket_mass_kg": 3.2,    # MF-254, 3.5mm MS
+     "note":"Lime, slurry, cohesive minerals"},
 
-    {"id":"AA_18x8", "style":"AA","catalog":"AA 18×8",
-     "W":457,"H":216,"P":203,"V":11.33,"depth_mm":216,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":1.91,"v_opt":1.52,"pitch_mm":406,"bucket_mass_kg":10.3,
-     "recommended_materials":["grain","minerals","potash"],
-     "note":"Wide AA — high throughput centrifugal"},
+    {"id":"PF","name":"Series PF — Pellet/Feed",
+     "W":305,"H":203,"P":178,"V": 6.5,"type":"CC",
+     "v_min":0.51,"v_max":4.57,"v_opt":1.52,
+     "bucket_mass_kg": 5.2,    # PF-305, 4mm MS
+     "note":"Feed pellets, gentle handling"},
 
-    {"id":"AA_18x10","style":"AA","catalog":"AA 18×10",
-     "W":457,"H":267,"P":254,"V":17.84,"depth_mm":267,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":1.91,"v_opt":1.52,"pitch_mm":457,"bucket_mass_kg":13.1,
-     "recommended_materials":["grain","potash","aggregate"],
-     "note":"Very large AA — maximum centrifugal capacity"},
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # STYLE AC — Centrifugal, 50° front angle, Added Capacity, hooded back
-    # Source: Martin catalog H-147. Mill Duty series MDC/MDB.
-    # Applications: cement, clinker, ore, shale, coal, asphalt, gypsum
-    # ═══════════════════════════════════════════════════════════════════════════
-    {"id":"AC_12x8",  "style":"AC","catalog":"AC 12×8×8",
-     "W":305,"H":216,"P":203,"V":8.58,"depth_mm":216,"front_angle_deg":50,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":0.76,"v_max":2.03,"v_opt":1.27,"pitch_mm":305,"bucket_mass_kg":11.0,
-     "recommended_materials":["cement","limestone","gypsum","shale"],
-     "note":"AC — 50° face for clean discharge of abrasive minerals"},
-
-    {"id":"AC_14x8",  "style":"AC","catalog":"AC 14×8×8",
-     "W":356,"H":216,"P":203,"V":10.08,"depth_mm":216,"front_angle_deg":50,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":0.76,"v_max":2.03,"v_opt":1.27,"pitch_mm":305,"bucket_mass_kg":12.2,
-     "recommended_materials":["cement","clinker","ore","coal"],
-     "note":"Standard mill duty AC"},
-
-    {"id":"AC_16x8",  "style":"AC","catalog":"AC 16×8×8",
-     "W":406,"H":216,"P":203,"V":11.55,"depth_mm":216,"front_angle_deg":50,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":0.76,"v_max":2.03,"v_opt":1.27,"pitch_mm":330,"bucket_mass_kg":13.6,
-     "recommended_materials":["cement","clinker","ore","asphalt","coke"],
-     "note":"Wide mill duty AC"},
-
-    {"id":"AC_18x10", "style":"AC","catalog":"AC 18×10×10",
-     "W":457,"H":267,"P":254,"V":19.57,"depth_mm":267,"front_angle_deg":50,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":0.76,"v_max":2.03,"v_opt":1.27,"pitch_mm":381,"bucket_mass_kg":17.6,
-     "recommended_materials":["cement","clinker","limestone","bauxite"],
-     "note":"Large mill duty AC"},
-
-    {"id":"AC_20x10", "style":"AC","catalog":"AC 20×10×10",
-     "W":508,"H":267,"P":254,"V":21.75,"depth_mm":267,"front_angle_deg":50,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":0.76,"v_max":2.03,"v_opt":1.27,"pitch_mm":406,"bucket_mass_kg":19.1,
-     "recommended_materials":["cement","clinker","limestone","ore"],
-     "note":"Extra-large mill duty AC"},
-
-    {"id":"AC_24x10", "style":"AC","catalog":"AC 24×10×10",
-     "W":610,"H":267,"P":254,"V":26.08,"depth_mm":267,"front_angle_deg":50,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":0.76,"v_max":2.03,"v_opt":1.27,"pitch_mm":457,"bucket_mass_kg":23.9,
-     "recommended_materials":["cement","clinker","ore"],
-     "note":"Heavy duty wide AC — high capacity mineral service"},
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # STYLE C — Centrifugal, low profile, open front, angled sides
-    # Source: Martin catalog H-148.
-    # Applications: sugar, salt, wet grain, clay, powders, chemicals
-    # ═══════════════════════════════════════════════════════════════════════════
-    {"id":"C_6x4",   "style":"C","catalog":"C 6×4×4",
-     "W":152,"H":102,"P":114,"V":0.74,"depth_mm":102,"front_angle_deg":0,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.02,"v_max":3.56,"v_opt":2.03,"pitch_mm":191,"bucket_mass_kg":1.7,
-     "recommended_materials":["sugar","chemicals","fine_powders"],
-     "note":"Small C — fine sticky or powdered materials"},
-
-    {"id":"C_8x4",   "style":"C","catalog":"C 8×4×4",
-     "W":203,"H":102,"P":114,"V":0.99,"depth_mm":102,"front_angle_deg":0,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.02,"v_max":3.56,"v_opt":2.03,"pitch_mm":229,"bucket_mass_kg":2.0,
-     "recommended_materials":["sugar","salt","clay","starch"],
-     "note":"C — wet/sticky, open front for clean discharge"},
-
-    {"id":"C_10x5",  "style":"C","catalog":"C 10×5×4",
-     "W":254,"H":102,"P":127,"V":1.47,"depth_mm":102,"front_angle_deg":0,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.02,"v_max":3.05,"v_opt":2.03,"pitch_mm":254,"bucket_mass_kg":2.6,
-     "recommended_materials":["sugar","salt","wet_grain","clay","chemicals"],
-     "note":"Medium C — sticky/wet materials, more buckets per metre"},
-
-    {"id":"C_14x7",  "style":"C","catalog":"C 14×7×5",
-     "W":356,"H":140,"P":178,"V":3.91,"depth_mm":140,"front_angle_deg":0,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.02,"v_max":3.05,"v_opt":1.78,"pitch_mm":305,"bucket_mass_kg":5.1,
-     "recommended_materials":["sugar","salt","wet_grain","clay","flour","starch"],
-     "note":"Large C — high throughput wet/sticky service"},
-
-    {"id":"C_16x7",  "style":"C","catalog":"C 16×7×5",
-     "W":406,"H":140,"P":178,"V":4.47,"depth_mm":140,"front_angle_deg":0,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.02,"v_max":3.05,"v_opt":1.78,"pitch_mm":330,"bucket_mass_kg":5.9,
-     "recommended_materials":["sugar","salt","chemicals"],
-     "note":"Wide C — maximum sticky-material capacity"},
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # STYLE MF — Continuous discharge, 30° medium front, gentle handling
-    # Source: Martin catalog H-149. CEMA Series 700/800.
-    # Applications: gypsum, cement, pellets, grain, salt, fertiliser
-    # ═══════════════════════════════════════════════════════════════════════════
-    {"id":"MF_10x7",  "style":"MF","catalog":"MF 10×7×11",
-     "W":254,"H":295,"P":178,"V":5.10,"depth_mm":295,"front_angle_deg":30,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.40,"v_max":1.27,"v_opt":0.76,"pitch_mm":295,"bucket_mass_kg":7.5,
-     "recommended_materials":["cement","gypsum","pellets","grain","lime"],
-     "note":"MF — medium front, gentle handling"},
-
-    {"id":"MF_12x7",  "style":"MF","catalog":"MF 12×7×11",
-     "W":305,"H":295,"P":178,"V":6.17,"depth_mm":295,"front_angle_deg":30,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.40,"v_max":1.27,"v_opt":0.76,"pitch_mm":305,"bucket_mass_kg":8.4,
-     "recommended_materials":["cement","gypsum","grain","fertiliser"],
-     "note":"Standard MF"},
-
-    {"id":"MF_12x8",  "style":"MF","catalog":"MF 12×8×11",
-     "W":305,"H":295,"P":203,"V":7.79,"depth_mm":295,"front_angle_deg":30,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.40,"v_max":1.27,"v_opt":0.76,"pitch_mm":305,"bucket_mass_kg":9.0,
-     "recommended_materials":["cement","gypsum","grain","salt","aggregate"],
-     "note":"Wider projection MF"},
-
-    {"id":"MF_14x8",  "style":"MF","catalog":"MF 14×8×11",
-     "W":356,"H":295,"P":203,"V":9.20,"depth_mm":295,"front_angle_deg":30,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.40,"v_max":1.27,"v_opt":0.76,"pitch_mm":330,"bucket_mass_kg":10.1,
-     "recommended_materials":["gypsum","cement","grain","salt","aggregate","fertiliser"],
-     "note":"Medium-large MF — common industrial size"},
-
-    {"id":"MF_16x8",  "style":"MF","catalog":"MF 16×8×11",
-     "W":406,"H":295,"P":203,"V":10.62,"depth_mm":295,"front_angle_deg":30,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.40,"v_max":1.27,"v_opt":0.76,"pitch_mm":356,"bucket_mass_kg":11.0,
-     "recommended_materials":["cement","gypsum","aggregate","potash"],
-     "note":"Large MF"},
-
-    {"id":"MF_18x8",  "style":"MF","catalog":"MF 18×8×11",
-     "W":457,"H":295,"P":203,"V":11.89,"depth_mm":295,"front_angle_deg":30,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.40,"v_max":1.27,"v_opt":0.76,"pitch_mm":381,"bucket_mass_kg":12.1,
-     "recommended_materials":["cement","gypsum","salt","aggregate"],
-     "note":"Wide MF — high capacity continuous"},
-
-    {"id":"MF_24x10", "style":"MF","catalog":"MF 24×10×11",
-     "W":610,"H":295,"P":254,"V":24.07,"depth_mm":295,"front_angle_deg":30,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.40,"v_max":1.27,"v_opt":0.76,"pitch_mm":457,"bucket_mass_kg":17.1,
-     "recommended_materials":["cement","gypsum","potash","aggregate"],
-     "note":"Extra-large MF — very high capacity"},
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # STYLE HF — Continuous discharge, 45° HIGH front, greater capacity
-    # Source: Martin catalog H-150. CEMA Series 700/800.
-    # ~8% higher volume than MF for same width due to higher front
-    # Applications: grain, cement, pellets, fertiliser, fragile materials
-    # ═══════════════════════════════════════════════════════════════════════════
-    {"id":"HF_10x7",  "style":"HF","catalog":"HF 10×7×11",
-     "W":254,"H":295,"P":178,"V":5.38,"depth_mm":295,"front_angle_deg":45,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.50,"v_max":1.52,"v_opt":1.02,"pitch_mm":295,"bucket_mass_kg":8.0,
-     "recommended_materials":["grain","pellets","fragile_granules"],
-     "note":"Small HF — high front, gentle continuous discharge"},
-
-    {"id":"HF_12x7",  "style":"HF","catalog":"HF 12×7×11",
-     "W":305,"H":295,"P":178,"V":6.80,"depth_mm":295,"front_angle_deg":45,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.50,"v_max":1.52,"v_opt":1.02,"pitch_mm":305,"bucket_mass_kg":9.2,
-     "recommended_materials":["wheat","corn","pellets","gypsum"],
-     "note":"Standard small HF"},
-
-    {"id":"HF_14x7",  "style":"HF","catalog":"HF 14×7×11",
-     "W":356,"H":295,"P":178,"V":7.93,"depth_mm":295,"front_angle_deg":45,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.50,"v_max":1.52,"v_opt":1.02,"pitch_mm":330,"bucket_mass_kg":10.3,
-     "recommended_materials":["grain","pellets","gypsum","cement"],
-     "note":"Medium HF"},
-
-    {"id":"HF_14x8",  "style":"HF","catalog":"HF 14×8×11",
-     "W":356,"H":295,"P":203,"V":9.91,"depth_mm":295,"front_angle_deg":45,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.50,"v_max":1.52,"v_opt":1.02,"pitch_mm":330,"bucket_mass_kg":11.3,
-     "recommended_materials":["grain","salt","cement","fertiliser"],
-     "note":"Medium HF, wider projection"},
-
-    {"id":"HF_16x8",  "style":"HF","catalog":"HF 16×8×11",
-     "W":406,"H":295,"P":203,"V":11.19,"depth_mm":295,"front_angle_deg":45,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.50,"v_max":1.52,"v_opt":1.02,"pitch_mm":356,"bucket_mass_kg":11.2,
-     "recommended_materials":["wheat","corn","gypsum","cement","pellets","salt","fertiliser"],
-     "note":"Standard HF — most common size for grain/mineral continuous elevators"},
-
-    {"id":"HF_18x8",  "style":"HF","catalog":"HF 18×8×11",
-     "W":457,"H":295,"P":203,"V":12.83,"depth_mm":295,"front_angle_deg":45,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.50,"v_max":1.52,"v_opt":1.02,"pitch_mm":381,"bucket_mass_kg":13.2,
-     "recommended_materials":["grain","gypsum","salt","fertiliser"],
-     "note":"Large HF — high capacity continuous"},
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # STYLE SC — Continuous, Super Capacity, DOUBLE CHAIN only
-    # Source: Martin catalog H-151, H-136.
-    # Applications: cement, gypsum, limestone, coal, salt, rock
-    # Very slow speed, large lump tolerance, heavy abrasive duty
-    # ═══════════════════════════════════════════════════════════════════════════
-    {"id":"SC_12x8",  "style":"SC","catalog":"SC 12×8×11",
-     "W":305,"H":295,"P":222,"V":15.29,"depth_mm":295,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.30,"v_max":0.76,"v_opt":0.51,"pitch_mm":305,"bucket_mass_kg":13.2,
-     "recommended_materials":["cement","gypsum","salt","coal","aggregate"],
-     "note":"SC — double chain, very slow speed, heavy abrasive duty"},
-
-    {"id":"SC_14x8",  "style":"SC","catalog":"SC 14×8×11",
-     "W":356,"H":295,"P":222,"V":17.84,"depth_mm":295,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.30,"v_max":0.76,"v_opt":0.51,"pitch_mm":305,"bucket_mass_kg":14.1,
-     "recommended_materials":["cement","limestone","gypsum","coal"],
-     "note":"SC medium"},
-
-    {"id":"SC_16x8",  "style":"SC","catalog":"SC 16×8×11",
-     "W":406,"H":295,"P":222,"V":20.39,"depth_mm":295,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.30,"v_max":0.76,"v_opt":0.51,"pitch_mm":305,"bucket_mass_kg":15.4,
-     "recommended_materials":["cement","limestone","gypsum","coal","rocks"],
-     "note":"SC large — standard super capacity size"},
-
-    {"id":"SC_18x8",  "style":"SC","catalog":"SC 18×8×11",
-     "W":457,"H":295,"P":222,"V":22.94,"depth_mm":295,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.30,"v_max":0.76,"v_opt":0.51,"pitch_mm":305,"bucket_mass_kg":16.3,
-     "recommended_materials":["cement","limestone","coal","coke"],
-     "note":"SC wide"},
-
-    {"id":"SC_20x8",  "style":"SC","catalog":"SC 20×8×11",
-     "W":508,"H":295,"P":222,"V":25.49,"depth_mm":295,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.30,"v_max":0.76,"v_opt":0.51,"pitch_mm":305,"bucket_mass_kg":17.6,
-     "recommended_materials":["cement","limestone","gypsum"],
-     "note":"SC extra-wide"},
-
-    {"id":"SC_20x12", "style":"SC","catalog":"SC 20×12×17",
-     "W":508,"H":448,"P":324,"V":54.93,"depth_mm":448,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.25,"v_max":0.64,"v_opt":0.43,"pitch_mm":457,"bucket_mass_kg":30.4,
-     "recommended_materials":["cement_clinker","limestone","rock","ore"],
-     "note":"SC deep — very high capacity, large lumps up to 200mm"},
-
-    {"id":"SC_24x12", "style":"SC","catalog":"SC 24×12×17",
-     "W":610,"H":448,"P":324,"V":65.98,"depth_mm":448,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.25,"v_max":0.64,"v_opt":0.43,"pitch_mm":457,"bucket_mass_kg":34.0,
-     "recommended_materials":["cement_clinker","limestone","ore"],
-     "note":"SC large deep — heavy duty, very high capacity"},
-
-    {"id":"SC_30x12", "style":"SC","catalog":"SC 30×12×17",
-     "W":762,"H":448,"P":324,"V":82.40,"depth_mm":448,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.25,"v_max":0.64,"v_opt":0.43,"pitch_mm":457,"bucket_mass_kg":40.0,
-     "recommended_materials":["cement_clinker","limestone","ore"],
-     "note":"SC maximum width — highest capacity super duty"},
+    {"id":"HF","name":"Series HF — High Capacity",
+     "W":356,"H":254,"P":229,"V":11.2,"type":"HF",
+     "v_min":0.76,"v_max":1.52,"v_opt":1.14,
+     "bucket_mass_kg": 8.1,    # HF-356, 4.5mm MS
+     "note":"Very high capacity, slow-speed continuous grain"},
 ]
 
-# ── Lookup maps ────────────────────────────────────────────────────────────────
-_BUCKET_BY_ID   = {b["id"]: b for b in BUCKET_SERIES}
-_BUCKET_BY_STYLE: dict[str, list] = {}
-for _b in BUCKET_SERIES:
-    _BUCKET_BY_STYLE.setdefault(_b["style"], []).append(_b)
-
-# ── Backward-compatibility aliases ────────────────────────────────────────────
-# Old bucket_id values stored in saved designs continue to resolve correctly.
-_LEGACY_ALIASES: dict[str, str] = {
-    "AA":   "AA_12x7",   "AA-L": "AA_18x8",
-    "A":    "AA_10x6",
-    "B":    "AA_10x6",   # old "Series B" was essentially an AA_10x6
-    "D":    "AA_8x5",    # old "Series D" small centrifugal
-    "AC":   "AC_16x8",   "AC-L": "AC_24x10",
-    "C":    "C_14x7",
-    "MF":   "MF_14x8",   "MF-L": "MF_24x10",
-    "HF":   "HF_16x8",   "HF-L": "HF_18x8",
-    "PF":   "MF_12x7",   # PF was a pellet/feed variant close to MF_12x7
-    "SC":   "SC_16x8",   "SC-L": "SC_24x12",
-}
-for _alias, _target in _LEGACY_ALIASES.items():
-    if _alias not in _BUCKET_BY_ID and _target in _BUCKET_BY_ID:
-        _BUCKET_BY_ID[_alias] = _BUCKET_BY_ID[_target]
-
-BELT_WIDTHS = [102, 127, 152, 178, 203, 254, 305, 356, 406, 457, 508, 610, 762, 914]
+BELT_WIDTHS = [102,127,152,178,203,254,305,356,406,457,508,610,762,914]
 MOTOR_SIZES = [
     0.37, 0.55, 0.75, 1.1, 1.5, 2.2, 3.0, 4.0, 5.5, 7.5,
-    11, 15, 18.5, 22, 30, 37, 45, 55, 75, 90, 110, 132, 160, 200, 250, 315, 400,
+    11, 15, 18.5, 22, 30, 37, 45, 55, 75, 90, 110, 132, 160, 200, 250, 315, 400
 ]
 
 
-# ── Chain series catalogue ─────────────────────────────────────────────────────
-# Source: Martin Engineering catalog H-131 thru H-137, CEMA 375-2017 §4.
-#
-# wt_kg_m   : chain weight per strand per metre [kg/m]
-# WL_kg     : published working load per strand [kg]
-# v_max_ms  : CEMA rated maximum chain speed [m/s]
-# n_strands : 1 = single-strand; 2 = double-strand (SC series only)
-# pitch_mm  : chain pitch [mm]
-# series    : CEMA elevator series this chain is used in
-
-CHAIN_SERIES = [
-    # ── Centrifugal / continuous small (Series 100/200/700/800) ────────────────
-    {
-        "id": "N102B",
-        "name": "N-102B  (4\" std, single)",
-        "pitch_mm": 101.6, "WL_kg": 4990,  "wt_kg_m": 1.8,
-        "v_max_ms": 1.27,  "n_strands": 1,
-        "series": ["100", "200"],
-        "note": "Light duty centrifugal — grain, fertiliser, light minerals",
-    },
-    {
-        "id": "S102B",
-        "name": "S-102B / 6102 (4\" heavy, single)",
-        "pitch_mm": 101.6, "WL_kg": 6804,  "wt_kg_m": 2.1,
-        "v_max_ms": 1.27,  "n_strands": 1,
-        "series": ["100", "200", "700", "800"],
-        "note": "Medium duty — grain, aggregate, light mineral; 4\" pitch",
-    },
-    {
-        "id": "S110",
-        "name": "S-110 / 6110  (6\" heavy, single)",
-        "pitch_mm": 152.4, "WL_kg": 12474, "wt_kg_m": 4.5,
-        "v_max_ms": 1.27,  "n_strands": 1,
-        "series": ["100", "200", "700", "800"],
-        "note": "Heavy centrifugal / continuous — cement, aggregate, salt",
-    },
-    # ── Mill duty MDC (Series MDC/MDB) ─────────────────────────────────────────
-    {
-        "id": "ER856",
-        "name": "ER-856  (6\" MDC rollerless, single)",
-        "pitch_mm": 152.4, "WL_kg": 18144, "wt_kg_m": 7.5,
-        "v_max_ms": 1.35,  "n_strands": 1,
-        "series": ["MDC", "MDB"],
-        "note": "Mill duty — cement clinker, ore, shale; rollerless reduces maintenance",
-    },
-    {
-        "id": "ER857",
-        "name": "ER-857  (6\" MDC rollerless, single)",
-        "pitch_mm": 152.4, "WL_kg": 22680, "wt_kg_m": 8.5,
-        "v_max_ms": 1.35,  "n_strands": 1,
-        "series": ["MDC"],
-        "note": "Heavy mill duty — higher working load than ER-856",
-    },
-    # ── Super Capacity SC (double-strand) ──────────────────────────────────────
-    {
-        "id": "ER859",
-        "name": "ER-859  (6\" SC double)",
-        "pitch_mm": 152.4, "WL_kg": 31750, "wt_kg_m": 9.5,
-        "v_max_ms": 0.64,  "n_strands": 2,
-        "series": ["SC"],
-        "note": "SC double chain — 6\" pitch, very slow speed",
-    },
-    {
-        "id": "C6102",
-        "name": "6102-1/2  (12\" SC double)",
-        "pitch_mm": 304.8, "WL_kg": 27215, "wt_kg_m": 11.0,
-        "v_max_ms": 0.51,  "n_strands": 2,
-        "series": ["SC"],
-        "note": "SC double chain — 12\" pitch; heavy lumpy minerals",
-    },
-    {
-        "id": "C9124",
-        "name": "9124  (9\" SC double)",
-        "pitch_mm": 228.6, "WL_kg": 38100, "wt_kg_m": 14.0,
-        "v_max_ms": 0.64,  "n_strands": 2,
-        "series": ["SC"],
-        "note": "SC double chain — 9\" pitch; maximum working load",
-    },
-]
-
-_CHAIN_BY_ID = {c["id"]: c for c in CHAIN_SERIES}
-
-
-def select_chain_auto(
-    T_pull_N:  float,
-    n_strands: int   = 1,
-    sf:        float = 6.0,
-) -> dict:
-    """
-    Select the smallest chain whose working load provides the required safety factor.
-
-    Criterion (CEMA 375 §4):
-        WL [kg] × 9.81 × n_strands / T_pull_N  ≥  sf
-        → WL_required = T_pull_N × sf / (9.81 × n_strands)
-
-    Candidates are filtered to matching n_strands and sorted smallest WL first.
-    Returns the heaviest chain if none meets the criterion (forces an SF check fail).
-    """
-    req_WL_kg  = T_pull_N * sf / (9.81 * max(n_strands, 1))
-    candidates = [c for c in CHAIN_SERIES if c["n_strands"] == n_strands]
-    for ch in sorted(candidates, key=lambda x: x["WL_kg"]):
-        if ch["WL_kg"] >= req_WL_kg:
-            return ch
-    return candidates[-1] if candidates else CHAIN_SERIES[0]
-
-
-def sprocket_geometry(chain_pitch_mm: float, n_teeth: int) -> dict:
-    """
-    Standard sprocket pitch diameter from chain pitch and tooth count.
-
-    Formula:  PD = pitch / sin(π / n_teeth)
-
-    Also returns the standard ANSI tooth range (10–20 teeth recommended for
-    smooth operation; < 10 causes polygonal chordal action; > 24 increases
-    sprocket diameter steeply).
-    """
-    if n_teeth < 6:
-        n_teeth = 6  # hard minimum to avoid geometry error
-    PD_mm = chain_pitch_mm / math.sin(math.pi / n_teeth)
-    return {
-        "PD_mm":   round(PD_mm, 1),
-        "n_teeth": n_teeth,
-        "smooth":  10 <= n_teeth <= 20,
-        "note": (
-            f"{n_teeth}-tooth sprocket, PD = {PD_mm:.0f} mm. "
-            + ("✓ within 10–20 tooth smooth-operation range."
-               if 10 <= n_teeth <= 20
-               else "⚠ < 10 teeth — chordal action increases chain wear."
-               if n_teeth < 10
-               else "✓ > 20 teeth — large PD, verify casing head-section clearance.")
-        ),
-    }
-
-
-def _chain_catenary_tension(
-    chain_wt_kg_m: float,
-    n_strands:     int,
-    bucket_mass_kg: float,
-    spacing_m:     float,
-    H_m:           float,
-) -> float:
-    """
-    Self-weight tension for chain elevator [N].
-
-    Components:
-    • Chain weight (both up and return strands):
-          chain_wt × n_strands × 2 × H × g
-    • Bucket weight (going-up strand only — return is unloaded):
-          bucket_mass / spacing × H × g
-
-    Note: material weight T1 is computed separately by
-    DynamicLoadEngine.material_tension() and is the same for belt and chain.
-    """
-    T_chain   = chain_wt_kg_m * n_strands * 2.0 * H_m * 9.81
-    T_buckets = (bucket_mass_kg / max(spacing_m, 0.001)) * H_m * 9.81
-    return T_chain + T_buckets
+# ═══════════════════════════════════════════════════════════════════════════════
+# LOCAL HELPERS — thin wrappers / converters (no physics lives here)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def belt_speed(D_mm: float, n_rpm: float) -> float:
     """Head pulley rim speed [m/s].  Delegates to DischargePhysics."""
@@ -897,23 +457,12 @@ def select_motor(P_kw: float, sf: float) -> float:
 
 
 def select_bucket_auto(Q_th: float, rho: float, v_ms: float,
-                       bucket_gap: float,
-                       discharge_type: str = "centrifugal") -> Dict:
-    """
-    Auto-select the smallest bucket series that meets Q_req.
-    Filters by discharge_type so HF elevators only consider continuous styles.
-    """
-    candidates = [
-        b for b in BUCKET_SERIES
-        if b.get("discharge_type", "centrifugal") == discharge_type
-        and b.get("style") not in ("SC",)  # SC excluded from auto (double-chain only)
-    ] or BUCKET_SERIES  # fallback: consider all if filter yields nothing
-
-    for b in sorted(candidates, key=lambda x: x["V"]):  # smallest volume first
+                       bucket_gap: float) -> Dict:
+    for b in BUCKET_SERIES:
         spacing = (b["P"] + bucket_gap) / 1000.0
         if calc_capacity(v_ms, spacing, b["V"], 75.0, rho) >= Q_th:
             return b
-    return candidates[-1]   # largest available
+    return BUCKET_SERIES[-1]
 
 
 def select_belt_width(bucket_w_mm: float) -> int:
@@ -921,497 +470,6 @@ def select_belt_width(bucket_w_mm: float) -> int:
         if w >= bucket_w_mm + 50:
             return w
     return BELT_WIDTHS[-1]
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ADVISORY ENGINES — 3.7 / 3.8 / 3.9
-# These produce recommendation dicts that are included in the solve result.
-# They never change the core calculation — engineers can accept or override.
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def bucket_recommendation(material: dict, Q_req: float = 0.0) -> dict:
-    """
-    3.7 — Material → Bucket Style Recommendation Engine.
-
-    Maps material properties to the most appropriate bucket style with
-    plain-English reasoning.  Based on Martin catalog application guides
-    (H-146 thru H-151) and CEMA 375-2017 §6.
-
-    Decision hierarchy
-    ──────────────────
-    1. Fragile / grain-family            → HF (continuous, gentle)
-    2. Very heavy + highly abrasive      → SC (super-capacity double chain)
-    3. Continuous preference materials   → MF (general continuous)
-    4. Wet / sticky / cohesive           → C  (open front centrifugal)
-    5. Moderately abrasive minerals      → AC (mill duty, 50° front)
-    6. General free-flowing              → AA (standard centrifugal)
-    """
-    abr      = int(material.get("abr_code",     3) or 3)
-    cohesion = float(material.get("cohesion",   0) or 0)
-    moisture = float(material.get("moisture_pct", 0) or 0)
-    flow     = int(material.get("flowability",  2) or 2)
-    rho      = float(material.get("rho_bulk", material.get("rho_loose", 0)) or 0)
-    cat      = (material.get("category") or "").upper()
-
-    # Material character flags
-    is_fragile      = cat in ("GRAIN", "FOOD") or flow <= 1
-    is_sticky       = cohesion > 0.35 or moisture > 15
-    is_heavy        = rho > 1500
-    is_very_abrasive= abr >= 5
-    is_mineral_heavy= is_very_abrasive and cat in ("MIN", "CEM", "CONST", "COAL", "GLASS")
-    is_super_duty   = is_heavy and is_very_abrasive
-
-    notes    = []
-    alt      = "AA"
-
-    if is_fragile:
-        style  = "HF"
-        reason = (
-            "Continuous high-front (HF) — grain and fragile materials require gentle "
-            "handling. 45° front face pours material cleanly at low speed (CR < 1.0). "
-            "Minimises kernel damage and dust generation."
-        )
-        alt    = "MF"
-    elif is_super_duty and cat in ("MIN", "CEM", "CONST", "COAL"):
-        style  = "SC"
-        reason = (
-            "Super-capacity double-chain (SC) — very heavy, highly abrasive materials "
-            "require the slow-speed SC design. Double-strand chain absorbs impact; "
-            "very slow belt speed reduces wear on chain, sprockets, and casing."
-        )
-        alt    = "AC"
-    elif cat in ("GRAIN", "FOOD", "FERT") and not is_sticky:
-        style  = "MF"
-        reason = (
-            "Continuous medium-front (MF) — good general-purpose continuous discharge "
-            "for free-flowing granular materials. 30° face angle, boot loading leg required."
-        )
-        alt    = "HF"
-    elif is_sticky:
-        style  = "C"
-        reason = (
-            "Low-profile open-front (C) — open front and angled sides prevent material "
-            "build-up. Essential for wet, sticky, or cohesive materials that would pack "
-            "in closed-back buckets. More buckets per metre than AA."
-        )
-        alt    = "AA"
-    elif is_mineral_heavy:
-        style  = "AC"
-        reason = (
-            "Mill-duty added-capacity (AC) — 50° hooded-back face angle cleans out "
-            "abrasive minerals efficiently. Higher capacity than AA for same width. "
-            "Specify AR400 or AR500 front plate for hard minerals."
-        )
-        alt    = "AA"
-    else:
-        style  = "AA"
-        reason = (
-            "General-purpose centrifugal (AA) — curved bottom and reinforced lip "
-            "for clean centrifugal discharge. Widest size range; most common choice "
-            "for free-flowing materials up to moderate abrasiveness."
-        )
-        alt    = "AC" if abr >= 3 else "AA"
-
-    # Add supplementary notes
-    if abr >= 5:
-        notes.append(f"Abrasion class {abr}/7 — specify AR400 or harder front plate")
-    if abr >= 6:
-        notes.append("Consider tungsten carbide hard-facing on bucket lip (abr class 6–7)")
-    if cohesion > 0.30:
-        notes.append(f"Cohesion {cohesion:.2f} kPa — add vent holes to bucket back plate")
-    if moisture > 12:
-        notes.append(f"Moisture {moisture:.0f}% — monitor fill efficiency; use lower fill_pct")
-    if style in ("MF", "HF", "SC"):
-        notes.append("Continuous discharge — CR must be < 1.0. Boot loading leg required.")
-    if style == "SC":
-        notes.append("SC is CHAIN ONLY — not compatible with belt mount")
-
-    return {
-        "recommended_style":   style,
-        "alternative_style":   alt,
-        "discharge_type":      "continuous" if style in ("MF","HF","SC") else "centrifugal",
-        "reasoning":           reason,
-        "notes":               notes,
-        "material_flags": {
-            "fragile":       is_fragile,
-            "sticky":        is_sticky,
-            "very_abrasive": is_very_abrasive,
-            "super_duty":    is_super_duty,
-        },
-    }
-
-
-def dynamic_fill_efficiency(
-    bucket:         dict,
-    spacing_m:      float,
-    flowability:    int,
-    belt_speed_mps: float,
-    elevator_type:  str = "centrifugal",
-) -> dict:
-    """
-    3.8 — Dynamic Fill Efficiency Model.
-
-    Computes recommended fill percentage from operating conditions rather
-    than relying on a fixed user-entered value.
-
-    Based on CEMA 375-2017 §6 and OEM design practice (BEUMER/Tapco):
-        • Optimal spacing: 1.8× projection (centrifugal) or 1.0× depth (continuous)
-        • Too-close spacing → poor boot loading, recirculation, lower fill
-        • Too-wide spacing  → inter-bucket spill, lower effective fill
-        • Poor flowability → lower fill: material bridges across bucket opening
-        • Very slow speed  → under-filling (bucket exits boot before full)
-        • Very high speed  → over-spill at discharge, effective fill drops
-
-    Returns recommended fill % for advisory display; does NOT override inp.fill_pct.
-    """
-    P_m     = (bucket.get("P") or 150) / 1000.0
-    depth_m = (bucket.get("depth_mm") or bucket.get("H") or 300) / 1000.0
-
-    # Optimal spacing per CEMA §6
-    if elevator_type == "centrifugal":
-        optimal_m  = P_m * 1.8
-        base_fill  = 0.82       # 82% base for well-designed centrifugal
-    else:
-        optimal_m  = depth_m * 1.0   # continuous: ~P ≈ depth
-        base_fill  = 0.75       # 75% base for continuous (gentle loading)
-
-    # Spacing factor — bell-curve centred on optimal
-    ratio = spacing_m / max(optimal_m, 0.001)
-    if 0.75 <= ratio <= 1.80:
-        k_spacing = 1.0
-    elif ratio < 0.75:
-        k_spacing = 0.70 + 0.40 * (ratio / 0.75)   # under-spaced → drops to 0.70
-    else:
-        k_spacing = max(0.70, 1.0 - 0.12 * (ratio - 1.80))  # over-spaced → drops
-
-    # Flowability factor (CEMA 1=very free, 4=sluggish)
-    _k_flow_map = {1: 1.00, 2: 0.95, 3: 0.85, 4: 0.70}
-    k_flow      = _k_flow_map.get(max(1, min(int(flowability), 4)), 0.85)
-
-    # Speed factor
-    if belt_speed_mps < 0.60:
-        k_speed = 0.88   # very slow → incomplete filling
-    elif belt_speed_mps > 2.50:
-        k_speed = 0.90   # very fast → splash/spill at discharge
-    else:
-        k_speed = 1.00
-
-    rec_fill = min(95.0, max(40.0, base_fill * k_spacing * k_flow * k_speed * 100.0))
-
-    spacing_status = (
-        "optimal"   if 0.75 <= ratio <= 1.80 else
-        "too_close" if ratio < 0.75          else "too_wide"
-    )
-
-    return {
-        "recommended_fill_pct": round(rec_fill, 1),
-        "optimal_spacing_mm":   round(optimal_m * 1000, 0),
-        "current_spacing_mm":   round(spacing_m * 1000, 0),
-        "spacing_ratio":        round(ratio, 2),
-        "spacing_status":       spacing_status,
-        "k_spacing":            round(k_spacing, 3),
-        "k_flow":               round(k_flow, 3),
-        "k_speed":              round(k_speed, 3),
-        "note": (
-            f"CEMA §6 optimal spacing: {optimal_m*1000:.0f}mm "
-            f"({'1.8×proj' if elevator_type=='centrifugal' else '1.0×depth'}). "
-            f"Current {spacing_m*1000:.0f}mm (ratio {ratio:.2f}) → "
-            f"fill factor {k_spacing:.2f}. "
-            f"Recommended fill: {rec_fill:.1f}%."
-        ),
-    }
-
-
-def _required_wrap_angle(
-    T_effective_N: float,
-    T_slack_N:     float,
-    mu:            float,
-    margin:        float = 1.05,
-) -> dict:
-    """
-    3.9 — Wrap Angle Recommendation Engine.
-
-    Inverse Euler-Eytelwein: given the effective tension, slack tension,
-    and lagging friction coefficient, compute the MINIMUM wrap angle
-    that prevents belt slip.
-
-    Standard Euler formula:
-        T_tight / T_slack = e^(μ·θ)
-        where T_tight = T_effective + T_slack
-
-    Rearranging:
-        θ_min = ln((T_eff + T_slack) / T_slack) / μ
-               = ln(T_eff / T_slack + 1) / μ
-
-    A 5% margin is applied by default (margin=1.05) to give a comfortable
-    operating band above the theoretical minimum.
-
-    Standard snub configurations for bucket elevators:
-        180°  — no snub pulley (standard)
-        210°  — single snub pulley on return side
-        240°  — two snub pulleys
-        240°+ — rarely used; consider ceramic lagging instead
-    """
-    if T_slack_N <= 0 or mu <= 0 or T_effective_N <= 0:
-        return {
-            "required_deg": 180.0,
-            "adequate":     True,
-            "note":         "Cannot compute — zero slack tension or friction coefficient.",
-        }
-
-    # Minimum wrap from Euler inverse
-    ratio_min = (T_effective_N + T_slack_N) / T_slack_N
-    theta_min_rad = math.log(ratio_min) / mu
-    theta_req_deg = math.degrees(theta_min_rad * margin)
-
-    # Practical recommendation
-    if theta_req_deg <= 180:
-        snub_rec = "No snub pulley needed — 180° wrap is sufficient."
-        config   = "180°"
-    elif theta_req_deg <= 210:
-        snub_rec = "Add one snub pulley on return side to achieve ≥210°."
-        config   = "210° (single snub)"
-    elif theta_req_deg <= 240:
-        snub_rec = "Add two snub pulleys or a large-diameter drive pulley to achieve ≥240°."
-        config   = "240° (two snub)"
-    else:
-        snub_rec = (
-            f"Required wrap {theta_req_deg:.0f}° is impractical. "
-            "Increase take-up tension, upgrade to ceramic lagging, or reduce belt speed."
-        )
-        config   = "240°+ (impractical — review design)"
-
-    return {
-        "required_deg":   round(theta_req_deg, 1),
-        "ratio_required": round(ratio_min, 3),
-        "config":         config,
-        "adequate":       True,   # actual adequacy checked in _build_checks against inp.wrap_deg
-        "recommendation": snub_rec,
-        "note": (
-            f"Euler inverse: T_tight/T_slack = {ratio_min:.2f} "
-            f"→ θ_min = {theta_req_deg:.1f}° at μ={mu:.2f} (+{int((margin-1)*100)}% margin)."
-        ),
-    }
-
-
-def feed_design(
-    Q_th:           float,
-    rho:            float,
-    belt_width_mm:  float,
-    bucket:         dict,
-    v_belt_mps:     float,
-    elev_type:      str,
-    boot_D_mm:      float,
-    aor_deg:        float = 35.0,
-    boot_outlet_h:  float = 0.0,
-) -> dict:
-    """
-    CEMA 375 §4 — Boot Feed Design.
-
-    Sizing the boot inlet opening and surge volume so that material can
-    enter buckets without restriction.  The two loading modes are
-    physically distinct and require different boot geometries:
-
-    Centrifugal (digging) — CC, AA, AC, C bucket styles
-    ────────────────────────────────────────────────────
-    Buckets scoop (dig) material from a boot pit.  Material is stored
-    in the boot to a depth that matches the bucket projection P.
-    The effective "digging zone" spans roughly 90° of the boot pulley arc.
-
-    Inlet opening:
-        Width  = belt width  (buckets sweep the full belt width)
-        Height = material depth = 0.75 × bucket projection
-                 (empirical CEMA value: keeps buckets ≥75% full at entry)
-
-    Inlet area check:
-        A_req = Q_vol / v_material  where v_material ≈ 0.30 m/s
-        (low velocity avoids splash and reduces wear at inlet)
-
-    Continuous (loading leg) — MF, HF, SC bucket styles
-    ────────────────────────────────────────────────────
-    Buckets are filled by a spout/chute — they do NOT dig.
-    A loading leg delivers pre-fed material into the open bucket mouth
-    as each bucket passes horizontally through the boot section.
-
-    Spout geometry:
-        Height = 2 × bucket depth  (allows two buckets to be filling)
-        Width  = bucket width + 50mm clearance each side
-        Angle  ≥ angle_of_repose + 10° (typically ≥ 45°)
-
-    Inlet opening:
-        A_req = Q_vol / v_spout  where v_spout ≈ 0.40 m/s
-
-    Surge volume (both types)
-    ─────────────────────────
-    CEMA recommends a boot surge buffer of 2–5 seconds of volumetric flow
-    to absorb feed rate fluctuations without starving the elevator:
-        V_surge = Q_vol × t_surge
-
-    Boot casing height (from boot pulley centre to floor)
-    ─────────────────────────────────────────────────────
-        Centrifugal:  h = R_boot + P_bucket + clearance_50mm
-        Continuous:   h = R_boot + P_bucket + loading_leg_height + clearance_25mm
-
-    Parameters
-    ──────────────────────────────────────────────────────────────────────
-    Q_th            Design capacity [t/h]
-    rho             Bulk density [kg/m³]
-    belt_width_mm   Belt / casing width [mm]
-    bucket          Bucket dict (P, depth_mm, W, V, discharge_type)
-    v_belt_mps      Belt speed [m/s]
-    elev_type       "centrifugal" | "continuous"
-    boot_D_mm       Boot pulley diameter [mm]
-    aor_deg         Material angle of repose [°]
-    boot_outlet_h   Engineer override for outlet height [mm]; 0 = auto
-    """
-    BW_m    = belt_width_mm / 1000.0
-    Q_m3s   = Q_th / (rho * 3.6)          # volumetric flow [m³/s]
-
-    P_mm    = bucket.get("P")     or 178   # projection [mm]
-    H_mm    = bucket.get("depth_mm") or bucket.get("H") or 295  # bucket depth [mm]
-    W_mm    = bucket.get("W")     or 406   # bucket width [mm]
-    P_m     = P_mm  / 1000.0
-    H_m_bkt = H_mm  / 1000.0
-    W_m     = W_mm  / 1000.0
-    R_boot  = boot_D_mm / 2000.0          # boot pulley radius [m]
-
-    t_surge_s = 3.0   # CEMA recommended surge buffer [s]
-
-    if elev_type == "continuous":
-        # ── Continuous — loading leg (spout feed) ─────────────────────────
-        loading_type = "Loading Leg — Spout Feed"
-        v_feed_mps   = 0.40   # m/s at spout outlet
-
-        # Inlet sizing
-        A_inlet_m2   = Q_m3s / v_feed_mps
-        h_inlet_m    = A_inlet_m2 / max(BW_m, 0.1)
-
-        # Loading leg dimensions
-        leg_height_m = max(2.0 * H_m_bkt, 0.40)   # 2× bucket depth min 400mm
-        leg_width_m  = W_m + 0.100                 # bucket width + 50mm each side
-        spout_angle  = max(aor_deg + 10.0, 45.0)   # angle of repose + margin
-
-        clearance_m  = 0.025
-        boot_min_h_m = R_boot + P_m + leg_height_m + clearance_m
-
-        loading_note = (
-            f"Continuous elevators require a loading leg — material is fed "
-            f"into open bucket mouths via a spout as they pass horizontally. "
-            f"Leg height ≥ {leg_height_m*1000:.0f}mm (2×bucket depth). "
-            f"Spout angle ≥ {spout_angle:.0f}° (AoR {aor_deg:.0f}° + 10° margin). "
-            f"Do NOT allow buckets to dig — use a feeder upstream."
-        )
-        warnings = []
-        if v_belt_mps > 1.3:
-            warnings.append(
-                f"Belt speed {v_belt_mps:.2f} m/s is high for a loading leg — "
-                f"material transit time through leg is short. "
-                f"Verify spout can deliver material fast enough."
-            )
-
-        return {
-            "loading_type":          loading_type,
-            "loading_note":          loading_note,
-            "elev_type":             elev_type,
-            # Flow rates
-            "Q_volumetric_m3s":      round(Q_m3s,        5),
-            "Q_volumetric_m3h":      round(Q_m3s * 3600, 2),
-            "v_feed_mps":            round(v_feed_mps,   2),
-            # Inlet / opening
-            "A_inlet_m2":            round(A_inlet_m2,   5),
-            "inlet_width_mm":        round(BW_m * 1000,  0),
-            "inlet_height_mm":       round(h_inlet_m * 1000, 0),
-            "inlet_height_used_mm":  round(
-                boot_outlet_h if boot_outlet_h > 0 else h_inlet_m * 1000, 0
-            ),
-            # Loading leg
-            "loading_leg_height_mm": round(leg_height_m * 1000, 0),
-            "loading_leg_width_mm":  round(leg_width_m  * 1000, 0),
-            "spout_angle_deg":       round(spout_angle, 1),
-            # Surge
-            "V_surge_m3":            round(Q_m3s * t_surge_s, 5),
-            "V_surge_litres":        round(Q_m3s * t_surge_s * 1000, 1),
-            "t_surge_s":             t_surge_s,
-            # Boot geometry
-            "boot_casing_height_mm": round(boot_min_h_m * 1000, 0),
-            "boot_pulley_radius_mm": round(R_boot * 1000, 0),
-            "bucket_projection_mm":  P_mm,
-            "clearance_mm":          round(clearance_m * 1000, 0),
-            "warnings":              warnings,
-        }
-
-    else:
-        # ── Centrifugal — digging ────────────────────────────────────────
-        loading_type = "Centrifugal — Digging / Scooping"
-        v_feed_mps   = 0.30   # m/s horizontal material flow in boot pit
-
-        # Material depth in boot pit = 0.75 × projection (CEMA empirical)
-        material_depth_m = P_m * 0.75
-
-        # Inlet area (horizontal cross-section of boot pit at material level)
-        A_inlet_m2   = Q_m3s / v_feed_mps
-        h_inlet_m    = material_depth_m   # depth determines fill, not area
-        inlet_width_m = BW_m
-
-        clearance_m  = 0.050   # 50mm minimum boot floor clearance
-        boot_min_h_m = R_boot + P_m + H_m_bkt + clearance_m
-
-        # Dig volume — volume of material in the active digging zone
-        # CEMA: digging zone ≈ 90° arc at boot → length ≈ π/2 × R_boot
-        dig_zone_length_m = math.pi / 2.0 * R_boot
-        V_dig_m3 = inlet_width_m * material_depth_m * dig_zone_length_m
-
-        loading_note = (
-            f"Centrifugal elevators dig material from the boot pit. "
-            f"Buckets scoop as they round the boot pulley (90° arc). "
-            f"Maintain material depth ≈ {material_depth_m*1000:.0f}mm "
-            f"(0.75×projection {P_mm}mm) for consistent filling. "
-            f"Boot floor clearance ≥ {clearance_m*1000:.0f}mm."
-        )
-        warnings = []
-        if v_belt_mps > 2.0:
-            warnings.append(
-                f"Belt speed {v_belt_mps:.2f} m/s is high for a digging elevator — "
-                f"material scatter in boot may reduce fill efficiency. "
-                f"Consider increasing bucket gap or reducing speed."
-            )
-        if material_depth_m < 0.050:
-            warnings.append(
-                "Bucket projection is very small — maintain boot material level carefully."
-            )
-
-        return {
-            "loading_type":          loading_type,
-            "loading_note":          loading_note,
-            "elev_type":             elev_type,
-            # Flow rates
-            "Q_volumetric_m3s":      round(Q_m3s,        5),
-            "Q_volumetric_m3h":      round(Q_m3s * 3600, 2),
-            "v_feed_mps":            round(v_feed_mps,   2),
-            # Inlet / opening
-            "A_inlet_m2":            round(A_inlet_m2,   5),
-            "inlet_width_mm":        round(inlet_width_m * 1000, 0),
-            "inlet_height_mm":       round(material_depth_m * 1000, 0),
-            "inlet_height_used_mm":  round(
-                boot_outlet_h if boot_outlet_h > 0 else material_depth_m * 1000, 0
-            ),
-            # Digging zone
-            "material_depth_mm":     round(material_depth_m * 1000, 0),
-            "dig_zone_length_mm":    round(dig_zone_length_m * 1000, 0),
-            "V_dig_m3":              round(V_dig_m3, 5),
-            "V_dig_litres":          round(V_dig_m3 * 1000, 1),
-            # Surge
-            "V_surge_m3":            round(Q_m3s * t_surge_s, 5),
-            "V_surge_litres":        round(Q_m3s * t_surge_s * 1000, 1),
-            "t_surge_s":             t_surge_s,
-            # Boot geometry
-            "boot_casing_height_mm": round(boot_min_h_m * 1000, 0),
-            "boot_pulley_radius_mm": round(R_boot * 1000, 0),
-            "bucket_projection_mm":  P_mm,
-            "bucket_depth_mm":       H_mm,
-            "clearance_mm":          round(clearance_m * 1000, 0),
-            "warnings":              warnings,
-        }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1425,21 +483,15 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
 
     # ── Custom material property overrides (v1.6.0) ───────────────────────────
     # Engineer-supplied values take precedence over the DB entry.
-    # All accesses use getattr() so calculations.py is safe regardless of
-    # which version of models.py is deployed (Pylance-clean).
+    # Only applied when the override is non-sentinel (> 0 or ≥ 0 depending on field).
+    # mat is copied so the DB record is never mutated.
     _overrides: dict = {}
-    _c_aor  = getattr(inp, "custom_aor",         0)
-    _c_abr  = getattr(inp, "custom_abr",         0)
-    _c_flow = getattr(inp, "custom_flowability",  0)
-    _c_mois = getattr(inp, "custom_moisture",    -1)
-    _c_coh  = getattr(inp, "custom_cohesion",    -1)
-    _c_name = getattr(inp, "custom_mat_name",    "")
-    if _c_aor  > 0:  _overrides["angle_repose"] = _c_aor
-    if _c_abr  > 0:  _overrides["abr_code"]     = int(_c_abr)
-    if _c_flow > 0:  _overrides["flowability"]  = int(_c_flow)
-    if _c_mois >= 0: _overrides["moisture_pct"] = _c_mois
-    if _c_coh  >= 0: _overrides["cohesion"]     = _c_coh
-    if _c_name:      _overrides["name"]         = _c_name
+    if getattr(inp, "custom_aor",         0)  > 0:  _overrides["angle_repose"] = inp.custom_aor
+    if getattr(inp, "custom_abr",         0)  > 0:  _overrides["abr_code"]     = int(inp.custom_abr)
+    if getattr(inp, "custom_flowability", 0)  > 0:  _overrides["flowability"]  = int(inp.custom_flowability)
+    if getattr(inp, "custom_moisture",   -1)  >= 0:  _overrides["moisture_pct"] = inp.custom_moisture
+    if getattr(inp, "custom_cohesion",   -1)  >= 0:  _overrides["cohesion"]     = inp.custom_cohesion
+    if getattr(inp, "custom_mat_name",   ""):        _overrides["name"]         = inp.custom_mat_name
     if _overrides:
         mat = {**mat, **_overrides}
 
@@ -1450,7 +502,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     # ── Material behaviour corrections (v1.2.0 integration) ──────────────────
     #    elevator_type for fill: "continuous" for HF-style, "centrifugal" for CC
     bucket_id = inp.bucket_id if not inp.auto_bucket else None
-    is_hf = (bucket_id in ("HF", "HF-L", "MF", "MF-L", "PF", "SC", "SC-L")) if bucket_id else False
+    is_hf = (bucket_id == "HF") if bucket_id else False
     elev_type = "continuous" if is_hf else "centrifugal"
     try:
         mat_behavior = MaterialBehaviorEngine.apply_to_solver(mat, elev_type)
@@ -1475,30 +527,16 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
 
     # ── Bucket selection ───────────────────────────────────────────────────────
     if inp.auto_bucket:
-        bucket = select_bucket_auto(
-            inp.Q_req, rho, v, inp.bucket_gap,
-            discharge_type=elev_type,
-        )
+        bucket = select_bucket_auto(inp.Q_req, rho, v, inp.bucket_gap)
     else:
-        bucket = _BUCKET_BY_ID.get(inp.bucket_id) or next(
+        bucket = next(
             (b for b in BUCKET_SERIES if b["id"] == inp.bucket_id),
-            BUCKET_SERIES[4],   # fallback: Series B
+            BUCKET_SERIES[2]
         )
 
     # ── Spacing & capacity ────────────────────────────────────────────────────
     spacing = (bucket["P"] + inp.bucket_gap) / 1000.0
     Q = calc_capacity(v, spacing, bucket["V"], inp.fill_pct, rho)
-
-    # ── 3.7 — Bucket recommendation (advisory only) ───────────────────────────
-    bucket_rec = bucket_recommendation(mat, inp.Q_req)
-
-    # ── 3.8 — Dynamic fill efficiency (advisory only) ─────────────────────────
-    fill_eff = dynamic_fill_efficiency(
-        bucket, spacing,
-        flowability    = int(mat.get("flowability", 2) or 2),
-        belt_speed_mps = v,
-        elevator_type  = elev_type,
-    )
 
     # ── Power ─────────────────────────────────────────────────────────────────
     # HF continuous elevators use Leq = 4–5 (CEMA 375 §4).
@@ -1516,88 +554,20 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     # v1.2.1 FIX: mu and wrap_deg now passed through to Euler check
     bw_kg = bucket.get("bucket_mass_kg", bucket["V"] * 1.5)
 
-    # ── Belt width / casing width ─────────────────────────────────────────────
+    # ── Belt width — user override or auto-select ─────────────────────────────
+    # v1.5.0: belt_width_override_mm > 0 lets the engineer specify the exact
+    # belt width (e.g. to match existing stock or a specific conveyor standard).
     _bw_override = getattr(inp, "belt_width_override_mm", 0) or 0
     BW_mm = int(_bw_override) if _bw_override > 0 else select_belt_width(bucket["W"])
 
-    # ── v1.8.0 — Belt vs Chain tension branch ────────────────────────────────
-    is_chain      = getattr(inp, "conveyor_type", "belt") == "chain"
-    chain_n_str   = int(getattr(inp, "chain_n_strands", 1) or 1)
-    chain_ser_id  = (getattr(inp, "chain_series", "") or "").strip()
-    chain_sf_req  = float(getattr(inp, "chain_sf", 6.0) or 6.0)
-    chain_n_teeth = int(getattr(inp, "chain_sprocket_teeth", 0) or 0)
-    tens: dict = {}   # populated in belt branch; empty dict for chain (safe subscript via .get())
-
-    if is_chain:
-        # ── Chain T2: chain self-weight + bucket weight ───────────────────────
-        _chain_prelim = (
-            _CHAIN_BY_ID.get(chain_ser_id)
-            if chain_ser_id and chain_ser_id in _CHAIN_BY_ID else None
-        )
-        _chain_wt_prelim = _chain_prelim["wt_kg_m"] if _chain_prelim else 4.5
-
-        T1     = DynamicLoadEngine.material_tension(Q, inp.H_m, v)
-        T2     = _chain_catenary_tension(_chain_wt_prelim, chain_n_str, bw_kg, spacing, inp.H_m)
-        F_eff  = T1 + T2
-        T3     = F_eff * inp.K_takeup
-        R_head = F_eff + T3
-
-        euler_chk = {
-            "euler_ratio": None, "T2_minimum": 0.0, "slip_safe": True,
-            "note": "N/A — chain drive: slip check replaced by working load check",
-        }
-
-        # Select chain and refine T2 with actual chain weight
-        if _chain_prelim:
-            chain_selected = _chain_prelim
-        else:
-            chain_selected = select_chain_auto(F_eff, chain_n_str, chain_sf_req)
-
-        T2     = _chain_catenary_tension(chain_selected["wt_kg_m"], chain_n_str, bw_kg, spacing, inp.H_m)
-        F_eff  = T1 + T2
-        T3     = F_eff * inp.K_takeup
-        R_head = F_eff + T3
-
-        # ── Sprocket geometry ─────────────────────────────────────────────────
-        if chain_n_teeth > 0:
-            sprocket = sprocket_geometry(chain_selected["pitch_mm"], chain_n_teeth)
-        else:
-            _pitch   = chain_selected["pitch_mm"]
-            _sin_arg = min(0.9999, _pitch / max(inp.D_mm, _pitch))
-            _n_est   = max(6, round(math.pi / math.asin(_sin_arg)))
-            sprocket = sprocket_geometry(_pitch, _n_est)
-
-        chain_pull_N = F_eff
-        chain_SF_act = chain_selected["WL_kg"] * 9.81 * chain_n_str / max(chain_pull_N, 1.0)
-        chain_v_ok   = v <= chain_selected["v_max_ms"]
-        belt_ply     = None
-        belt_PIW     = None
-
-        wrap_rec = {
-            "required_deg": None, "config": "N/A (chain drive)", "adequate": True,
-            "recommendation": "Chain cannot slip on sprocket — Euler wrap check not applicable.",
-            "note": "Chain pull working load check replaces Euler-Eytelwein.",
-        }
-
-    else:
-        # ── Belt elevator ─────────────────────────────────────────────────────
-        tens  = calc_headshaft_tensions(
-            Q, inp.H_m, v, bw_kg, spacing, BW_mm, inp.K_takeup,
-            mu=inp.mu, wrap_deg=inp.wrap_deg,
-        )
-        T1, T2, T3 = tens["T1"], tens["T2"], tens["T3"]
-        F_eff      = tens["F_eff"]
-        R_head     = tens["R_headshaft"]
-        euler_chk  = tens["euler_check"]
-
-        chain_selected = None
-        chain_SF_act   = None
-        chain_pull_N   = None
-        chain_v_ok     = None
-        sprocket       = None
-
-        # 3.9 — Wrap angle recommendation
-        wrap_rec = _required_wrap_angle(F_eff, T3, inp.mu)
+    tens  = calc_headshaft_tensions(
+        Q, inp.H_m, v, bw_kg, spacing, BW_mm, inp.K_takeup,
+        mu=inp.mu, wrap_deg=inp.wrap_deg,
+    )
+    T1, T2, T3 = tens["T1"], tens["T2"], tens["T3"]
+    F_eff      = tens["F_eff"]
+    R_head     = tens["R_headshaft"]
+    euler_chk  = tens["euler_check"]
 
     # ── Shaft sizing ──────────────────────────────────────────────────────────
     T_Nm = calc_torsional_moment(P_total, inp.n_rpm)
@@ -1733,11 +703,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     #   • Stream is a short curtain, not a parabolic throw
     #   • Casing check: CR < 1.0 confirmed; no stream-strike risk
 
-    is_continuous = (
-        bucket.get("discharge_type") == "continuous"
-        or bucket.get("type") == "HF"
-        or elev_type == "continuous"
-    )
+    is_continuous = (bucket.get("type") == "HF") or (elev_type == "continuous")
 
     if is_continuous:
         # ── Continuous discharge (HF) ─────────────────────────────────────────
@@ -1787,13 +753,12 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         theta_rel = rp.theta_deg
 
         envelope = DischargePhysics.stream_envelope(
-            speed                  = v,
-            radius                 = inp.D_mm / 2000.0,
-            bucket_projection_m    = (bucket.get("P") or 140) / 1000.0,
-            bucket_front_angle_deg = float(bucket.get("front_angle_deg", 30)),
-            cohesion_index         = mat.get("cohesion", 0.0),
-            elevator_type          = "centrifugal",
-            material               = mat,
+            speed               = v,
+            radius              = inp.D_mm / 2000.0,
+            bucket_projection_m = (bucket.get("P") or 140) / 1000.0,
+            cohesion_index      = mat.get("cohesion", 0.0),
+            elevator_type       = "centrifugal",
+            material            = mat,
         )
         traj_center   = envelope["center"]
         traj_upper    = envelope["upper"]
@@ -1900,20 +865,6 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         ),
     }
 
-    # ── Feed design (2f) ──────────────────────────────────────────────────────
-    _boot_outlet_h = float(getattr(inp, "boot_outlet_height_mm", 0) or 0)
-    feed_result = feed_design(
-        Q_th          = Q,
-        rho           = rho,
-        belt_width_mm = float(BW_mm),
-        bucket        = bucket,
-        v_belt_mps    = v,
-        elev_type     = "continuous" if is_continuous else "centrifugal",
-        boot_D_mm     = float(_boot_D_mm),
-        aor_deg       = float(mat.get("angle_repose", 35.0) or 35.0),
-        boot_outlet_h = _boot_outlet_h,
-    )
-
     # ── Engineering checks ─────────────────────────────────────────────────────
     checks = _build_checks(
         inp, mat, mat_behavior, bucket, Q, v, cr, T1, T2, T3, F_eff,
@@ -1930,13 +881,6 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         stream_chute     = stream_chute,
         is_continuous    = is_continuous,
         boot_analysis    = boot_pulley_analysis,
-        # v1.8.0 chain checks
-        is_chain         = is_chain,
-        chain_selected   = chain_selected,
-        chain_pull_N     = chain_pull_N,
-        chain_SF_actual  = chain_SF_act,
-        chain_v_ok       = chain_v_ok,
-        sprocket         = sprocket,
     )
 
     # ── Design recommendations ────────────────────────────────────────────────
@@ -2040,8 +984,8 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "Leq": Leq, "Ceff": Ceff, "motor_kw": motor_kw,
         # Tensions
         "T1": round(T1, 1), "T2": round(T2, 1), "T3": round(T3, 1),
-        "T3_ktakeup":   tens.get("T3_ktakeup",   round(T3, 1)),
-        "T3_euler_min": tens.get("T3_euler_min",  0.0),
+        "T3_ktakeup":   tens["T3_ktakeup"],
+        "T3_euler_min": tens["T3_euler_min"],
         "F_eff": round(F_eff, 1), "R_headshaft": round(R_head, 1),
         "euler_ratio":  euler_chk["euler_ratio"],
         "slip_safe":    euler_chk["slip_safe"],
@@ -2116,25 +1060,6 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "checks": checks,
         # Context
         "bucket": bucket, "mat": mat, "rho": rho,
-        # v1.7.0 — bucket geometry for UI / report
-        "bucket_style":              bucket.get("style"),
-        "bucket_front_angle":        bucket.get("front_angle_deg"),
-        "bucket_depth_mm":           bucket.get("depth_mm"),
-        "bucket_discharge_type":     bucket.get("discharge_type"),
-        "bucket_recommended_materials": bucket.get("recommended_materials", []),
-        # ── Advisory outputs (3.7 / 3.8 / 3.9) ─────────────────────────────
-        "bucket_recommendation":  bucket_rec,
-        "dynamic_fill":           fill_eff,
-        "wrap_recommendation":    wrap_rec,
-        # ── Feed design (2f) ─────────────────────────────────────────────────
-        "feed_design":     feed_result,
-        # ── v1.8.0 Chain outputs ─────────────────────────────────────────────
-        "is_chain":        is_chain,
-        "chain_selected":  chain_selected,
-        "chain_pull_N":    chain_pull_N,
-        "chain_SF_actual": chain_SF_act,
-        "chain_v_ok":      chain_v_ok,
-        "sprocket":        sprocket,
     }
 
 
@@ -2157,14 +1082,6 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   stream_chute:     "dict | None" = None,
                   is_continuous:    bool           = False,
                   boot_analysis:    "dict | None" = None,
-                  # v1.8.0 chain params
-                  is_chain:         bool           = False,
-                  chain_selected:   "dict | None" = None,
-                  chain_pull_N:     "float | None" = None,
-                  chain_SF_actual:  "float | None" = None,
-                  chain_v_ok:       "bool | None"  = None,
-                  sprocket:         "dict | None" = None,
-                  **kwargs,                         # absorb future additions
                   ) -> list:
     checks = []
     ok   = lambda msg: {"type": "ok",   "msg": msg}
@@ -2275,13 +1192,11 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         checks.append(ok(
             f"Headshaft load {T_total/1000:.1f} kN — within standard belt capacity [CEMA 375 §4]"))
 
-    # 6b — Belt slip (Euler-Eytelwein) — skipped for chain elevators
-    if euler_chk is not None and not is_chain:
-        e_ratio = euler_chk.get("euler_ratio")
-        t3_min  = euler_chk.get("T2_minimum", 0)
-        if e_ratio is None:
-            pass  # ratio not computed (e.g. CR < 1 continuous mode)
-        elif euler_chk.get("slip_safe") is True:
+    # 6b — Belt slip (Euler-Eytelwein)
+    if euler_chk is not None:
+        e_ratio = euler_chk["euler_ratio"]
+        t3_min  = euler_chk["T2_minimum"]
+        if euler_chk.get("slip_safe") is True:
             checks.append(ok(
                 f"Belt slip check: T3={T3:.0f} N ≥ Euler min {t3_min:.0f} N "
                 f"(e^μθ={e_ratio:.3f}, μ={inp.mu}, wrap={inp.wrap_deg}°) — no slip [CEMA 375 §4]"))
@@ -2320,18 +1235,18 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
 
     # 11 — Hazard flags (v1.2.0)
     hazards = mat_behavior["hazards"]
-    if hazards.get("atex_required", False):
+    if hazards["atex_required"]:
         checks.append(warn(
             "Explosive/flammable material — ATEX/NEC Class II: "
             "anti-static belt, earth bonding, explosion venting [CEMA 550 §B-10/B-11]"))
-    if hazards.get("dust_control_required", False):
+    if hazards["dust_control_required"]:
         checks.append(info(
             "Material aerates or is flammable — dust control and boot venting "
             "required [CEMA 550 §B-1/B-11]"))
-    if hazards.get("stainless_recommended", False):
+    if hazards["stainless_recommended"]:
         checks.append(warn(
             "Corrosive material — 316L stainless or coated casings/buckets [CEMA 550 §B-4]"))
-    if hazards.get("hygroscopic", False):
+    if hazards["hygroscopic"]:
         checks.append(info(
             "Hygroscopic material — seal casing openings; monitor moisture "
             "content in storage [CEMA 550 §B-8]"))
@@ -2567,54 +1482,6 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             else:
                 checks.append(info(
                     f"Boot bearing L10={L10_b:,.0f}h [CEMA 375 §4]"))
-
-    # ── v1.8.0 Chain elevator checks ─────────────────────────────────────────
-    _chain_pull_N = chain_pull_N or 0.0
-    _chain_sf_req = float(getattr(inp, "chain_sf", 6.0) or 6.0)
-
-    if is_chain and chain_selected:
-        _chain_sel    = chain_selected
-        _chain_SF_act = chain_SF_actual
-        # Chain working load safety factor
-        if _chain_SF_act is not None:
-            if _chain_SF_act < _chain_sf_req:
-                checks.append(fail(
-                    f"Chain SF = {_chain_SF_act:.2f} < required {_chain_sf_req:.1f} "
-                    f"— chain pull {_chain_pull_N/1000:.1f}kN exceeds "
-                    f"{_chain_sel['name']} working load / SF. "
-                    f"Upgrade to heavier chain series [CEMA 375 §4]."))
-            elif _chain_SF_act < _chain_sf_req * 1.10:
-                checks.append(warn(
-                    f"Chain SF = {_chain_SF_act:.2f} — within 10% of minimum "
-                    f"{_chain_sf_req:.1f}. Monitor chain elongation [CEMA 375 §4]."))
-            else:
-                checks.append(ok(
-                    f"Chain SF = {_chain_SF_act:.2f} ≥ {_chain_sf_req:.1f} "
-                    f"({_chain_sel['name']}, pull {_chain_pull_N/1000:.1f}kN) [CEMA 375 §4]"))
-
-        # Chain speed vs rated maximum
-        if chain_v_ok is not None:
-            if not chain_v_ok:
-                checks.append(fail(
-                    f"Belt speed {v:.2f} m/s exceeds {_chain_sel['name']} "
-                    f"rated maximum {_chain_sel['v_max_ms']:.2f} m/s — "
-                    f"reduce RPM or use heavier chain series [CEMA 375 §4]."))
-            else:
-                checks.append(ok(
-                    f"Chain speed {v:.2f} m/s ≤ rated {_chain_sel['v_max_ms']:.2f} m/s "
-                    f"[CEMA 375 §4]"))
-
-        # Sprocket tooth count
-        if sprocket:
-            if not sprocket["smooth"]:
-                checks.append(warn(
-                    f"Sprocket teeth = {sprocket['n_teeth']} "
-                    f"— recommend 10–20 teeth for smooth chain engagement. "
-                    f"PD = {sprocket['PD_mm']:.0f}mm [CEMA 375 §4]."))
-            else:
-                checks.append(ok(
-                    f"Sprocket: {sprocket['n_teeth']} teeth, "
-                    f"PD = {sprocket['PD_mm']:.0f}mm ✓ [CEMA 375 §4]"))
 
     return checks
 

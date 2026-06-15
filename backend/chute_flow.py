@@ -687,9 +687,9 @@ class ChuteFlowEngine:
         capacity_tph: float,
         velocity_mps: float,
         drop_height_m: float = 1.0,
-        chute_angle_deg: float = None,
-        chute_width_m:  float = None,
-        chute_height_m: float = None,
+        chute_angle_deg: float | None = None,
+        chute_width_m:  float | None = None,
+        chute_height_m: float | None = None,
     ) -> dict:
         """
         CEMA 375 §5 — Integrated chute design output with recommendations.
