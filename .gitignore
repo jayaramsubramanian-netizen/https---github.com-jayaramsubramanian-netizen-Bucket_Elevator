@@ -31,6 +31,8 @@ env/
 *.db
 *.sqlite
 *.sqlite3
+*.db-shm
+*.db-wal
 
 # Frontend (Node.js)
 frontend/node_modules/
