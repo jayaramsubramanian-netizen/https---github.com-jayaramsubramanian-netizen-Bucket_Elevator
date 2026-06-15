@@ -89,8 +89,67 @@ export const DEFAULT_INPUTS = {
   boot_outlet_height_mm: 0,           // 0 = auto-calculate from bucket/belt geometry
 };
 
-// ─────────────────────────────────────────────────────────────────
-// NORMALISER
+// ─── Input sanitiser ──────────────────────────────────────────────────────────
+// Called inside runCalc before every API request.
+// Prevents two classes of 422 errors:
+//   1. NaN values  — produced when a numeric field is cleared (parseFloat("") = NaN)
+//   2. Out-of-range values — produced when the user types beyond model bounds
+//      (HTML max/min prevent spinner overflow but not direct keyboard entry)
+//
+// BOUNDS must match the ge/le constraints in models.py BucketElevatorInput.
+// When a value is out of range it is silently clamped rather than rejected,
+// so the UI stays responsive and only shows an error for real solver failures.
+
+const _BOUNDS = {
+  Q_req:                  [1,     5000],
+  H_m:                    [1,      200],
+  fill_pct:               [30,     100],
+  n_rpm:                  [10,     300],
+  D_mm:                   [100,   1500],
+  boot_pulley_D_mm:       [100,   1000],
+  wrap_deg:               [90,     240],
+  mu:                     [0.10,  0.60],
+  sf:                     [1.0,   2.5],
+  K_takeup:               [0.4,   0.9],
+  Leq:                    [0,      20],
+  Ceff:                   [0,     2.0],
+  bucket_gap:             [0,     600],
+  wind_pressure_pa:       [0,    5000],
+  casing_t_override_mm:   [0,      50],
+  shaft_d_override_mm:    [0,     500],
+  belt_width_override_mm: [0,    1500],
+  takeup_screw_d_mm:      [0,     200],
+  takeup_screw_len_m:     [0,       5],
+  custom_rho:             [0,    5000],
+  custom_aor:             [0,      90],
+  custom_abr:             [0,       7],
+  custom_flowability:     [0,       4],
+  custom_moisture:        [-1,    100],
+  custom_cohesion:        [-1,    100],
+  motor_kw_override:      [0,    1000],
+  chain_sf:               [3.0,  12.0],
+  chain_n_strands:        [1,       2],
+  chain_sprocket_teeth:   [0,      32],
+  boot_outlet_height_mm:  [0,    2000],
+};
+
+function sanitizeInputs(inp) {
+  return Object.fromEntries(
+    Object.entries(inp).map(([k, v]) => {
+      // 1. Replace NaN / Infinity with the DEFAULT_INPUTS value (or 0)
+      if (typeof v === "number" && !Number.isFinite(v)) {
+        const def = DEFAULT_INPUTS[k];
+        return [k, typeof def === "number" ? def : 0];
+      }
+      // 2. Clamp numeric fields to model bounds
+      if (_BOUNDS[k] !== undefined && typeof v === "number") {
+        const [lo, hi] = _BOUNDS[k];
+        return [k, Math.min(hi, Math.max(lo, v))];
+      }
+      return [k, v];
+    })
+  );
+}
 //
 // Maps any API response to the canonical field contract used by
 // KpiGrid, ComponentPanel, WarningsPanel, and ChartsPanel.
@@ -374,7 +433,8 @@ export function useElevatorCalc() {
     setLoading(true);
     setError(null);
     try {
-      const raw = await calculateElevator(inp);
+      const safe = sanitizeInputs(inp);   // clamp NaN + out-of-range before sending
+      const raw  = await calculateElevator(safe);
       setResults(normaliseResult(raw));
     } catch (e) {
       // FastAPI 422 validation errors return structured JSON objects.

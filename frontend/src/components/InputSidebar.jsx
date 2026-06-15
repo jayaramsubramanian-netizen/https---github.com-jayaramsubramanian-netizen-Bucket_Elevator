@@ -32,6 +32,19 @@ import MaterialSearchDropdown from "./MaterialSearchDropdown";
 // API base URL — Vite uses import.meta.env (not process.env)
 const API_BASE = (import.meta.env?.VITE_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
+// Field defaults used by onChange NaN guards — mirrors useElevatorCalc DEFAULT_INPUTS
+const DEFAULT_INPUTS = {
+  Q_req: 100, H_m: 25, fill_pct: 75, n_rpm: 60, D_mm: 500,
+  boot_pulley_D_mm: 300, wrap_deg: 180, mu: 0.35, sf: 1.25,
+  K_takeup: 0.7, Leq: 0, Ceff: 0, bucket_gap: 25,
+  wind_pressure_pa: 800, casing_t_override_mm: 0,
+  shaft_d_override_mm: 0, belt_width_override_mm: 0,
+  takeup_screw_d_mm: 0, takeup_screw_len_m: 0,
+  custom_rho: 0, custom_aor: 0, custom_abr: 0, custom_flowability: 0,
+  custom_moisture: -1, custom_cohesion: -1, motor_kw_override: 0,
+  chain_sf: 6.0, chain_sprocket_teeth: 0, boot_outlet_height_mm: 0,
+};
+
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const T = {
   border:   "var(--border,   #1c3050)",
@@ -88,7 +101,12 @@ function FormInput({ name, type = "number", value, onChange,
           }}>{value ? "✓ ON" : "OFF"}</button>
         ) : (
           <input type={type} value={value ?? ""} min={min} max={max} step={step}
-            onChange={e => onChange(type === "number" ? parseFloat(e.target.value) : e.target.value)}
+            onChange={e => {
+              const _v = e.target.value;
+              onChange(type === "number"
+                ? (_v === "" || isNaN(parseFloat(_v)) ? 0 : parseFloat(_v))
+                : _v);
+            }}
             style={{ ...base, flex: 1 }}
             onFocus={e => e.target.style.borderColor = T.primary}
             onBlur={e => e.target.style.borderColor = T.border} />
@@ -129,8 +147,13 @@ function F({ label, name, type="number", value, onChange, unit, min, max, step, 
           }}>{value ? "✓ ON" : "OFF"}</button>
         ) : (
           <input type={type} value={value ?? ""} min={min} max={max} step={step}
-            onChange={e => onChange(name, type === "number"
-              ? parseFloat(e.target.value) : e.target.value)}
+            onChange={e => {
+              const _rv = e.target.value;
+              const _pf = parseFloat(_rv);
+              onChange(name, type === "number"
+                ? (_rv === "" || isNaN(_pf) ? (typeof DEFAULT_INPUTS[name] === "number" ? DEFAULT_INPUTS[name] : 0) : _pf)
+                : _rv);
+            }}
             style={{ ...base, flex: 1 }}
             onFocus={e => e.target.style.borderColor = T.primary}
             onBlur={e => e.target.style.borderColor = T.border} />
@@ -1439,7 +1462,7 @@ function PowerEdit({ inp, setField, results }) {
         note="CEMA recommendation: 1.25 general · 1.50 heavy/abrasive · 2.0 shock loads" />
       <F label="Motor kW Override" name="motor_kw_override"
         value={inp.motor_kw_override ?? 0} onChange={setField}
-        unit="kW" min={0} max={1000} step={0}
+        unit="kW" min={0} max={1000} step={1}
         note={`0 = auto. Calc: ${r.P_total?.toFixed(2) ?? "—"} kW → auto-selects ${motorKw} kW`} />
 
       <SectionHead label="Tension" />
@@ -1558,7 +1581,9 @@ export default function InputSidebar({ inputs, setField, results }) {
     bucket:    `${bkt.id ?? "auto"} series · ${bkt.V ?? "—"}L · Gap ${inp.bucket_gap}mm`,
     takeup:    `${inp.takeup_type ?? "gravity"} · ${tg.W_counterweight_kg_gross?.toFixed(0) ?? "—"}kg · ${ts.d_core_recommend_mm ? `Screw Ø${ts.d_core_recommend_mm}mm` : ""}`,
     discharge: `${r.is_continuous ? "HF continuous" : "Centrifugal"} · CR=${r.cr?.toFixed(3) ?? "—"} · θ=${r.theta_rel?.toFixed(1) ?? "—"}°`,
-    feed:      "Boot inlet geometry — pending",
+    feed:      r.feed_design
+      ? `${r.feed_design.loading_type} · Inlet ${r.feed_design.inlet_width_mm}×${r.feed_design.inlet_height_mm}mm · Surge ${r.feed_design.V_surge_litres}L`
+      : "Run calculation to see boot feed geometry",
     casing:    `${cp.t_use_mm ?? inp.casing_t_override_mm ?? "auto"} mm plate · ${inp.wind_pressure_pa ?? 800} Pa wind`,
     service:   `${inp.environment ?? "dry"} · μ=${inp.mu}`,
     power:     `SF ${inp.sf} · K ${inp.K_takeup} · Leq ${inp.Leq || "auto"} · Ceff ${inp.Ceff || "auto"}`,
@@ -1628,7 +1653,9 @@ export default function InputSidebar({ inputs, setField, results }) {
           onEdit={() => open("discharge")} />
         <SectionRow label="Feed Design" depth={1}
           summary={summaries.feed}
-          badge={{ label: "PENDING", color: T.text3 }}
+          badge={r.feed_design
+            ? (r.feed_design.warnings?.length ? { label: "WARN", color: T.warning } : { label: "OK", color: T.success })
+            : { label: "PENDING", color: T.text3 }}
           onEdit={() => open("feed")} />
         <SectionRow label="Casing Design" depth={1}
           badge={badges.casing} summary={summaries.casing}

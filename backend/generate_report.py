@@ -848,9 +848,9 @@ def _build_sf_rows(r, inp):
     if is_cont:
         # HF continuous: CR must be BELOW 1.0
         cr_ok = cr < 1.0
-        rows.append(("CR  (HF continuous < 1.0)",
+        rows.append(("CR  (HF continuous, need &lt;1.0)",
                      f"{cr:.3f}",
-                     "< 1.00",
+                     "&lt; 1.00",
                      fb,
                      "ok" if cr_ok else ("warn" if cr < 1.1 else "fail")))
     elif not is_chain:
@@ -961,7 +961,7 @@ def _build_sf_rows(r, inp):
         GR = float(bf.get("goodman_ratio") or 0)
         rows.append(("Bolt fatigue  Goodman ratio",
                      f"{GR:.3f}",
-                     "< 1.000  (infinite life)",
+                     "&lt; 1.000  (infinite life)",
                      f"{1/GR:.2f}" if GR > 0 else fb,
                      "ok" if bf.get("pass_infinite_life") else "fail"))
 
@@ -1091,7 +1091,7 @@ def build_report(results: dict, inputs: dict,
                  f"{chain_sf_a:.2f}", "—",
                  "ok" if chain_sf_a >= 6.0 else ("warn" if chain_sf_a >= 5.0 else "fail"))
     elif is_cont_r:
-        kpi5 = ("CR (HF < 1.0)",
+        kpi5 = ("CR (HF &lt; 1.0)",
                  rv("cr", dp=3), "—",
                  "ok" if cr_val < 1.0 else "fail")
     else:
@@ -1434,7 +1434,7 @@ def build_report(results: dict, inputs: dict,
             ("Speed check",     "PASS" if r.get("chain_v_ok") else "FAIL"),
             ("Sprocket teeth",  str(sprocket.get("n_teeth","—"))),
             ("Sprocket PD",     f"{sprocket.get('PD_mm','—')} mm"),
-            ("Smooth op.",      "YES" if sprocket.get("smooth") else "WARN < 10T"),
+            ("Smooth op.",      "YES" if sprocket.get("smooth") else "WARN (&lt;10 teeth)"),
         ])
 
     # ══════════════════════════════════════════════════════════════════════════
