@@ -766,6 +766,41 @@ def _design_notes(r, inp):
         f"which should be verified against the physical head section geometry."
     )
 
+    # 11. Feed design (boot section)
+    fd     = r.get("feed_design") or {}
+    is_cfd = fd.get("elev_type") == "continuous"
+    if fd:
+        if is_cfd:
+            notes.append(
+                f"The elevator uses a loading leg for continuous bucket filling — buckets do not dig. "
+                f"The loading leg height of {fd.get('loading_leg_height_mm','—')} mm "
+                f"(twice the bucket depth) provides sufficient dwell time for complete bucket loading "
+                f"at the design belt speed. "
+                f"The spout angle of {fd.get('spout_angle_deg','—')} degrees ensures material "
+                f"flows by gravity without bridging under normal operating conditions. "
+                f"The boot surge volume of {fd.get('V_surge_litres','—')} L ({fd.get('t_surge_s',3)}-second buffer) "
+                f"provides adequate capacity to absorb upstream feed rate fluctuations. "
+                f"The minimum boot casing height below the pulley centreline is "
+                f"{fd.get('boot_casing_height_mm','—')} mm."
+            )
+        else:
+            notes.append(
+                f"The elevator uses centrifugal digging to fill buckets at the boot. "
+                f"The material depth in the boot pit should be maintained at approximately "
+                f"{fd.get('material_depth_mm','—')} mm (0.75 times the bucket projection) "
+                f"for consistent scooping. "
+                f"The active digging zone spans {fd.get('dig_zone_length_mm','—')} mm of arc "
+                f"at the boot pulley, with an estimated digging volume of {fd.get('V_dig_litres','—')} litres. "
+                f"The boot surge volume is {fd.get('V_surge_litres','—')} L ({fd.get('t_surge_s',3)}-second buffer). "
+                f"The boot casing floor should be a minimum of {fd.get('boot_casing_height_mm','—')} mm "
+                f"below the boot pulley centreline to provide adequate clearance."
+            )
+    else:
+        notes.append(
+            "Boot feed design data not available in this result set. "
+            "Ensure calculations.py v1.8.0 or later is deployed."
+        )
+
     return notes
 
 
@@ -773,6 +808,9 @@ def _design_notes(r, inp):
 def _build_sf_rows(r, inp):
     rows = []
     fb   = "—"
+
+    is_chain = r.get("is_chain", False)
+    is_cont  = r.get("is_continuous", False)
 
     def sf_str(num, den, invert=False):
         try:
@@ -805,24 +843,69 @@ def _build_sf_rows(r, inp):
                  sf_str(v, vmin),
                  "ok" if spd_ok else ("warn" if v < vmin else "fail")))
 
-    # 3 Centrifugal ratio
+    # 3 Centrifugal ratio — logic differs for continuous vs centrifugal
     cr = float(r.get("cr") or r.get("centrifugal_ratio") or 0)
-    cr_ok = 1.0 <= cr <= 2.5
-    rows.append(("Centrifugal ratio",
-                 f"{cr:.3f}",
-                 "1.00 – 2.50",
-                 fb,
-                 "ok" if cr_ok else "warn"))
+    if is_cont:
+        # HF continuous: CR must be BELOW 1.0
+        cr_ok = cr < 1.0
+        rows.append(("CR  (HF continuous < 1.0)",
+                     f"{cr:.3f}",
+                     "< 1.00",
+                     fb,
+                     "ok" if cr_ok else ("warn" if cr < 1.1 else "fail")))
+    elif not is_chain:
+        # Standard centrifugal
+        cr_ok = 1.0 <= cr <= 2.5
+        rows.append(("Centrifugal ratio",
+                     f"{cr:.3f}",
+                     "1.00 – 2.50",
+                     fb,
+                     "ok" if cr_ok else "warn"))
+    # Chain: CR check not applicable — replaced by working load check below
 
-    # 4 Belt slip (Euler)
-    T3     = float(r.get("T3") or 0)
-    T3_min = float(r.get("T3_euler_min") or 0)
-    slip_ok = (r.get("slip_safe") is True) or (T3 >= T3_min > 0)
-    rows.append(("Belt slip  T3 / T3_min",
-                 f"{T3/1000:.2f} kN",
-                 f"{T3_min/1000:.2f} kN min",
-                 sf_str(T3, T3_min) if T3_min > 0 else fb,
-                 "ok" if slip_ok else "fail"))
+    # 4 Belt slip (Euler) — belt mode only;  Chain working load — chain mode
+    if is_chain:
+        # Chain SF check
+        chain_sf_a   = r.get("chain_SF_actual")
+        chain_sel    = r.get("chain_selected") or {}
+        chain_pull_N = float(r.get("chain_pull_N") or 0)
+        chain_sf_req = 6.0
+        if chain_sf_a is not None:
+            rows.append(("Chain working load  SF",
+                         f"{chain_sf_a:.2f}",
+                         f">= {chain_sf_req:.1f}  (CEMA 375)",
+                         f"{chain_sf_a:.2f}",
+                         "ok"   if chain_sf_a >= chain_sf_req else
+                         "warn" if chain_sf_a >= chain_sf_req * 0.9 else "fail"))
+
+        # Chain speed vs rated
+        chain_v_ok  = r.get("chain_v_ok")
+        v_max_chain = float(chain_sel.get("v_max_ms") or 0)
+        if chain_v_ok is not None:
+            rows.append(("Chain speed  v <= rated",
+                         f"{v:.2f} m/s",
+                         f"{v_max_chain:.2f} m/s rated",
+                         sf_str(v_max_chain, v),
+                         "ok" if chain_v_ok else "fail"))
+
+        # Sprocket teeth
+        sprocket = r.get("sprocket") or {}
+        if sprocket:
+            rows.append(("Sprocket  10–20 teeth (smooth)",
+                         f"{sprocket.get('n_teeth','—')} teeth",
+                         "10 – 20",
+                         fb,
+                         "ok" if sprocket.get("smooth") else "warn"))
+    else:
+        # Belt slip (Euler-Eytelwein)
+        T3     = float(r.get("T3") or 0)
+        T3_min = float(r.get("T3_euler_min") or 0)
+        slip_ok = (r.get("slip_safe") is True) or (T3 >= T3_min > 0)
+        rows.append(("Belt slip  T3 / T3_min",
+                     f"{T3/1000:.2f} kN",
+                     f"{T3_min/1000:.2f} kN min",
+                     sf_str(T3, T3_min) if T3_min > 0 else fb,
+                     "ok" if slip_ok else "fail"))
 
     # 5 Headshaft load
     R = float(r.get("R_headshaft") or 0)
@@ -996,18 +1079,33 @@ def build_report(results: dict, inputs: dict,
     Q    = float(r.get("Q") or r.get("Q_th") or 0)
     Q_req = float(inp.get("Q_req") or 0)
     cap_pass = Q >= Q_req
-    cr_val = float(r.get("cr") or 0)
-    L10    = float(r.get("L10") or 0)
+    cr_val     = float(r.get("cr") or 0)
+    L10        = float(r.get("L10") or 0)
+    is_chain_r = r.get("is_chain", False)
+    is_cont_r  = r.get("is_continuous", False)
+    chain_sf_a = r.get("chain_SF_actual")
+
+    # 5th KPI card: chain SF / HF CR / centrifugal CR
+    if is_chain_r and chain_sf_a is not None:
+        kpi5 = ("Chain SF",
+                 f"{chain_sf_a:.2f}", "—",
+                 "ok" if chain_sf_a >= 6.0 else ("warn" if chain_sf_a >= 5.0 else "fail"))
+    elif is_cont_r:
+        kpi5 = ("CR (HF < 1.0)",
+                 rv("cr", dp=3), "—",
+                 "ok" if cr_val < 1.0 else "fail")
+    else:
+        kpi5 = ("Centrifugal Ratio",
+                 rv("cr","centrifugal_ratio",dp=3), "—",
+                 "ok" if 1.0 <= cr_val <= 1.8 else "warn")
 
     story += kpi_row([
-        ("Capacity",         rv("Q","Q_th",dp=1),       "t/h",
-         "ok" if cap_pass else "fail"),
-        ("Belt Speed",        rv("v","v_ms",dp=2),       "m/s",  "info"),
-        ("Total Power",       rv("P_total",dp=1),        "kW",   "info"),
-        ("Motor Selected",    str(r.get("motor_kw") or r.get("motor_kW") or "—"), "kW", "info"),
-        ("Centrifugal Ratio", rv("cr","centrifugal_ratio",dp=3), "—",
-         "ok" if 1.0 <= cr_val <= 1.8 else "warn"),
-        ("Bearing L10",       f"{L10:,.0f}" if L10 else "—",     "h",
+        ("Capacity",      rv("Q","Q_th",dp=1),  "t/h",  "ok" if cap_pass else "fail"),
+        ("Belt Speed",    rv("v","v_ms",dp=2),   "m/s",  "info"),
+        ("Total Power",   rv("P_total",dp=1),    "kW",   "info"),
+        ("Motor Selected", str(r.get("motor_kw") or r.get("motor_kW") or "—"), "kW", "info"),
+        kpi5,
+        ("Bearing L10",   f"{L10:,.0f}" if L10 else "—",  "h",
          "ok" if L10 >= 40000 else ("warn" if L10 >= 20000 else "fail")),
     ])
 
@@ -1281,6 +1379,64 @@ def build_report(results: dict, inputs: dict,
                 story.append(Paragraph(f"*  {cr_txt}", ST["body"]))
                 story.append(Spacer(1, 2))
 
+    # 5g — Feed Design (Boot Section)
+    fd = r.get("feed_design") or {}
+    if fd:
+        story += sub_section("5g.  Feed Design (Boot Section)")
+        is_c_fd = fd.get("elev_type") == "continuous"
+        A_cm2   = float(fd.get("A_inlet_m2") or 0) * 10000.0
+        fd_left = [
+            ("Loading method",  fd.get("loading_type", "—")),
+            ("Volumetric flow", f"{fd.get('Q_volumetric_m3h','—')} m3/h"),
+            ("Inlet velocity",  f"{fd.get('v_feed_mps','—')} m/s"),
+            ("Inlet area req.", f"{A_cm2:.1f} cm2"),
+            ("Inlet width",     f"{fd.get('inlet_width_mm','—')} mm"),
+            ("Inlet height",    f"{fd.get('inlet_height_mm','—')} mm"),
+        ]
+        if is_c_fd:
+            fd_right = [
+                ("Loading leg h",   f"{fd.get('loading_leg_height_mm','—')} mm"),
+                ("Loading leg w",   f"{fd.get('loading_leg_width_mm','—')} mm"),
+                ("Spout angle",     f">= {fd.get('spout_angle_deg','—')} deg"),
+                ("Surge volume",    f"{fd.get('V_surge_litres','—')} L  ({fd.get('t_surge_s',3)}s)"),
+                ("Boot casing h",   f"{fd.get('boot_casing_height_mm','—')} mm"),
+                ("Floor clearance", f"{fd.get('clearance_mm','—')} mm"),
+            ]
+        else:
+            fd_right = [
+                ("Material depth",  f"{fd.get('material_depth_mm','—')} mm  (0.75xP)"),
+                ("Dig zone arc",    f"{fd.get('dig_zone_length_mm','—')} mm"),
+                ("Dig volume",      f"{fd.get('V_dig_litres','—')} L"),
+                ("Surge volume",    f"{fd.get('V_surge_litres','—')} L  ({fd.get('t_surge_s',3)}s)"),
+                ("Boot casing h",   f"{fd.get('boot_casing_height_mm','—')} mm"),
+                ("Floor clearance", f"{fd.get('clearance_mm','—')} mm"),
+            ]
+        story += four_col_table(fd_left, fd_right)
+        for w in (fd.get("warnings") or []):
+            story.append(Paragraph(f"*  WARNING:  {w}", ST["body"]))
+            story.append(Spacer(1, 2))
+
+    # 5h — Chain Drive Configuration (chain elevators only)
+    if r.get("is_chain"):
+        chain_sel = r.get("chain_selected") or {}
+        sprocket  = r.get("sprocket")       or {}
+        story += sub_section("5h.  Chain Drive Configuration")
+        story += four_col_table([
+            ("Chain series",    chain_sel.get("name","—")),
+            ("Chain pitch",     f"{chain_sel.get('pitch_mm','—')} mm"),
+            ("No. of strands",  str(chain_sel.get("n_strands","—"))),
+            ("Working load",    f"{chain_sel.get('WL_kg','—')} kg / strand"),
+            ("Chain weight",    f"{chain_sel.get('wt_kg_m','—')} kg/m"),
+            ("Max chain speed", f"{chain_sel.get('v_max_ms','—')} m/s"),
+        ], [
+            ("Chain pull",      f"{(r.get('chain_pull_N') or 0)/1000:.2f} kN"),
+            ("SF actual",       f"{round(r.get('chain_SF_actual') or 0, 2)}"),
+            ("Speed check",     "PASS" if r.get("chain_v_ok") else "FAIL"),
+            ("Sprocket teeth",  str(sprocket.get("n_teeth","—"))),
+            ("Sprocket PD",     f"{sprocket.get('PD_mm','—')} mm"),
+            ("Smooth op.",      "YES" if sprocket.get("smooth") else "WARN < 10T"),
+        ])
+
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 6  ENGINEERING VERIFICATION  (with Safety Factors)
     # ══════════════════════════════════════════════════════════════════════════
@@ -1315,6 +1471,7 @@ def build_report(results: dict, inputs: dict,
         "Bearing Life",
         "Bucket Bolt Fatigue",
         "Discharge Chute",
+        "Feed Design (Boot Section)",
     ]
     try:
         notes = _design_notes(r, inp)
