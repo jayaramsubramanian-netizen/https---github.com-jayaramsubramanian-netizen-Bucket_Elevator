@@ -790,6 +790,55 @@ function ProcessEdit({ inp, setField, results }) {
   const df = results?.dynamic_fill ?? null;
   return (
     <>
+      <SectionHead label="Drive Type" />
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        {[
+          ["belt", "🔵 Belt Drive"],
+          ["chain", "⛓ Chain Drive"],
+        ].map(([v, label]) => (
+          <button
+            key={v}
+            onClick={() => setField("conveyor_type", v)}
+            style={{
+              flex: 1,
+              padding: "9px 4px",
+              borderRadius: 5,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              fontSize: 13,
+              fontWeight: 600,
+              border: `1px solid ${(inp.conveyor_type ?? "belt") === v ? T.primary : T.border}`,
+              background:
+                (inp.conveyor_type ?? "belt") === v
+                  ? "rgba(74,158,255,.15)"
+                  : T.panel2,
+              color: (inp.conveyor_type ?? "belt") === v ? T.primary : T.text3,
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {(inp.conveyor_type ?? "belt") === "chain" && (
+        <div
+          style={{
+            background: "rgba(74,158,255,.06)",
+            border: "1px solid rgba(74,158,255,.2)",
+            borderRadius: 5,
+            padding: "8px 12px",
+            marginBottom: 12,
+            fontSize: 11,
+            color: T.text3,
+            lineHeight: 1.5,
+          }}
+        >
+          ⛓ Chain mode: Euler slip check replaced by chain working load check.
+          Belt ply calculation skipped. Configure chain series in Head &amp;
+          Tail Pulley.
+        </div>
+      )}
+
+      <SectionHead label="Process Requirements" />
       <Row2>
         <F
           label="Required Capacity"
@@ -1186,6 +1235,236 @@ function PulleyEdit({ inp, setField, results }) {
         label="Bearing Selection"
         note={`Showing bore ${boreMin}–${boreMax} mm. Select to override auto-pick.`}
       />
+    </>
+  );
+}
+
+// ── Chain catalogue (mirrors backend CHAIN_SERIES) ───────────────────────────
+const CHAIN_OPTIONS = [
+  {
+    id: "N102B",
+    label: 'N-102B  — 4" std  WL=4,990kg  1 strand',
+    pitch: 101.6,
+    strands: 1,
+  },
+  {
+    id: "S102B",
+    label: 'S-102B  — 4" heavy WL=6,804kg  1 strand',
+    pitch: 101.6,
+    strands: 1,
+  },
+  {
+    id: "S110",
+    label: 'S-110   — 6" heavy WL=12,474kg 1 strand',
+    pitch: 152.4,
+    strands: 1,
+  },
+  {
+    id: "ER856",
+    label: 'ER-856  — 6" MDC   WL=18,144kg 1 strand',
+    pitch: 152.4,
+    strands: 1,
+  },
+  {
+    id: "ER857",
+    label: 'ER-857  — 6" MDC   WL=22,680kg 1 strand',
+    pitch: 152.4,
+    strands: 1,
+  },
+  {
+    id: "ER859",
+    label: 'ER-859  — 6" SC    WL=31,750kg 2 strands',
+    pitch: 152.4,
+    strands: 2,
+  },
+  {
+    id: "C6102",
+    label: '6102-1/2 — 12" SC   WL=27,215kg 2 strands',
+    pitch: 304.8,
+    strands: 2,
+  },
+  {
+    id: "C9124",
+    label: '9124    — 9" SC    WL=38,100kg 2 strands',
+    pitch: 228.6,
+    strands: 2,
+  },
+];
+
+function ChainEdit({ inp, setField, results }) {
+  const r = results || {};
+  const cs = r.chain_selected ?? null;
+  const sp = r.sprocket ?? null;
+
+  const inputStyle = {
+    background: T.panel2,
+    border: `1px solid ${T.border}`,
+    borderRadius: 5,
+    color: T.text,
+    fontFamily: "JetBrains Mono,monospace",
+    fontSize: 13,
+    padding: "7px 10px",
+    width: "100%",
+    boxSizing: "border-box",
+    cursor: "pointer",
+  };
+
+  return (
+    <>
+      <SectionHead label="Chain Selection" />
+      <div style={{ marginBottom: 12 }}>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: T.text2,
+            marginBottom: 4,
+          }}
+        >
+          Chain Series
+        </div>
+        <select
+          value={inp.chain_series ?? ""}
+          onChange={(e) => setField("chain_series", e.target.value)}
+          style={inputStyle}
+        >
+          <option value="">Auto — select by pull force</option>
+          {CHAIN_OPTIONS.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+        {cs && (
+          <div style={{ fontSize: 10, color: T.success, marginTop: 4 }}>
+            ✓ Selected: {cs.name} — pull{" "}
+            {r.chain_pull_N != null ? (r.chain_pull_N / 1000).toFixed(1) : "—"}
+            kN SF={r.chain_SF_actual?.toFixed(2) ?? "—"}
+          </div>
+        )}
+      </div>
+
+      <Row2>
+        <div>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: T.text2,
+              marginBottom: 4,
+            }}
+          >
+            No. of Strands
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[1, 2].map((n) => (
+              <button
+                key={n}
+                onClick={() => setField("chain_n_strands", n)}
+                style={{
+                  flex: 1,
+                  padding: "7px 4px",
+                  borderRadius: 5,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  border: `1px solid ${(inp.chain_n_strands ?? 1) === n ? T.primary : T.border}`,
+                  background:
+                    (inp.chain_n_strands ?? 1) === n
+                      ? "rgba(74,158,255,.15)"
+                      : T.panel2,
+                  color: (inp.chain_n_strands ?? 1) === n ? T.primary : T.text3,
+                }}
+              >
+                {n === 1 ? "1 — Single" : "2 — SC Double"}
+              </button>
+            ))}
+          </div>
+        </div>
+        <F
+          label="Chain SF"
+          name="chain_sf"
+          value={inp.chain_sf ?? 6.0}
+          onChange={setField}
+          min={3}
+          max={12}
+          step={0.5}
+          note="CEMA default 6.0; 8.0 for shock/abrasive"
+        />
+      </Row2>
+
+      <SectionHead label="Sprocket" />
+      <F
+        label="Sprocket Teeth Override"
+        name="chain_sprocket_teeth"
+        value={inp.chain_sprocket_teeth ?? 0}
+        onChange={setField}
+        min={0}
+        max={32}
+        step={1}
+        note="0 = auto from D_mm. Recommend 10–20 teeth for smooth chain engagement."
+      />
+      {sp && (
+        <div
+          style={{
+            background: T.panel2,
+            border: `1px solid ${sp.smooth ? T.border : T.warning}`,
+            borderRadius: 5,
+            padding: "8px 12px",
+            marginBottom: 10,
+            fontSize: 11,
+          }}
+        >
+          <div style={{ display: "flex", gap: 16 }}>
+            {[
+              ["PD", `${sp.PD_mm} mm`],
+              ["Teeth", `${sp.n_teeth}`],
+              ["Smooth", sp.smooth ? "✓ Yes" : "⚠ No"],
+            ].map(([l, v]) => (
+              <div key={l}>
+                <div style={{ fontSize: 9, color: T.text3 }}>{l}</div>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: T.text,
+                    fontFamily: "JetBrains Mono,monospace",
+                  }}
+                >
+                  {v}
+                </div>
+              </div>
+            ))}
+          </div>
+          {!sp.smooth && (
+            <div style={{ fontSize: 10, color: T.warning, marginTop: 4 }}>
+              ⚠ {sp.note}
+            </div>
+          )}
+        </div>
+      )}
+
+      <SectionHead label="Chain Speed Check" />
+      {r.chain_v_ok != null && (
+        <div
+          style={{
+            fontSize: 11,
+            padding: "6px 10px",
+            borderRadius: 5,
+            marginBottom: 8,
+            background: r.chain_v_ok
+              ? "rgba(31,184,110,.08)"
+              : "rgba(224,82,82,.10)",
+            border: `1px solid ${r.chain_v_ok ? "rgba(31,184,110,.3)" : "rgba(224,82,82,.3)"}`,
+            color: r.chain_v_ok ? T.success : T.danger,
+          }}
+        >
+          {r.chain_v_ok
+            ? `✓ Speed ${r.v?.toFixed(2) ?? "—"} m/s ≤ chain rated ${cs?.v_max_ms ?? "—"} m/s`
+            : `⚠ Speed ${r.v?.toFixed(2) ?? "—"} m/s EXCEEDS chain rated ${cs?.v_max_ms ?? "—"} m/s`}
+        </div>
+      )}
     </>
   );
 }
@@ -2125,30 +2404,219 @@ function DischargeEdit({ inp, setField, results }) {
   );
 }
 
-function FeedEdit() {
-  return (
+function FeedEdit({ inp, setField, results }) {
+  const r = results || {};
+  const fd = r.feed_design ?? null;
+  const isC = r.is_continuous ?? false;
+
+  const InfoGrid = ({ items }) => (
     <div
       style={{
-        textAlign: "center",
-        padding: "32px 16px",
+        display: "flex",
+        gap: 14,
+        flexWrap: "wrap",
+        background: T.panel2,
+        border: `1px solid ${T.border}`,
+        borderRadius: 5,
+        padding: "10px 12px",
+        marginBottom: 12,
       }}
     >
-      <div style={{ fontSize: 32, marginBottom: 12 }}>🚧</div>
+      {items.map(([l, v, hi]) => (
+        <div key={l}>
+          <div style={{ fontSize: 9, color: T.text3 }}>{l}</div>
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 700,
+              color: hi ? T.primary : T.text,
+              fontFamily: "JetBrains Mono,monospace",
+            }}
+          >
+            {v}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  if (!fd) {
+    return (
+      <div style={{ textAlign: "center", padding: "32px 16px" }}>
+        <div style={{ fontSize: 28, marginBottom: 12 }}>⚙</div>
+        <div
+          style={{
+            fontSize: 14,
+            color: T.text,
+            marginBottom: 8,
+            fontWeight: 700,
+          }}
+        >
+          Feed Design
+        </div>
+        <div style={{ fontSize: 12, color: T.text3, lineHeight: 1.6 }}>
+          Run a calculation first — boot feed geometry is computed automatically
+          from material, bucket, and belt parameters.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
       <div
         style={{
-          fontSize: 15,
-          fontWeight: 700,
-          color: T.text,
-          marginBottom: 8,
+          background: isC ? "rgba(74,158,255,.08)" : "rgba(31,184,110,.07)",
+          border: `1px solid ${isC ? "rgba(74,158,255,.3)" : "rgba(31,184,110,.25)"}`,
+          borderRadius: 5,
+          padding: "10px 12px",
+          marginBottom: 14,
         }}
       >
-        Feed Design Module
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: ".05em",
+            color: isC ? T.primary : T.success,
+            marginBottom: 5,
+          }}
+        >
+          {isC
+            ? "⛓ CONTINUOUS — LOADING LEG"
+            : "⚙ CENTRIFUGAL — DIGGING / SCOOPING"}
+        </div>
+        <div style={{ fontSize: 11, color: T.text3, lineHeight: 1.5 }}>
+          {fd.loading_note}
+        </div>
       </div>
-      <div style={{ fontSize: 12, color: T.text3, lineHeight: 1.6 }}>
-        Boot inlet geometry, scooping angle, feeder sizing, and boot surge
-        volume calculations are planned for the next release.
+
+      <SectionHead label="Material Flow" />
+      <InfoGrid
+        items={[
+          ["Volumetric flow", `${fd.Q_volumetric_m3h} m³/h`, false],
+          ["Inlet velocity", `${fd.v_feed_mps} m/s`, false],
+          [
+            "Inlet area req.",
+            `${(fd.A_inlet_m2 * 10000).toFixed(1)} cm²`,
+            false,
+          ],
+        ]}
+      />
+
+      <SectionHead label="Boot Inlet Opening" />
+      <InfoGrid
+        items={[
+          ["Width", `${fd.inlet_width_mm} mm`, false],
+          ["Height", `${fd.inlet_height_mm} mm`, true],
+          ["Area", `${(fd.A_inlet_m2 * 1e6).toFixed(0)} mm²`, false],
+        ]}
+      />
+      <F
+        label="Outlet Height Override"
+        name="boot_outlet_height_mm"
+        value={inp.boot_outlet_height_mm ?? 0}
+        onChange={setField}
+        unit="mm"
+        min={0}
+        max={2000}
+        step={25}
+        note={`0 = auto (${fd.inlet_height_mm}mm calculated). Set to preferred standard opening.`}
+      />
+
+      {isC ? (
+        <>
+          <SectionHead label="Loading Leg" />
+          <InfoGrid
+            items={[
+              ["Leg height", `${fd.loading_leg_height_mm} mm`, true],
+              ["Leg width", `${fd.loading_leg_width_mm} mm`, false],
+              ["Spout angle", `≥ ${fd.spout_angle_deg}°`, false],
+            ]}
+          />
+          <div
+            style={{
+              fontSize: 10,
+              color: T.text3,
+              marginBottom: 12,
+              lineHeight: 1.5,
+            }}
+          >
+            Spout angle ≥ AoR + 10° prevents bridging. Leg height = 2× bucket
+            depth.
+          </div>
+        </>
+      ) : (
+        <>
+          <SectionHead label="Digging Zone" />
+          <InfoGrid
+            items={[
+              ["Material depth", `${fd.material_depth_mm} mm (0.75×P)`, true],
+              ["Dig arc", `${fd.dig_zone_length_mm} mm`, false],
+              ["Dig volume", `${fd.V_dig_litres} L`, false],
+            ]}
+          />
+          <div
+            style={{
+              fontSize: 10,
+              color: T.text3,
+              marginBottom: 12,
+              lineHeight: 1.5,
+            }}
+          >
+            Maintain boot material at 0.75× projection for consistent scooping.
+          </div>
+        </>
+      )}
+
+      <SectionHead label="Boot Surge Volume" />
+      <InfoGrid
+        items={[
+          ["Surge buffer", `${fd.V_surge_litres} L`, true],
+          ["Flow rate", `${fd.Q_volumetric_m3h} m³/h`, false],
+          ["Buffer time", `${fd.t_surge_s}s`, false],
+        ]}
+      />
+      <div
+        style={{
+          fontSize: 10,
+          color: T.text3,
+          marginBottom: 12,
+          lineHeight: 1.5,
+        }}
+      >
+        CEMA: 3s surge buffer absorbs upstream flow fluctuations.
       </div>
-    </div>
+
+      <SectionHead label="Boot Casing" />
+      <InfoGrid
+        items={[
+          ["Min height", `${fd.boot_casing_height_mm} mm`, true],
+          ["Pulley R", `${fd.boot_pulley_radius_mm} mm`, false],
+          ["Bucket proj.", `${fd.bucket_projection_mm} mm`, false],
+          ["Clearance", `${fd.clearance_mm} mm`, false],
+        ]}
+      />
+
+      {fd.warnings?.length > 0 &&
+        fd.warnings.map((w, i) => (
+          <div
+            key={i}
+            style={{
+              background: "rgba(217,142,0,.08)",
+              border: "1px solid rgba(217,142,0,.3)",
+              borderRadius: 5,
+              padding: "8px 12px",
+              marginBottom: 8,
+              fontSize: 11,
+              color: T.warning,
+              lineHeight: 1.5,
+            }}
+          >
+            ⚠ {w}
+          </div>
+        ))}
+    </>
   );
 }
 
@@ -2495,9 +2963,14 @@ export default function InputSidebar({ inputs, setField, results }) {
       C: <PulleyEdit inp={inp} setField={setField} results={r} />,
     },
     belt: {
-      title: "Belt Selection",
+      title: "Belt / Drive Selection",
       cema: "CEMA 375 §4",
       C: <BeltEdit inp={inp} setField={setField} results={r} />,
+    },
+    chain: {
+      title: "Chain Configuration",
+      cema: "CEMA 375 §4",
+      C: <ChainEdit inp={inp} setField={setField} results={r} />,
     },
     bucket: {
       title: "Bucket Selection",
@@ -2514,7 +2987,11 @@ export default function InputSidebar({ inputs, setField, results }) {
       cema: "CEMA 375 §5",
       C: <DischargeEdit inp={inp} setField={setField} results={r} />,
     },
-    feed: { title: "Feed Design", cema: "Pending", C: <FeedEdit /> },
+    feed: {
+      title: "Feed Design",
+      cema: "CEMA 375 §4",
+      C: <FeedEdit inp={inp} setField={setField} results={r} />,
+    },
     casing: {
       title: "Casing Design",
       cema: "CEMA 375 §7",
@@ -2591,13 +3068,27 @@ export default function InputSidebar({ inputs, setField, results }) {
           summary={summaries.pulleys}
           onEdit={() => open("pulleys")}
         />
-        <SectionRow
-          label="Belt Selection"
-          depth={1}
-          badge={badges.belt}
-          summary={summaries.belt}
-          onEdit={() => open("belt")}
-        />
+        {(inp.conveyor_type ?? "belt") === "belt" ? (
+          <SectionRow
+            label="Belt Selection"
+            depth={1}
+            badge={badges.belt}
+            summary={summaries.belt}
+            onEdit={() => open("belt")}
+          />
+        ) : (
+          <SectionRow
+            label="Chain Configuration ⛓"
+            depth={1}
+            badge={checkBadge(r, ["chain sf", "chain speed", "sprocket"])}
+            summary={
+              r.chain_selected
+                ? `${r.chain_selected.name} · SF=${r.chain_SF_actual?.toFixed(2) ?? "—"} · ${inp.chain_n_strands ?? 1} strand`
+                : "auto · configure below"
+            }
+            onEdit={() => open("chain")}
+          />
+        )}
         <SectionRow
           label="Bucket Selection"
           depth={1}

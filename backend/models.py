@@ -173,6 +173,68 @@ class BucketElevatorInput(BaseModel):
         ),
     )
 
+    # ── v1.8.0 — Chain elevator configuration ────────────────────────────────
+    # Set conveyor_type = "chain" to switch from belt to chain drive.
+    # All belt-specific outputs (belt_ply, euler_ratio, lagging) become N/A.
+    # Chain-specific outputs (chain_pull, chain_sf, sprocket_PD) are added.
+
+    conveyor_type: Literal["belt", "chain"] = Field(
+        "belt",
+        description=(
+            "Drive element type. "
+            "'belt': fabric/steel-cord belt on pulley (default). "
+            "'chain': engineering-class chain on toothed sprocket. "
+            "Switches T2 calculation, removes Euler slip check, "
+            "adds chain working load check."
+        ),
+    )
+
+    chain_series: str = Field(
+        "",
+        description=(
+            "Chain series ID for manual selection (e.g. 'S102B', 'S110', 'ER856'). "
+            "Empty = auto-select smallest adequate chain by pull force."
+        ),
+    )
+
+    chain_n_strands: int = Field(
+        1, ge=1, le=2,
+        description=(
+            "Number of chain strands. "
+            "1 = single-strand (standard centrifugal and continuous series). "
+            "2 = double-strand (SC Super Capacity series only)."
+        ),
+    )
+
+    chain_sprocket_teeth: int = Field(
+        0, ge=0, le=32,
+        description=(
+            "Head sprocket tooth count override. "
+            "0 = auto (solver picks n_teeth that gives closest standard PD to D_mm). "
+            "Set to specify a standard sprocket."
+        ),
+    )
+
+    chain_sf: float = Field(
+        6.0, ge=3.0, le=12.0,
+        description=(
+            "Chain working load safety factor. "
+            "CEMA 375 §4 default: 6.0 for standard service, "
+            "8.0 for shock loading or abrasive service."
+        ),
+    )
+
+    # ── v1.8.0 — Feed design (2f) ─────────────────────────────────────────────
+    boot_outlet_height_mm: float = Field(
+        0.0, ge=0.0, le=2000.0,
+        description=(
+            "Boot outlet / inlet height override [mm]. "
+            "0 = auto-calculate from bucket projection (centrifugal) "
+            "or loading leg dimensions (continuous). "
+            "Set to a preferred standard opening height."
+        ),
+    )
+
     # ── v1.7.0 — Component selector overrides ────────────────────────────────
     # When set, these lock a specific catalogue component instead of the
     # solver's auto-select.  All default to "" / 0 meaning "auto".

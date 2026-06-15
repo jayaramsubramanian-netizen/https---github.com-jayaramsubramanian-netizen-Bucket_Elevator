@@ -77,6 +77,16 @@ export const DEFAULT_INPUTS = {
   bearing_name: "", // name from bearings DB table
   drive_model: "", // model ID from drives DB table
   discharge_type_override: "", // "centrifugal" | "continuous" | "" (auto)
+
+  // ── v1.8.0 Chain elevator ─────────────────────────────────────────────────
+  conveyor_type: "belt", // "belt" | "chain"
+  chain_series: "", // "" = auto; "S102B" | "S110" | "ER856" | "ER857" | "ER859"
+  chain_n_strands: 1, // 1 = single; 2 = SC double-chain
+  chain_sprocket_teeth: 0, // 0 = auto-compute from D_mm
+  chain_sf: 6.0, // safety factor (CEMA 375 default 6.0)
+
+  // ── v1.8.0 Feed Design (2f) ────────────────────────────────────────────────
+  boot_outlet_height_mm: 0, // 0 = auto-calculate from bucket/belt geometry
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -332,6 +342,17 @@ function normaliseResult(raw) {
     bucket_recommendation: raw.bucket_recommendation ?? null,
     dynamic_fill: raw.dynamic_fill ?? null,
     wrap_recommendation: raw.wrap_recommendation ?? null,
+
+    // v1.8.0 — Feed Design (2f)
+    feed_design: raw.feed_design ?? null,
+
+    // v1.8.0 — Chain elevator outputs
+    is_chain: raw.is_chain ?? false,
+    chain_selected: raw.chain_selected ?? null,
+    chain_pull_N: raw.chain_pull_N ?? null,
+    chain_SF_actual: raw.chain_SF_actual ?? null,
+    chain_v_ok: raw.chain_v_ok ?? null,
+    sprocket: raw.sprocket ?? null,
 
     checks,
     status,

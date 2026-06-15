@@ -496,9 +496,162 @@ MOTOR_SIZES = [
 ]
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# LOCAL HELPERS — thin wrappers / converters (no physics lives here)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ── Chain series catalogue ─────────────────────────────────────────────────────
+# Source: Martin Engineering catalog H-131 thru H-137, CEMA 375-2017 §4.
+#
+# wt_kg_m   : chain weight per strand per metre [kg/m]
+# WL_kg     : published working load per strand [kg]
+# v_max_ms  : CEMA rated maximum chain speed [m/s]
+# n_strands : 1 = single-strand; 2 = double-strand (SC series only)
+# pitch_mm  : chain pitch [mm]
+# series    : CEMA elevator series this chain is used in
+
+CHAIN_SERIES = [
+    # ── Centrifugal / continuous small (Series 100/200/700/800) ────────────────
+    {
+        "id": "N102B",
+        "name": "N-102B  (4\" std, single)",
+        "pitch_mm": 101.6, "WL_kg": 4990,  "wt_kg_m": 1.8,
+        "v_max_ms": 1.27,  "n_strands": 1,
+        "series": ["100", "200"],
+        "note": "Light duty centrifugal — grain, fertiliser, light minerals",
+    },
+    {
+        "id": "S102B",
+        "name": "S-102B / 6102 (4\" heavy, single)",
+        "pitch_mm": 101.6, "WL_kg": 6804,  "wt_kg_m": 2.1,
+        "v_max_ms": 1.27,  "n_strands": 1,
+        "series": ["100", "200", "700", "800"],
+        "note": "Medium duty — grain, aggregate, light mineral; 4\" pitch",
+    },
+    {
+        "id": "S110",
+        "name": "S-110 / 6110  (6\" heavy, single)",
+        "pitch_mm": 152.4, "WL_kg": 12474, "wt_kg_m": 4.5,
+        "v_max_ms": 1.27,  "n_strands": 1,
+        "series": ["100", "200", "700", "800"],
+        "note": "Heavy centrifugal / continuous — cement, aggregate, salt",
+    },
+    # ── Mill duty MDC (Series MDC/MDB) ─────────────────────────────────────────
+    {
+        "id": "ER856",
+        "name": "ER-856  (6\" MDC rollerless, single)",
+        "pitch_mm": 152.4, "WL_kg": 18144, "wt_kg_m": 7.5,
+        "v_max_ms": 1.35,  "n_strands": 1,
+        "series": ["MDC", "MDB"],
+        "note": "Mill duty — cement clinker, ore, shale; rollerless reduces maintenance",
+    },
+    {
+        "id": "ER857",
+        "name": "ER-857  (6\" MDC rollerless, single)",
+        "pitch_mm": 152.4, "WL_kg": 22680, "wt_kg_m": 8.5,
+        "v_max_ms": 1.35,  "n_strands": 1,
+        "series": ["MDC"],
+        "note": "Heavy mill duty — higher working load than ER-856",
+    },
+    # ── Super Capacity SC (double-strand) ──────────────────────────────────────
+    {
+        "id": "ER859",
+        "name": "ER-859  (6\" SC double)",
+        "pitch_mm": 152.4, "WL_kg": 31750, "wt_kg_m": 9.5,
+        "v_max_ms": 0.64,  "n_strands": 2,
+        "series": ["SC"],
+        "note": "SC double chain — 6\" pitch, very slow speed",
+    },
+    {
+        "id": "C6102",
+        "name": "6102-1/2  (12\" SC double)",
+        "pitch_mm": 304.8, "WL_kg": 27215, "wt_kg_m": 11.0,
+        "v_max_ms": 0.51,  "n_strands": 2,
+        "series": ["SC"],
+        "note": "SC double chain — 12\" pitch; heavy lumpy minerals",
+    },
+    {
+        "id": "C9124",
+        "name": "9124  (9\" SC double)",
+        "pitch_mm": 228.6, "WL_kg": 38100, "wt_kg_m": 14.0,
+        "v_max_ms": 0.64,  "n_strands": 2,
+        "series": ["SC"],
+        "note": "SC double chain — 9\" pitch; maximum working load",
+    },
+]
+
+_CHAIN_BY_ID = {c["id"]: c for c in CHAIN_SERIES}
+
+
+def select_chain_auto(
+    T_pull_N:  float,
+    n_strands: int   = 1,
+    sf:        float = 6.0,
+) -> dict:
+    """
+    Select the smallest chain whose working load provides the required safety factor.
+
+    Criterion (CEMA 375 §4):
+        WL [kg] × 9.81 × n_strands / T_pull_N  ≥  sf
+        → WL_required = T_pull_N × sf / (9.81 × n_strands)
+
+    Candidates are filtered to matching n_strands and sorted smallest WL first.
+    Returns the heaviest chain if none meets the criterion (forces an SF check fail).
+    """
+    req_WL_kg  = T_pull_N * sf / (9.81 * max(n_strands, 1))
+    candidates = [c for c in CHAIN_SERIES if c["n_strands"] == n_strands]
+    for ch in sorted(candidates, key=lambda x: x["WL_kg"]):
+        if ch["WL_kg"] >= req_WL_kg:
+            return ch
+    return candidates[-1] if candidates else CHAIN_SERIES[0]
+
+
+def sprocket_geometry(chain_pitch_mm: float, n_teeth: int) -> dict:
+    """
+    Standard sprocket pitch diameter from chain pitch and tooth count.
+
+    Formula:  PD = pitch / sin(π / n_teeth)
+
+    Also returns the standard ANSI tooth range (10–20 teeth recommended for
+    smooth operation; < 10 causes polygonal chordal action; > 24 increases
+    sprocket diameter steeply).
+    """
+    if n_teeth < 6:
+        n_teeth = 6  # hard minimum to avoid geometry error
+    PD_mm = chain_pitch_mm / math.sin(math.pi / n_teeth)
+    return {
+        "PD_mm":   round(PD_mm, 1),
+        "n_teeth": n_teeth,
+        "smooth":  10 <= n_teeth <= 20,
+        "note": (
+            f"{n_teeth}-tooth sprocket, PD = {PD_mm:.0f} mm. "
+            + ("✓ within 10–20 tooth smooth-operation range."
+               if 10 <= n_teeth <= 20
+               else "⚠ < 10 teeth — chordal action increases chain wear."
+               if n_teeth < 10
+               else "✓ > 20 teeth — large PD, verify casing head-section clearance.")
+        ),
+    }
+
+
+def _chain_catenary_tension(
+    chain_wt_kg_m: float,
+    n_strands:     int,
+    bucket_mass_kg: float,
+    spacing_m:     float,
+    H_m:           float,
+) -> float:
+    """
+    Self-weight tension for chain elevator [N].
+
+    Components:
+    • Chain weight (both up and return strands):
+          chain_wt × n_strands × 2 × H × g
+    • Bucket weight (going-up strand only — return is unloaded):
+          bucket_mass / spacing × H × g
+
+    Note: material weight T1 is computed separately by
+    DynamicLoadEngine.material_tension() and is the same for belt and chain.
+    """
+    T_chain   = chain_wt_kg_m * n_strands * 2.0 * H_m * 9.81
+    T_buckets = (bucket_mass_kg / max(spacing_m, 0.001)) * H_m * 9.81
+    return T_chain + T_buckets
 
 def belt_speed(D_mm: float, n_rpm: float) -> float:
     """Head pulley rim speed [m/s].  Delegates to DischargePhysics."""
@@ -1041,6 +1194,226 @@ def _required_wrap_angle(
     }
 
 
+def feed_design(
+    Q_th:           float,
+    rho:            float,
+    belt_width_mm:  float,
+    bucket:         dict,
+    v_belt_mps:     float,
+    elev_type:      str,
+    boot_D_mm:      float,
+    aor_deg:        float = 35.0,
+    boot_outlet_h:  float = 0.0,
+) -> dict:
+    """
+    CEMA 375 §4 — Boot Feed Design.
+
+    Sizing the boot inlet opening and surge volume so that material can
+    enter buckets without restriction.  The two loading modes are
+    physically distinct and require different boot geometries:
+
+    Centrifugal (digging) — CC, AA, AC, C bucket styles
+    ────────────────────────────────────────────────────
+    Buckets scoop (dig) material from a boot pit.  Material is stored
+    in the boot to a depth that matches the bucket projection P.
+    The effective "digging zone" spans roughly 90° of the boot pulley arc.
+
+    Inlet opening:
+        Width  = belt width  (buckets sweep the full belt width)
+        Height = material depth = 0.75 × bucket projection
+                 (empirical CEMA value: keeps buckets ≥75% full at entry)
+
+    Inlet area check:
+        A_req = Q_vol / v_material  where v_material ≈ 0.30 m/s
+        (low velocity avoids splash and reduces wear at inlet)
+
+    Continuous (loading leg) — MF, HF, SC bucket styles
+    ────────────────────────────────────────────────────
+    Buckets are filled by a spout/chute — they do NOT dig.
+    A loading leg delivers pre-fed material into the open bucket mouth
+    as each bucket passes horizontally through the boot section.
+
+    Spout geometry:
+        Height = 2 × bucket depth  (allows two buckets to be filling)
+        Width  = bucket width + 50mm clearance each side
+        Angle  ≥ angle_of_repose + 10° (typically ≥ 45°)
+
+    Inlet opening:
+        A_req = Q_vol / v_spout  where v_spout ≈ 0.40 m/s
+
+    Surge volume (both types)
+    ─────────────────────────
+    CEMA recommends a boot surge buffer of 2–5 seconds of volumetric flow
+    to absorb feed rate fluctuations without starving the elevator:
+        V_surge = Q_vol × t_surge
+
+    Boot casing height (from boot pulley centre to floor)
+    ─────────────────────────────────────────────────────
+        Centrifugal:  h = R_boot + P_bucket + clearance_50mm
+        Continuous:   h = R_boot + P_bucket + loading_leg_height + clearance_25mm
+
+    Parameters
+    ──────────────────────────────────────────────────────────────────────
+    Q_th            Design capacity [t/h]
+    rho             Bulk density [kg/m³]
+    belt_width_mm   Belt / casing width [mm]
+    bucket          Bucket dict (P, depth_mm, W, V, discharge_type)
+    v_belt_mps      Belt speed [m/s]
+    elev_type       "centrifugal" | "continuous"
+    boot_D_mm       Boot pulley diameter [mm]
+    aor_deg         Material angle of repose [°]
+    boot_outlet_h   Engineer override for outlet height [mm]; 0 = auto
+    """
+    BW_m    = belt_width_mm / 1000.0
+    Q_m3s   = Q_th / (rho * 3.6)          # volumetric flow [m³/s]
+
+    P_mm    = bucket.get("P")     or 178   # projection [mm]
+    H_mm    = bucket.get("depth_mm") or bucket.get("H") or 295  # bucket depth [mm]
+    W_mm    = bucket.get("W")     or 406   # bucket width [mm]
+    P_m     = P_mm  / 1000.0
+    H_m_bkt = H_mm  / 1000.0
+    W_m     = W_mm  / 1000.0
+    R_boot  = boot_D_mm / 2000.0          # boot pulley radius [m]
+
+    t_surge_s = 3.0   # CEMA recommended surge buffer [s]
+
+    if elev_type == "continuous":
+        # ── Continuous — loading leg (spout feed) ─────────────────────────
+        loading_type = "Loading Leg — Spout Feed"
+        v_feed_mps   = 0.40   # m/s at spout outlet
+
+        # Inlet sizing
+        A_inlet_m2   = Q_m3s / v_feed_mps
+        h_inlet_m    = A_inlet_m2 / max(BW_m, 0.1)
+
+        # Loading leg dimensions
+        leg_height_m = max(2.0 * H_m_bkt, 0.40)   # 2× bucket depth min 400mm
+        leg_width_m  = W_m + 0.100                 # bucket width + 50mm each side
+        spout_angle  = max(aor_deg + 10.0, 45.0)   # angle of repose + margin
+
+        clearance_m  = 0.025
+        boot_min_h_m = R_boot + P_m + leg_height_m + clearance_m
+
+        loading_note = (
+            f"Continuous elevators require a loading leg — material is fed "
+            f"into open bucket mouths via a spout as they pass horizontally. "
+            f"Leg height ≥ {leg_height_m*1000:.0f}mm (2×bucket depth). "
+            f"Spout angle ≥ {spout_angle:.0f}° (AoR {aor_deg:.0f}° + 10° margin). "
+            f"Do NOT allow buckets to dig — use a feeder upstream."
+        )
+        warnings = []
+        if v_belt_mps > 1.3:
+            warnings.append(
+                f"Belt speed {v_belt_mps:.2f} m/s is high for a loading leg — "
+                f"material transit time through leg is short. "
+                f"Verify spout can deliver material fast enough."
+            )
+
+        return {
+            "loading_type":          loading_type,
+            "loading_note":          loading_note,
+            "elev_type":             elev_type,
+            # Flow rates
+            "Q_volumetric_m3s":      round(Q_m3s,        5),
+            "Q_volumetric_m3h":      round(Q_m3s * 3600, 2),
+            "v_feed_mps":            round(v_feed_mps,   2),
+            # Inlet / opening
+            "A_inlet_m2":            round(A_inlet_m2,   5),
+            "inlet_width_mm":        round(BW_m * 1000,  0),
+            "inlet_height_mm":       round(h_inlet_m * 1000, 0),
+            "inlet_height_used_mm":  round(
+                boot_outlet_h if boot_outlet_h > 0 else h_inlet_m * 1000, 0
+            ),
+            # Loading leg
+            "loading_leg_height_mm": round(leg_height_m * 1000, 0),
+            "loading_leg_width_mm":  round(leg_width_m  * 1000, 0),
+            "spout_angle_deg":       round(spout_angle, 1),
+            # Surge
+            "V_surge_m3":            round(Q_m3s * t_surge_s, 5),
+            "V_surge_litres":        round(Q_m3s * t_surge_s * 1000, 1),
+            "t_surge_s":             t_surge_s,
+            # Boot geometry
+            "boot_casing_height_mm": round(boot_min_h_m * 1000, 0),
+            "boot_pulley_radius_mm": round(R_boot * 1000, 0),
+            "bucket_projection_mm":  P_mm,
+            "clearance_mm":          round(clearance_m * 1000, 0),
+            "warnings":              warnings,
+        }
+
+    else:
+        # ── Centrifugal — digging ────────────────────────────────────────
+        loading_type = "Centrifugal — Digging / Scooping"
+        v_feed_mps   = 0.30   # m/s horizontal material flow in boot pit
+
+        # Material depth in boot pit = 0.75 × projection (CEMA empirical)
+        material_depth_m = P_m * 0.75
+
+        # Inlet area (horizontal cross-section of boot pit at material level)
+        A_inlet_m2   = Q_m3s / v_feed_mps
+        h_inlet_m    = material_depth_m   # depth determines fill, not area
+        inlet_width_m = BW_m
+
+        clearance_m  = 0.050   # 50mm minimum boot floor clearance
+        boot_min_h_m = R_boot + P_m + H_m_bkt + clearance_m
+
+        # Dig volume — volume of material in the active digging zone
+        # CEMA: digging zone ≈ 90° arc at boot → length ≈ π/2 × R_boot
+        dig_zone_length_m = math.pi / 2.0 * R_boot
+        V_dig_m3 = inlet_width_m * material_depth_m * dig_zone_length_m
+
+        loading_note = (
+            f"Centrifugal elevators dig material from the boot pit. "
+            f"Buckets scoop as they round the boot pulley (90° arc). "
+            f"Maintain material depth ≈ {material_depth_m*1000:.0f}mm "
+            f"(0.75×projection {P_mm}mm) for consistent filling. "
+            f"Boot floor clearance ≥ {clearance_m*1000:.0f}mm."
+        )
+        warnings = []
+        if v_belt_mps > 2.0:
+            warnings.append(
+                f"Belt speed {v_belt_mps:.2f} m/s is high for a digging elevator — "
+                f"material scatter in boot may reduce fill efficiency. "
+                f"Consider increasing bucket gap or reducing speed."
+            )
+        if material_depth_m < 0.050:
+            warnings.append(
+                "Bucket projection is very small — maintain boot material level carefully."
+            )
+
+        return {
+            "loading_type":          loading_type,
+            "loading_note":          loading_note,
+            "elev_type":             elev_type,
+            # Flow rates
+            "Q_volumetric_m3s":      round(Q_m3s,        5),
+            "Q_volumetric_m3h":      round(Q_m3s * 3600, 2),
+            "v_feed_mps":            round(v_feed_mps,   2),
+            # Inlet / opening
+            "A_inlet_m2":            round(A_inlet_m2,   5),
+            "inlet_width_mm":        round(inlet_width_m * 1000, 0),
+            "inlet_height_mm":       round(material_depth_m * 1000, 0),
+            "inlet_height_used_mm":  round(
+                boot_outlet_h if boot_outlet_h > 0 else material_depth_m * 1000, 0
+            ),
+            # Digging zone
+            "material_depth_mm":     round(material_depth_m * 1000, 0),
+            "dig_zone_length_mm":    round(dig_zone_length_m * 1000, 0),
+            "V_dig_m3":              round(V_dig_m3, 5),
+            "V_dig_litres":          round(V_dig_m3 * 1000, 1),
+            # Surge
+            "V_surge_m3":            round(Q_m3s * t_surge_s, 5),
+            "V_surge_litres":        round(Q_m3s * t_surge_s * 1000, 1),
+            "t_surge_s":             t_surge_s,
+            # Boot geometry
+            "boot_casing_height_mm": round(boot_min_h_m * 1000, 0),
+            "boot_pulley_radius_mm": round(R_boot * 1000, 0),
+            "bucket_projection_mm":  P_mm,
+            "bucket_depth_mm":       H_mm,
+            "clearance_mm":          round(clearance_m * 1000, 0),
+            "warnings":              warnings,
+        }
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # FULL CEMA 375 SOLVER
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1143,23 +1516,88 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     # v1.2.1 FIX: mu and wrap_deg now passed through to Euler check
     bw_kg = bucket.get("bucket_mass_kg", bucket["V"] * 1.5)
 
-    # ── Belt width — user override or auto-select ─────────────────────────────
-    # v1.5.0: belt_width_override_mm > 0 lets the engineer specify the exact
-    # belt width (e.g. to match existing stock or a specific conveyor standard).
+    # ── Belt width / casing width ─────────────────────────────────────────────
     _bw_override = getattr(inp, "belt_width_override_mm", 0) or 0
     BW_mm = int(_bw_override) if _bw_override > 0 else select_belt_width(bucket["W"])
 
-    tens  = calc_headshaft_tensions(
-        Q, inp.H_m, v, bw_kg, spacing, BW_mm, inp.K_takeup,
-        mu=inp.mu, wrap_deg=inp.wrap_deg,
-    )
-    T1, T2, T3 = tens["T1"], tens["T2"], tens["T3"]
-    F_eff      = tens["F_eff"]
-    R_head     = tens["R_headshaft"]
-    euler_chk  = tens["euler_check"]
+    # ── v1.8.0 — Belt vs Chain tension branch ────────────────────────────────
+    is_chain      = getattr(inp, "conveyor_type", "belt") == "chain"
+    chain_n_str   = int(getattr(inp, "chain_n_strands", 1) or 1)
+    chain_ser_id  = (getattr(inp, "chain_series", "") or "").strip()
+    chain_sf_req  = float(getattr(inp, "chain_sf", 6.0) or 6.0)
+    chain_n_teeth = int(getattr(inp, "chain_sprocket_teeth", 0) or 0)
+    tens: dict = {}   # populated in belt branch; empty dict for chain (safe subscript via .get())
 
-    # ── 3.9 — Wrap angle recommendation (advisory only) ───────────────────────
-    wrap_rec = _required_wrap_angle(F_eff, T3, inp.mu)
+    if is_chain:
+        # ── Chain T2: chain self-weight + bucket weight ───────────────────────
+        _chain_prelim = (
+            _CHAIN_BY_ID.get(chain_ser_id)
+            if chain_ser_id and chain_ser_id in _CHAIN_BY_ID else None
+        )
+        _chain_wt_prelim = _chain_prelim["wt_kg_m"] if _chain_prelim else 4.5
+
+        T1     = DynamicLoadEngine.material_tension(Q, inp.H_m, v)
+        T2     = _chain_catenary_tension(_chain_wt_prelim, chain_n_str, bw_kg, spacing, inp.H_m)
+        F_eff  = T1 + T2
+        T3     = F_eff * inp.K_takeup
+        R_head = F_eff + T3
+
+        euler_chk = {
+            "euler_ratio": None, "T2_minimum": 0.0, "slip_safe": True,
+            "note": "N/A — chain drive: slip check replaced by working load check",
+        }
+
+        # Select chain and refine T2 with actual chain weight
+        if _chain_prelim:
+            chain_selected = _chain_prelim
+        else:
+            chain_selected = select_chain_auto(F_eff, chain_n_str, chain_sf_req)
+
+        T2     = _chain_catenary_tension(chain_selected["wt_kg_m"], chain_n_str, bw_kg, spacing, inp.H_m)
+        F_eff  = T1 + T2
+        T3     = F_eff * inp.K_takeup
+        R_head = F_eff + T3
+
+        # ── Sprocket geometry ─────────────────────────────────────────────────
+        if chain_n_teeth > 0:
+            sprocket = sprocket_geometry(chain_selected["pitch_mm"], chain_n_teeth)
+        else:
+            _pitch   = chain_selected["pitch_mm"]
+            _sin_arg = min(0.9999, _pitch / max(inp.D_mm, _pitch))
+            _n_est   = max(6, round(math.pi / math.asin(_sin_arg)))
+            sprocket = sprocket_geometry(_pitch, _n_est)
+
+        chain_pull_N = F_eff
+        chain_SF_act = chain_selected["WL_kg"] * 9.81 * chain_n_str / max(chain_pull_N, 1.0)
+        chain_v_ok   = v <= chain_selected["v_max_ms"]
+        belt_ply     = None
+        belt_PIW     = None
+
+        wrap_rec = {
+            "required_deg": None, "config": "N/A (chain drive)", "adequate": True,
+            "recommendation": "Chain cannot slip on sprocket — Euler wrap check not applicable.",
+            "note": "Chain pull working load check replaces Euler-Eytelwein.",
+        }
+
+    else:
+        # ── Belt elevator ─────────────────────────────────────────────────────
+        tens  = calc_headshaft_tensions(
+            Q, inp.H_m, v, bw_kg, spacing, BW_mm, inp.K_takeup,
+            mu=inp.mu, wrap_deg=inp.wrap_deg,
+        )
+        T1, T2, T3 = tens["T1"], tens["T2"], tens["T3"]
+        F_eff      = tens["F_eff"]
+        R_head     = tens["R_headshaft"]
+        euler_chk  = tens["euler_check"]
+
+        chain_selected = None
+        chain_SF_act   = None
+        chain_pull_N   = None
+        chain_v_ok     = None
+        sprocket       = None
+
+        # 3.9 — Wrap angle recommendation
+        wrap_rec = _required_wrap_angle(F_eff, T3, inp.mu)
 
     # ── Shaft sizing ──────────────────────────────────────────────────────────
     T_Nm = calc_torsional_moment(P_total, inp.n_rpm)
@@ -1462,6 +1900,20 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         ),
     }
 
+    # ── Feed design (2f) ──────────────────────────────────────────────────────
+    _boot_outlet_h = float(getattr(inp, "boot_outlet_height_mm", 0) or 0)
+    feed_result = feed_design(
+        Q_th          = Q,
+        rho           = rho,
+        belt_width_mm = float(BW_mm),
+        bucket        = bucket,
+        v_belt_mps    = v,
+        elev_type     = "continuous" if is_continuous else "centrifugal",
+        boot_D_mm     = float(_boot_D_mm),
+        aor_deg       = float(mat.get("angle_repose", 35.0) or 35.0),
+        boot_outlet_h = _boot_outlet_h,
+    )
+
     # ── Engineering checks ─────────────────────────────────────────────────────
     checks = _build_checks(
         inp, mat, mat_behavior, bucket, Q, v, cr, T1, T2, T3, F_eff,
@@ -1478,6 +1930,13 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         stream_chute     = stream_chute,
         is_continuous    = is_continuous,
         boot_analysis    = boot_pulley_analysis,
+        # v1.8.0 chain checks
+        is_chain         = is_chain,
+        chain_selected   = chain_selected,
+        chain_pull_N     = chain_pull_N,
+        chain_SF_actual  = chain_SF_act,
+        chain_v_ok       = chain_v_ok,
+        sprocket         = sprocket,
     )
 
     # ── Design recommendations ────────────────────────────────────────────────
@@ -1581,8 +2040,8 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "Leq": Leq, "Ceff": Ceff, "motor_kw": motor_kw,
         # Tensions
         "T1": round(T1, 1), "T2": round(T2, 1), "T3": round(T3, 1),
-        "T3_ktakeup":   tens["T3_ktakeup"],
-        "T3_euler_min": tens["T3_euler_min"],
+        "T3_ktakeup":   tens.get("T3_ktakeup",   round(T3, 1)),
+        "T3_euler_min": tens.get("T3_euler_min",  0.0),
         "F_eff": round(F_eff, 1), "R_headshaft": round(R_head, 1),
         "euler_ratio":  euler_chk["euler_ratio"],
         "slip_safe":    euler_chk["slip_safe"],
@@ -1664,9 +2123,18 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "bucket_discharge_type":     bucket.get("discharge_type"),
         "bucket_recommended_materials": bucket.get("recommended_materials", []),
         # ── Advisory outputs (3.7 / 3.8 / 3.9) ─────────────────────────────
-        "bucket_recommendation":  bucket_rec,   # 3.7 — style/reasoning for current material
-        "dynamic_fill":           fill_eff,      # 3.8 — recommended fill% from spacing/flow/speed
-        "wrap_recommendation":    wrap_rec,      # 3.9 — minimum wrap angle to prevent slip
+        "bucket_recommendation":  bucket_rec,
+        "dynamic_fill":           fill_eff,
+        "wrap_recommendation":    wrap_rec,
+        # ── Feed design (2f) ─────────────────────────────────────────────────
+        "feed_design":     feed_result,
+        # ── v1.8.0 Chain outputs ─────────────────────────────────────────────
+        "is_chain":        is_chain,
+        "chain_selected":  chain_selected,
+        "chain_pull_N":    chain_pull_N,
+        "chain_SF_actual": chain_SF_act,
+        "chain_v_ok":      chain_v_ok,
+        "sprocket":        sprocket,
     }
 
 
@@ -1689,6 +2157,14 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   stream_chute:     "dict | None" = None,
                   is_continuous:    bool           = False,
                   boot_analysis:    "dict | None" = None,
+                  # v1.8.0 chain params
+                  is_chain:         bool           = False,
+                  chain_selected:   "dict | None" = None,
+                  chain_pull_N:     "float | None" = None,
+                  chain_SF_actual:  "float | None" = None,
+                  chain_v_ok:       "bool | None"  = None,
+                  sprocket:         "dict | None" = None,
+                  **kwargs,                         # absorb future additions
                   ) -> list:
     checks = []
     ok   = lambda msg: {"type": "ok",   "msg": msg}
@@ -1799,11 +2275,13 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         checks.append(ok(
             f"Headshaft load {T_total/1000:.1f} kN — within standard belt capacity [CEMA 375 §4]"))
 
-    # 6b — Belt slip (Euler-Eytelwein)
-    if euler_chk is not None:
-        e_ratio = euler_chk["euler_ratio"]
-        t3_min  = euler_chk["T2_minimum"]
-        if euler_chk.get("slip_safe") is True:
+    # 6b — Belt slip (Euler-Eytelwein) — skipped for chain elevators
+    if euler_chk is not None and not is_chain:
+        e_ratio = euler_chk.get("euler_ratio")
+        t3_min  = euler_chk.get("T2_minimum", 0)
+        if e_ratio is None:
+            pass  # ratio not computed (e.g. CR < 1 continuous mode)
+        elif euler_chk.get("slip_safe") is True:
             checks.append(ok(
                 f"Belt slip check: T3={T3:.0f} N ≥ Euler min {t3_min:.0f} N "
                 f"(e^μθ={e_ratio:.3f}, μ={inp.mu}, wrap={inp.wrap_deg}°) — no slip [CEMA 375 §4]"))
@@ -1842,18 +2320,18 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
 
     # 11 — Hazard flags (v1.2.0)
     hazards = mat_behavior["hazards"]
-    if hazards["atex_required"]:
+    if hazards.get("atex_required", False):
         checks.append(warn(
             "Explosive/flammable material — ATEX/NEC Class II: "
             "anti-static belt, earth bonding, explosion venting [CEMA 550 §B-10/B-11]"))
-    if hazards["dust_control_required"]:
+    if hazards.get("dust_control_required", False):
         checks.append(info(
             "Material aerates or is flammable — dust control and boot venting "
             "required [CEMA 550 §B-1/B-11]"))
-    if hazards["stainless_recommended"]:
+    if hazards.get("stainless_recommended", False):
         checks.append(warn(
             "Corrosive material — 316L stainless or coated casings/buckets [CEMA 550 §B-4]"))
-    if hazards["hygroscopic"]:
+    if hazards.get("hygroscopic", False):
         checks.append(info(
             "Hygroscopic material — seal casing openings; monitor moisture "
             "content in storage [CEMA 550 §B-8]"))
@@ -2089,6 +2567,54 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             else:
                 checks.append(info(
                     f"Boot bearing L10={L10_b:,.0f}h [CEMA 375 §4]"))
+
+    # ── v1.8.0 Chain elevator checks ─────────────────────────────────────────
+    _chain_pull_N = chain_pull_N or 0.0
+    _chain_sf_req = float(getattr(inp, "chain_sf", 6.0) or 6.0)
+
+    if is_chain and chain_selected:
+        _chain_sel    = chain_selected
+        _chain_SF_act = chain_SF_actual
+        # Chain working load safety factor
+        if _chain_SF_act is not None:
+            if _chain_SF_act < _chain_sf_req:
+                checks.append(fail(
+                    f"Chain SF = {_chain_SF_act:.2f} < required {_chain_sf_req:.1f} "
+                    f"— chain pull {_chain_pull_N/1000:.1f}kN exceeds "
+                    f"{_chain_sel['name']} working load / SF. "
+                    f"Upgrade to heavier chain series [CEMA 375 §4]."))
+            elif _chain_SF_act < _chain_sf_req * 1.10:
+                checks.append(warn(
+                    f"Chain SF = {_chain_SF_act:.2f} — within 10% of minimum "
+                    f"{_chain_sf_req:.1f}. Monitor chain elongation [CEMA 375 §4]."))
+            else:
+                checks.append(ok(
+                    f"Chain SF = {_chain_SF_act:.2f} ≥ {_chain_sf_req:.1f} "
+                    f"({_chain_sel['name']}, pull {_chain_pull_N/1000:.1f}kN) [CEMA 375 §4]"))
+
+        # Chain speed vs rated maximum
+        if chain_v_ok is not None:
+            if not chain_v_ok:
+                checks.append(fail(
+                    f"Belt speed {v:.2f} m/s exceeds {_chain_sel['name']} "
+                    f"rated maximum {_chain_sel['v_max_ms']:.2f} m/s — "
+                    f"reduce RPM or use heavier chain series [CEMA 375 §4]."))
+            else:
+                checks.append(ok(
+                    f"Chain speed {v:.2f} m/s ≤ rated {_chain_sel['v_max_ms']:.2f} m/s "
+                    f"[CEMA 375 §4]"))
+
+        # Sprocket tooth count
+        if sprocket:
+            if not sprocket["smooth"]:
+                checks.append(warn(
+                    f"Sprocket teeth = {sprocket['n_teeth']} "
+                    f"— recommend 10–20 teeth for smooth chain engagement. "
+                    f"PD = {sprocket['PD_mm']:.0f}mm [CEMA 375 §4]."))
+            else:
+                checks.append(ok(
+                    f"Sprocket: {sprocket['n_teeth']} teeth, "
+                    f"PD = {sprocket['PD_mm']:.0f}mm ✓ [CEMA 375 §4]"))
 
     return checks
 
