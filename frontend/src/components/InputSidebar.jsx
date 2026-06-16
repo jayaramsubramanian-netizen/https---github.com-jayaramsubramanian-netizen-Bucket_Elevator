@@ -467,7 +467,8 @@ function ComponentPicker({
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function ProcessEdit({ inp, setField, results }) {
-  const df = results?.dynamic_fill ?? null;
+  const r = results || {};
+  const df = r.dynamic_fill ?? null;   // dynamic_fill_efficiency() output — has spacing_status
   return (
     <>
       <SectionHead label="Drive Type" />
@@ -516,18 +517,45 @@ function ProcessEdit({ inp, setField, results }) {
           </div>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 4 }}>
             {[
+              ["Min",         `${r.min_fill_pct ?? "—"}%`],
               ["Recommended", `${df.recommended_fill_pct}%`],
               ["Your value",  `${inp.fill_pct}%`],
+              ["Max",         `${r.max_fill_pct ?? "—"}%`],
               ["Spacing",     `${df.current_spacing_mm}mm`],
               ["Optimal",     `${df.optimal_spacing_mm}mm`],
             ].map(([l, v]) => (
               <div key={l}>
                 <div style={{ fontSize: 9, color: T.text3 }}>{l}</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: T.text,
+                <div style={{ fontSize: 13, fontWeight: 700,
+                  color: l === "Your value"
+                    ? (inp.fill_pct >= (r.min_fill_pct ?? 0) && inp.fill_pct <= (r.max_fill_pct ?? 100) ? T.success : T.danger)
+                    : l === "Recommended" ? T.primary : T.text,
                   fontFamily: "JetBrains Mono,monospace" }}>{v}</div>
               </div>
             ))}
           </div>
+          {/* Operating range bar */}
+          {r.min_fill_pct != null && r.max_fill_pct != null && (() => {
+            const mn = r.min_fill_pct, mx = r.max_fill_pct;
+            const rec = df.recommended_fill_pct, uv = inp.fill_pct;
+            const pct = v => Math.min(100, Math.max(0, (v - 30) / 70 * 100));
+            const inRange = uv >= mn && uv <= mx;
+            return (
+              <div style={{ position: "relative", height: 8, borderRadius: 4,
+                background: "var(--surface2)", margin: "6px 0", overflow: "visible" }}>
+                <div style={{ position: "absolute", top: 0, bottom: 0,
+                  left: `${pct(mn)}%`, width: `${pct(mx) - pct(mn)}%`,
+                  background: "rgba(74,158,255,.22)", borderRadius: 4 }} />
+                <div style={{ position: "absolute", top: -2, bottom: -2, width: 2,
+                  left: `${pct(rec)}%`, background: T.primary, borderRadius: 1 }} />
+                <div style={{ position: "absolute", top: -3, width: 14, height: 14,
+                  borderRadius: "50%", transform: "translateX(-50%)",
+                  left: `${pct(uv)}%`,
+                  background: inRange ? T.success : T.danger,
+                  border: "2px solid var(--bg)" }} />
+              </div>
+            );
+          })()}
           <div style={{ fontSize: 10, color: T.text3, lineHeight: 1.4 }}>{df.note}</div>
           {df.spacing_status !== "optimal" && (
             <div style={{ fontSize: 10, color: T.warning, marginTop: 3 }}>
@@ -599,14 +627,56 @@ function PulleyEdit({ inp, setField, results }) {
         <F label="Shaft Speed" name="n_rpm" value={inp.n_rpm}
           onChange={setField} unit="rpm" min={10} max={300} step={5} />
       </Row2>
-      <F label="Wrap Angle" name="wrap_deg" value={inp.wrap_deg}
-        onChange={setField} unit="°" min={90} max={240} step={5}
-        note="Standard 180°. Add snub pulley to increase." />
+      {/* v1.9.0: wrap angle is DERIVED from pulley geometry, not a free input.
+          The geometric wrap for a standard 2-pulley elevator is always ≈180°.
+          A snub pulley adds ~30°, increasing belt-to-pulley contact.            */}
+      <div style={{
+        background: T.panel2, border: `1px solid ${T.border}`,
+        borderRadius: 5, padding: "10px 12px", marginBottom: 12,
+      }}>
+        <div style={{ fontSize: 10, color: T.text3, marginBottom: 6,
+          letterSpacing: ".04em", textTransform: "uppercase", fontWeight: 600 }}>
+          Wrap Angle (derived)
+        </div>
+        <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 9, color: T.text3 }}>Geometric</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: T.text,
+              fontFamily: "JetBrains Mono,monospace" }}>
+              {r.wrap_geom_deg != null ? `${r.wrap_geom_deg}°` : "—"}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 9, color: T.text3 }}>Effective</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: T.primary,
+              fontFamily: "JetBrains Mono,monospace" }}>
+              {r.wrap_effective_deg != null ? `${r.wrap_effective_deg}°` : "—"}
+            </div>
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 9, color: T.text3 }}>Formula</div>
+            <div style={{ fontSize: 10, color: T.text3, lineHeight: 1.4 }}>
+              180° + 2·arcsin((R_H−R_B)/C)
+            </div>
+          </div>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <F label="Snub pulley on return side (+30°)" name="snub_pulley"
+            type="toggle" value={inp.snub_pulley ?? false} onChange={setField}
+            note="Adds one snub pulley. Use when Euler check requires wrap > 180°." />
+        </div>
+        {(inp.snub_pulley ?? false) && (
+          <div style={{ fontSize: 10, color: T.success, marginTop: 4 }}>
+            Snub active — effective wrap ≈ {r.wrap_effective_deg != null ? `${r.wrap_effective_deg}°` : "210°"}
+          </div>
+        )}
+      </div>
       {/* 3.9 — Wrap angle recommendation */}
       {(() => {
         const wr = results?.wrap_recommendation;
         if (!wr) return null;
-        const adequate = inp.wrap_deg >= wr.required_deg;
+        const effective_wrap = r.wrap_effective_deg ?? inp.wrap_deg ?? 180;
+        const adequate = effective_wrap >= wr.required_deg;
         return (
           <div style={{
             background: adequate ? "rgba(31,184,110,.07)" : "rgba(217,142,0,.10)",
@@ -620,7 +690,7 @@ function PulleyEdit({ inp, setField, results }) {
             <div style={{ display: "flex", gap: 16, marginBottom: 4 }}>
               {[
                 ["Required", `${wr.required_deg}°`],
-                ["Current",  `${inp.wrap_deg}°`],
+                ["Current",  r.wrap_effective_deg != null ? `${r.wrap_effective_deg}°` : `${inp.wrap_deg || 180}°`],
                 ["Config",   wr.config],
               ].map(([l, v]) => (
                 <div key={l}>
@@ -1233,6 +1303,69 @@ function DischargeEdit({ inp, setField, results }) {
         To adjust: change D_mm or n_rpm in Head &amp; Tail Pulley.
         To switch to continuous discharge (HF), select HF bucket series in Bucket Selection.
       </div>
+      <SectionHead label="Chute Liner Selection" />
+      <div style={{ fontSize: 11, color: T.text3, marginBottom: 8, lineHeight: 1.5 }}>
+        Liner material affects wall-friction angle (φ_w = arctan μ).
+        Lower-friction liners reduce the minimum chute angle required for mass flow,
+        resolving funnel-flow and plugging warnings without geometry changes.
+      </div>
+      {/* Liner options */}
+      {[
+        { id: "auto",         label: "Auto",                  mu: "—",    phi: "—",   note: "CEMA wear-index selection"             },
+        { id: "mild_steel",   label: "Mild Steel (unlined)",  mu: "0.55", phi: "28.8°", note: "Class 1–2, v < 1.5 m/s"            },
+        { id: "ar400",        label: "AR400 Wear Plate",      mu: "0.48", phi: "25.7°", note: "Abrasive Class 3+"                  },
+        { id: "nat_rubber",   label: "Natural Rubber",        mu: "0.40", phi: "21.8°", note: "Cohesive/wet materials"             },
+        { id: "uhmwpe",       label: "UHMW-PE Sheet",         mu: "0.20", phi: "11.3°", note: "Sticky/cohesive — lowest min angle" },
+        { id: "ceramic_tile", label: "Ceramic Tile",          mu: "0.15", phi: "8.5°",  note: "Extreme abrasion"                  },
+        { id: "ptfe",         label: "PTFE Sheet",            mu: "0.10", phi: "5.7°",  note: "Very sticky materials"             },
+      ].map(({ id, label, mu, phi, note }) => {
+        const active = (inp.chute_liner_id ?? "auto") === id;
+        return (
+          <div key={id}
+            onClick={() => setField("chute_liner_id", id)}
+            style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "7px 10px", marginBottom: 4, borderRadius: 5, cursor: "pointer",
+              border: `1px solid ${active ? T.primary : T.border}`,
+              background: active ? "rgba(74,158,255,.08)" : "transparent",
+              transition: "all .15s",
+            }}>
+            <div style={{
+              width: 14, height: 14, borderRadius: "50%", flexShrink: 0,
+              border: `2px solid ${active ? T.primary : T.border}`,
+              background: active ? T.primary : "transparent",
+            }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: active ? 700 : 400,
+                color: active ? T.text : T.text2 }}>{label}</div>
+              <div style={{ fontSize: 9, color: T.text3 }}>{note}</div>
+            </div>
+            <div style={{ fontSize: 9, fontFamily: "JetBrains Mono,monospace",
+              color: T.muted, textAlign: "right" }}>
+              <div>μ = {mu}</div>
+              <div>φ = {phi}</div>
+            </div>
+          </div>
+        );
+      })}
+      {/* Liner effect on chute */}
+      {results?.discharge_chute?.maintenance && (
+        <div style={{
+          background: T.panel2, border: `1px solid ${T.border}`,
+          borderRadius: 5, padding: "8px 12px", marginTop: 6, fontSize: 11,
+        }}>
+          <span style={{ color: T.text3 }}>Current liner: </span>
+          <span style={{ color: T.text, fontWeight: 600 }}>
+            {results.discharge_chute.maintenance.liner_material}
+            {" "}{results.discharge_chute.maintenance.liner_thickness_mm}mm
+          </span>
+          <span style={{ color: T.text3, marginLeft: 12 }}>Min chute angle: </span>
+          <span style={{ color: T.primary, fontWeight: 600 }}>
+            {results.discharge_chute?.performance?.min_angle_deg?.toFixed(1) ?? "—"}°
+          </span>
+        </div>
+      )}
+
       <SectionHead label="Casing Width Override" />
       <F label="Belt Width Override" name="belt_width_override_mm"
         value={inp.belt_width_override_mm ?? 0} onChange={setField}
@@ -1576,7 +1709,7 @@ export default function InputSidebar({ inputs, setField, results }) {
 
   const summaries = {
     process:   `${inp.Q_req}t/h · ${inp.H_m}m · ${matName} · Fill ${inp.fill_pct}%`,
-    pulleys:   `D_H ${inp.D_mm}mm · D_B ${bootDia}mm · ${inp.n_rpm}rpm · Wrap ${inp.wrap_deg}°`,
+    pulleys:   `D_H ${inp.D_mm}mm · D_B ${bootDia}mm · ${inp.n_rpm}rpm · Wrap ${r?.wrap_effective_deg ?? inp.wrap_deg ?? 180}°`,
     belt:      `${r.belt_w ?? "auto"}mm · ${inp.belt_type ?? "EP"} · ${r.belt_ply ?? "—"} ply`,
     bucket:    `${bkt.id ?? "auto"} series · ${bkt.V ?? "—"}L · Gap ${inp.bucket_gap}mm`,
     takeup:    `${inp.takeup_type ?? "gravity"} · ${tg.W_counterweight_kg_gross?.toFixed(0) ?? "—"}kg · ${ts.d_core_recommend_mm ? `Screw Ø${ts.d_core_recommend_mm}mm` : ""}`,

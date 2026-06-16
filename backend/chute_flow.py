@@ -62,7 +62,7 @@ CHANGES FROM v1.0.0
 """
 
 import math
-from typing import Optional
+from typing import Optional, Dict, Any
 try:
     from .constants import GRAVITY
 except ImportError:
@@ -74,6 +74,22 @@ except ImportError:
 
 
 class ChuteFlowEngine:
+
+    # ── Liner catalogue (user-selectable) ───────────────────────────────────────
+    # mu = wall friction coefficient; phi_deg = arctan(mu) [wall friction angle]
+    # Lower mu → smaller minimum chute angle → resolves funnel-flow without geometry change.
+    # Dict[str, Any] suppresses Pylance complaints about None in mu/phi_deg
+    LINER_CATALOGUE: Dict[str, Any] = {
+        # "auto" uses -1.0 as sentinel (not None) so all mu values are float
+        "auto":         {"name": "Auto (CEMA)",              "t_mm":  0, "mu": -1.0, "phi_deg": -1.0},
+        "mild_steel":   {"name": "Mild Steel (unlined)",     "t_mm":  0, "mu":  0.55,"phi_deg": 28.8},
+        "ar400":        {"name": "AR400 Wear Plate",         "t_mm": 10, "mu":  0.48,"phi_deg": 25.7},
+        "nat_rubber":   {"name": "Natural Rubber (NR)",      "t_mm": 12, "mu":  0.40,"phi_deg": 21.8},
+        "uhmwpe":       {"name": "UHMW-PE Sheet",            "t_mm": 20, "mu":  0.20,"phi_deg": 11.3},
+        "ceramic_tile": {"name": "Ceramic Tile (Al2O3)",     "t_mm": 25, "mu":  0.15,"phi_deg":  8.5},
+        "ptfe":         {"name": "PTFE/Teflon Sheet",        "t_mm":  6, "mu":  0.10,"phi_deg":  5.7},
+    }
+
 
     # ── 1. Inlet velocity (unchanged — formula was correct) ──────────────────
 
@@ -113,8 +129,9 @@ class ChuteFlowEngine:
 
         Returns dict (not float) so the report can show governing criterion.
         """
-        mu_wall       = MaterialBehaviorEngine.chute_friction(material)
-        phi_wall_deg  = math.degrees(math.atan(mu_wall))
+        _ov: Optional[float] = material.get('_mu_wall_override')
+        mu_wall: float = float(_ov) if _ov is not None else MaterialBehaviorEngine.chute_friction(material)
+        phi_wall_deg  = math.degrees(math.atan(max(mu_wall, 0.001)))
         angle_repose  = material.get("angle_repose", 35.0)
 
         abr = material.get("abr_code", 3)
@@ -686,10 +703,11 @@ class ChuteFlowEngine:
         material: dict,
         capacity_tph: float,
         velocity_mps: float,
-        drop_height_m: float = 1.0,
-        chute_angle_deg: float | None = None,
-        chute_width_m:  float | None = None,
-        chute_height_m: float | None = None,
+        drop_height_m:   float = 1.0,
+        chute_angle_deg: Optional[float] = None,
+        chute_width_m:   Optional[float] = None,
+        chute_height_m:  Optional[float] = None,
+        liner_override:  Optional[str] = None,
     ) -> dict:
         """
         CEMA 375 §5 — Integrated chute design output with recommendations.
@@ -716,17 +734,33 @@ class ChuteFlowEngine:
             "recommendations":   [ actionable text strings ],
         }
         """
-        # Compute minimum angle
-        angle_info  = ChuteFlowEngine.chute_angle(material)
+        # Liner selection — user override or auto from wear index
+        _lid  = (liner_override or "auto").lower()
+        _lcat = ChuteFlowEngine.LINER_CATALOGUE.get(_lid, ChuteFlowEngine.LINER_CATALOGUE["auto"])
+        if _lid == "auto" or float(_lcat["mu"]) < 0:   # -1.0 = sentinel for "auto" mode
+            liner = ChuteFlowEngine.chute_liner_selection(material, velocity_mps)
+            _mat_angle = material
+        else:
+            liner = {
+                "liner_name":     _lcat["name"],
+                "liner_grade":    f"User-selected (\u03bc={_lcat['mu']:.2f})",
+                "wear_index":     0,
+                "thickness_mm":   _lcat["t_mm"],
+                "note":           f"Reduces wall friction angle to {_lcat['phi_deg']:.1f}\u00b0",
+            }
+            _mat_angle = dict(material)
+            _mat_angle["_mu_wall_override"] = _lcat["mu"]
+
+        # Minimum chute angle — uses liner-adjusted mu_wall when specified
+        angle_info  = ChuteFlowEngine.chute_angle(_mat_angle)
         angle_min   = angle_info["angle_min_deg"]
         chute_angle = chute_angle_deg if chute_angle_deg is not None else angle_min
 
-        # Run all sub-models
-        regime   = ChuteFlowEngine.flow_regime_classification(material, chute_angle)
+        # Run sub-models
+        regime   = ChuteFlowEngine.flow_regime_classification(_mat_angle, chute_angle)
         plugging = ChuteFlowEngine.plugging_probability(material)
         dust     = ChuteFlowEngine.dust_risk(material, velocity_mps, drop_height_m)
         wear     = ChuteFlowEngine.chute_wear_rate(material, velocity_mps)
-        liner    = ChuteFlowEngine.chute_liner_selection(material, velocity_mps)
 
         # Optional capacity check
         cap_check = None

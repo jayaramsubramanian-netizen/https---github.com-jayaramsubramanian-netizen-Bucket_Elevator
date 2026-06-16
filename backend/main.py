@@ -39,7 +39,7 @@ from typing import Any, Never, Optional
 from fastapi import APIRouter, BackgroundTasks, FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 try:
     from .database import get_db, init_db
@@ -106,7 +106,7 @@ class CalcResponse(BaseModel):
     """
     meta:     dict[str, Any]
     data:     Any
-    warnings: list[str] = []
+    warnings: list[str] = Field(default_factory=list)
 
 
 # ── Improvement 4 — Structured error model ─────────────────────────────────────
@@ -383,7 +383,6 @@ def get_material_by_id(mat_id: str):
         from materials_lookup import get_material
     mat = get_material(mat_id)
     if not mat or mat.get("_source") == "fallback":
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"Material '{mat_id}' not found")
     return mat
 
@@ -506,7 +505,7 @@ def calculate(
         _tb = _traceback.format_exc()
         # ── Print to uvicorn terminal — visible without opening Network tab ──
         print(f"\n{'='*64}\nSOLVER 500 — full traceback\n{_tb}{'='*64}\n", flush=True)
-        _err("SOLVER_ERROR", f"{type(e).__name__}: {e}\n\n{_tb}", status=500)
+        _err("SOLVER_ERROR", "Internal calculation error — see server log for details.", status=500)
 
     warnings = _collect_warnings(inp, results)
 
@@ -670,13 +669,26 @@ def list_projects(db: sqlite3.Connection = Depends(get_db)):
 
 @v1.get("/health")
 def health():
+    import os as _os
+    _db_ok = False
+    try:
+        import sqlite3 as _sq
+        _conn = _sq.connect(_DB_PATH, timeout=2)
+        _conn.execute("SELECT 1")
+        _conn.close()
+        _db_ok = True
+    except Exception:
+        pass
     return {
-        "status":           "ok",
-        "product":          "VECTRIX™",
-        "solver_version":   CALC_SCHEMA_VERSION,
-        "cema_reference":   CEMA_STANDARD,
-        "cors_origins":     CORS_ORIGINS,
-        "timestamp":        datetime.now(timezone.utc).isoformat(),
+        "status":               "ok" if _db_ok else "degraded",
+        "product":              "VECTRIX™",
+        "solver_version":       CALC_SCHEMA_VERSION,
+        "calc_schema_version":  CALC_SCHEMA_VERSION,
+        "cema_reference":       CEMA_STANDARD,
+        "database_connected":   _db_ok,
+        "database_file":        _os.path.basename(_DB_PATH),
+        "cors_origins":         CORS_ORIGINS,
+        "timestamp":            datetime.now(timezone.utc).isoformat(),
     }
 
 

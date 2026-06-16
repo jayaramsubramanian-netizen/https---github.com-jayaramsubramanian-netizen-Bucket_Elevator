@@ -1103,8 +1103,20 @@ def dynamic_fill_efficiency(
         "too_close" if ratio < 0.75          else "too_wide"
     )
 
+    _min_flow_map  = {1: 40, 2: 40, 3: 45, 4: 55}
+    _max_spill_map = {1: 95, 2: 90, 3: 85, 4: 75}
+    min_fill = float(_min_flow_map.get(max(1, min(int(flowability), 4)), 45))
+    max_fill = float(_max_spill_map.get(max(1, min(int(flowability), 4)), 85))
+    if belt_speed_mps < 0.80:
+        min_fill = min(min_fill + 10.0, 65.0)
+    if spacing_status == "too_wide":
+        max_fill = min(max_fill, 80.0)
+    min_fill = round(min_fill, 0)
+    max_fill = round(max_fill, 0)
     return {
         "recommended_fill_pct": round(rec_fill, 1),
+        "min_fill_pct":         min_fill,
+        "max_fill_pct":         max_fill,
         "optimal_spacing_mm":   round(optimal_m * 1000, 0),
         "current_spacing_mm":   round(spacing_m * 1000, 0),
         "spacing_ratio":        round(ratio, 2),
@@ -1113,11 +1125,11 @@ def dynamic_fill_efficiency(
         "k_flow":               round(k_flow, 3),
         "k_speed":              round(k_speed, 3),
         "note": (
-            f"CEMA §6 optimal spacing: {optimal_m*1000:.0f}mm "
-            f"({'1.8×proj' if elevator_type=='centrifugal' else '1.0×depth'}). "
-            f"Current {spacing_m*1000:.0f}mm (ratio {ratio:.2f}) → "
-            f"fill factor {k_spacing:.2f}. "
-            f"Recommended fill: {rec_fill:.1f}%."
+            f"Range {int(min_fill)}\u2013{int(max_fill)}%  \u00b7  "
+            f"Optimum {rec_fill:.1f}%  \u00b7  "
+            f"CEMA \u00a76 optimal spacing {optimal_m*1000:.0f}mm "
+            f"({'1.8\u00d7proj' if elevator_type=='centrifugal' else '1.0\u00d7depth'}). "
+            f"Current {spacing_m*1000:.0f}mm (ratio {ratio:.2f})."
         ),
     }
 
@@ -1447,6 +1459,23 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     _same = getattr(inp, "boot_pulley_same_as_head", False)
     _boot_D_mm = inp.D_mm if _same else inp.boot_pulley_D_mm
 
+    # v1.9.0: auto-calculate wrap angle from pulley geometry
+    # wrap = 180° + 2·arcsin((R_head − R_boot) / C)  — always ≈180° for tall elevators
+    _R_hw = float(inp.D_mm) / 2.0
+    _R_bw = float(_boot_D_mm) / 2.0
+    _C_mm = inp.H_m * 1000.0 + _R_hw + _R_bw
+    _sin  = max(-1.0, min(1.0, (_R_hw - _R_bw) / max(_C_mm, 1.0)))
+    _wrap_geom = 180.0 + 2.0 * math.degrees(math.asin(_sin))
+    _wrap_inp  = float(getattr(inp, "wrap_deg", 0) or 0)
+    if _wrap_inp >= 90.0:                                   # explicit override
+        _wrap_eff = _wrap_inp
+    elif getattr(inp, "snub_pulley", False):
+        _wrap_eff = min(_wrap_geom + 30.0, 240.0)           # one snub pulley
+    else:
+        _wrap_eff = _wrap_geom                              # pure geometry
+    _wrap_eff = round(_wrap_eff, 1)
+
+
     # ── Material behaviour corrections (v1.2.0 integration) ──────────────────
     #    elevator_type for fill: "continuous" for HF-style, "centrifugal" for CC
     bucket_id = inp.bucket_id if not inp.auto_bucket else None
@@ -1583,7 +1612,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         # ── Belt elevator ─────────────────────────────────────────────────────
         tens  = calc_headshaft_tensions(
             Q, inp.H_m, v, bw_kg, spacing, BW_mm, inp.K_takeup,
-            mu=inp.mu, wrap_deg=inp.wrap_deg,
+            mu=inp.mu, wrap_deg=_wrap_eff,
         )
         T1, T2, T3 = tens["T1"], tens["T2"], tens["T3"]
         F_eff      = tens["F_eff"]
@@ -1645,7 +1674,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         material       = mat,
         T_effective_N  = F_eff,
         T_slack_N      = T3,
-        wrap_angle_deg = inp.wrap_deg,
+        wrap_angle_deg = _wrap_eff,
         environment    = environment,
         belt_type      = belt_type,
     )
@@ -1705,7 +1734,14 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     casing_t_m_calc = StructuralStressEngine.casing_plate_thickness(BW_mm, rho, inp.H_m)
     casing_t_m      = (float(_casing_t_override) / 1000.0
                        if _casing_t_override > 0 else casing_t_m_calc)
-    casing_stiffener = StructuralStressEngine.casing_stiffener_spacing(casing_t_m, wind_pa)
+    # FIX v1.8.1: Stiffener spacing must be derived from the CALCULATED MINIMUM
+    # plate thickness, not the override. This decouples the panel span (a fixed
+    # structural reference) from the plate thickness being evaluated.
+    # Result: thicker override → LESS deflection (correct physics).
+    #         thinner override → MORE deflection (correct — should fail the check).
+    # Previously both used casing_t_m, creating a circular dependency where the
+    # panel span scaled with the plate so δ ≈ constant × L/360 for any thickness.
+    casing_stiffener = StructuralStressEngine.casing_stiffener_spacing(casing_t_m_calc, wind_pa)
     panel_span_m = casing_stiffener["recommended_mm"] / 1000.0
     casing_panel = StructuralStressEngine.casing_panel_deflection(
         panel_span_m, panel_span_m, casing_t_m, wind_pa,
@@ -1855,6 +1891,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     chute_h_m        = chute_w_m * 0.75
 
     try:
+        _liner_id = getattr(inp, "chute_liner_id", "auto") or "auto"
         discharge_chute = ChuteFlowEngine.design_summary(
             material        = mat,
             capacity_tph    = Q,
@@ -1863,6 +1900,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
             chute_angle_deg = float(chute_angle_auto) if chute_angle_auto is not None else 65.0,
             chute_width_m   = chute_w_m,
             chute_height_m  = chute_h_m,
+            liner_override  = _liner_id,
         )
     except Exception as _ce:
         discharge_chute = {"_error": str(_ce), "performance": {}, "maintenance": {}, "recommendations": []}
@@ -1946,10 +1984,14 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "P_total": round(P_total, 3), "R_headshaft": round(R_head, 1),
         "T3": round(T3, 1), "euler_ratio": euler_chk["euler_ratio"],
         "slip_safe": euler_chk["slip_safe"], "bucket": bucket,
+        # v1.8.1: required for CR-continuous branch and chute recommendations
+        "is_continuous":    is_continuous,
+        "is_chain":         is_chain,
+        "discharge_chute":  discharge_chute,
     }
     _inp_dict = {
         "Q_req": inp.Q_req, "n_rpm": inp.n_rpm, "D_mm": inp.D_mm,
-        "fill_pct": inp.fill_pct, "mu": inp.mu, "wrap_deg": inp.wrap_deg,
+        "fill_pct": inp.fill_pct, "mu": inp.mu, "wrap_deg": _wrap_eff,
     }
     try:
         design_recs = StructuralStressEngine.design_recommendations(_partial, _inp_dict)
@@ -1991,7 +2033,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "fill_pct":         inp.fill_pct,
         "sf":               inp.sf,
         "mu":               inp.mu,
-        "wrap_deg":         inp.wrap_deg,
+        "wrap_deg":         _wrap_eff,
         "belt_type":        getattr(inp, "belt_type", "EP"),
         "environment":      getattr(inp, "environment", "dry"),
         "wind_pressure_pa": getattr(inp, "wind_pressure_pa", 800),
@@ -2045,7 +2087,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "F_eff": round(F_eff, 1), "R_headshaft": round(R_head, 1),
         "euler_ratio":  euler_chk["euler_ratio"],
         "slip_safe":    euler_chk["slip_safe"],
-        "mu":           inp.mu, "wrap_deg": inp.wrap_deg,
+        "mu":           inp.mu, "wrap_deg": _wrap_eff,
         # Shaft
         "T_Nm": round(T_Nm, 2), "d_mm": round(d_mm, 1),
         "d_stress_mm": round(d_stress_mm, 1), "d_deflect_mm": round(d_deflect_mm, 1),
@@ -2068,8 +2110,13 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         # Bearing
         "L10": round(L10, 0),
         # Material behaviour (v1.2.0 — advisory, does not override user fill)
-        "mat_behavior": mat_behavior,
-        "recommended_fill_pct": mat_behavior["recommended_fill_pct"],
+        "mat_behavior":          mat_behavior,
+        "recommended_fill_pct":  mat_behavior["recommended_fill_pct"],
+        "min_fill_pct":          mat_behavior.get("min_fill_pct", 40),
+        "max_fill_pct":          mat_behavior.get("max_fill_pct", 95),
+        # Wrap angle geometry (v1.9.0)
+        "wrap_geom_deg":         round(_wrap_geom, 1),
+        "wrap_effective_deg":    _wrap_eff,
         # Sweep data
         "speed_sweep": speed_sweep, "fill_sweep": fill_sweep,
         # Structural detail — v1.3.0
@@ -2284,11 +2331,11 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         elif euler_chk.get("slip_safe") is True:
             checks.append(ok(
                 f"Belt slip check: T3={T3:.0f} N ≥ Euler min {t3_min:.0f} N "
-                f"(e^μθ={e_ratio:.3f}, μ={inp.mu}, wrap={inp.wrap_deg}°) — no slip [CEMA 375 §4]"))
+                f"(e^μθ={e_ratio:.3f}, μ={inp.mu}, wrap={inp.wrap_deg or 180:.0f}°) — no slip [CEMA 375 §4]"))
         else:
             checks.append(fail(
                 f"BELT SLIP RISK: T3={T3:.0f} N < Euler min {t3_min:.0f} N "
-                f"(e^μθ={e_ratio:.3f}, μ={inp.mu}, wrap={inp.wrap_deg}°). "
+                f"(e^μθ={e_ratio:.3f}, μ={inp.mu}, wrap={inp.wrap_deg or 180:.0f}°). "
                 f"Increase take-up tension, add snub pulley, or upgrade lagging [CEMA 375 §4]"))
 
     # 7 — Shaft sizing
@@ -2531,6 +2578,22 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 f"Stream interception: {note} — "
                 f"review chute position or increase belt speed [CEMA 375 §5]"))
 
+    # 22b — Head:boot pulley diameter ratio (CEMA §3.2)
+    _boot_D_mm_chk = (inp.D_mm if getattr(inp, "boot_pulley_same_as_head", False)
+                      else inp.boot_pulley_D_mm)
+    _D_ratio_check = inp.D_mm / max(_boot_D_mm_chk, 1.0)
+    if _D_ratio_check > 2.5:
+        checks.append(fail(
+            f"Head:boot pulley ratio {_D_ratio_check:.2f} > 2.5 — severe belt flex fatigue. "
+            f"Increase boot pulley to \u2265 {inp.D_mm/2.5:.0f}mm [CEMA 375 \u00a73.2]"))
+    elif _D_ratio_check > 2.0:
+        checks.append(warn(
+            f"Head:boot pulley ratio {_D_ratio_check:.2f} — CEMA recommends ≤ 2.0. "
+            f"Increase boot pulley to ≥ {inp.D_mm/2.0:.0f}mm [CEMA 375 §3.2]"))
+    else:
+        checks.append(ok(
+            f"Head:boot pulley ratio {_D_ratio_check:.2f} — within CEMA limit [CEMA 375 §3.2]"))
+
     # 23 — Boot pulley CR check (v1.6.0)
     if boot_analysis:
         cr_boot = boot_analysis.get("cr_boot", 0)
@@ -2666,7 +2729,19 @@ def run_optimizer(req: OptimizerRequest) -> List[dict]:
 
     # Design parameters — all used for slip and bearing checks
     mu_use       = getattr(inp, "mu",               0.35)
-    wrap_use     = getattr(inp, "wrap_deg",         180.0)
+    # Compute effective wrap the same way as solve_elevator (wrap_deg=0 means auto)
+    _Dh_opt = float(inp.D_mm or 500)
+    _Db_opt = float(inp.boot_pulley_D_mm or 300)
+    _C_opt  = inp.H_m * 1000.0 + _Dh_opt/2.0 + _Db_opt/2.0
+    _sin_o  = max(-1.0, min(1.0, (_Dh_opt/2.0 - _Db_opt/2.0) / max(_C_opt, 1.0)))
+    _wg_opt = 180.0 + 2.0 * math.degrees(math.asin(_sin_o))
+    _wi_opt = float(getattr(inp, "wrap_deg", 0) or 0)
+    if _wi_opt >= 90.0:
+        wrap_use = _wi_opt
+    elif getattr(inp, "snub_pulley", False):
+        wrap_use = min(_wg_opt + 30.0, 240.0)
+    else:
+        wrap_use = _wg_opt
     K_takeup     = getattr(inp, "K_takeup",           0.7)
     belt_type    = getattr(inp, "belt_type",          "EP")
     environment  = getattr(inp, "environment",       "dry")
@@ -2730,14 +2805,23 @@ def run_optimizer(req: OptimizerRequest) -> List[dict]:
                 # Quadratic penalty rising outside that range, capped at 1.0
                 CR_IDEAL_LO, CR_IDEAL_HI = 1.20, 1.50
                 CR_HARD_LO,  CR_HARD_HI  = 0.70, 3.00
-                if cr < CR_HARD_LO or cr > CR_HARD_HI:
-                    continue   # hard exclusion — no trajectory possible
-                if CR_IDEAL_LO <= cr <= CR_IDEAL_HI:
-                    d_penalty = 0.0
-                elif cr < CR_IDEAL_LO:
-                    d_penalty = min(1.0, ((CR_IDEAL_LO - cr) / 0.50) ** 2)
+                _bkt_type_o = (bucket.get("type") or "").upper()
+                _is_cont_o  = _bkt_type_o in ("HF", "MF", "SC")
+                if _is_cont_o:
+                    # Continuous: CR must be < 1.0; target 0.30–0.70
+                    if cr >= 1.0 or cr < 0.20:
+                        continue
+                    d_penalty = 0.0 if 0.30 <= cr <= 0.70 else min(1.0, ((abs(cr - 0.50)) / 0.30)**2)
                 else:
-                    d_penalty = min(1.0, ((cr - CR_IDEAL_HI) / 1.00) ** 2)
+                    # Centrifugal: CR must be ≥ 1.0; target 1.20–1.50
+                    if cr < CR_HARD_LO or cr > CR_HARD_HI:
+                        continue
+                    if CR_IDEAL_LO <= cr <= CR_IDEAL_HI:
+                        d_penalty = 0.0
+                    elif cr < CR_IDEAL_LO:
+                        d_penalty = min(1.0, ((CR_IDEAL_LO - cr) / 0.50) ** 2)
+                    else:
+                        d_penalty = min(1.0, ((cr - CR_IDEAL_HI) / 1.00) ** 2)
 
                 # ── Bearing life quick estimate (ISO 281 simplified) ─────────
                 # Approximate radial load as headshaft resultant (2 × T_head)

@@ -1466,6 +1466,9 @@ class StructuralStressEngine:
         mu     = float(inputs.get("mu",      0.35))
         wrap   = float(inputs.get("wrap_deg",180))
 
+        is_continuous = results.get("is_continuous", False)
+        is_chain      = results.get("is_chain",      False)
+
         # ── Capacity ─────────────────────────────────────────────────────────
         if Q < Q_req:
             deficit_pct = (Q_req - Q) / Q_req * 100
@@ -1512,26 +1515,98 @@ class StructuralStressEngine:
             })
 
         # ── Centrifugal ratio ─────────────────────────────────────────────────
-        if cr < 1.0:
+        # IMPORTANT: For continuous (HF/MF) bucket elevators, CR < 1.0 is
+        # CORRECT and REQUIRED by design — do not raise this warning.
+        # For centrifugal elevators, CR should be 1.0–1.8 for clean discharge.
+        if not is_continuous and not is_chain:
+            if cr < 1.0:
+                recs.append({
+                    "check":   "CR",
+                    "status":  "warn",
+                    "problem": f"CR = {cr:.3f} < 1.0 — mixed/gravity discharge, back-legging likely",
+                    "actions": [
+                        "Increase belt speed (increase RPM or pulley diameter)",
+                        f"Target CR ≥ 1.2: requires v ≥ {math.sqrt(1.2 * 9.81 * (D_mm/2000)):.2f} m/s",
+                        "Check material flowability — poor flow (flowability 4) needs higher CR",
+                    ],
+                })
+            elif cr > 2.5:
+                recs.append({
+                    "check":   "CR",
+                    "status":  "warn",
+                    "problem": f"CR = {cr:.3f} > 2.5 — excessive scatter at head discharge",
+                    "actions": [
+                        "Reduce RPM or increase head pulley diameter to lower belt speed",
+                        "Install curved discharge hood to capture scattered material",
+                        f"Target CR ≤ 2.0: requires v ≤ {math.sqrt(2.0 * 9.81 * (D_mm/2000)):.2f} m/s",
+                    ],
+                })
+        elif is_continuous and cr >= 1.0:
+            # Continuous elevator running in centrifugal regime — this IS a problem
             recs.append({
                 "check":   "CR",
-                "status":  "warn",
-                "problem": f"CR = {cr:.3f} < 1.0 — mixed/gravity discharge, back-legging likely",
+                "status":  "fail",
+                "problem": f"CR = {cr:.3f} ≥ 1.0 — centrifugal discharge in HF/MF elevator, material scatter and spillage",
                 "actions": [
-                    "Increase belt speed (increase RPM or pulley diameter)",
-                    f"Target CR ≥ 1.2: requires v ≥ {1.2 * 9.81 * (D_mm/2000)**0.5:.2f} m/s",
-                    "Check material flowability — poor flow (flowability 4) needs higher CR",
+                    f"Reduce belt speed: target CR ≤ 0.7, need v ≤ {math.sqrt(0.7 * 9.81 * (D_mm/2000)):.2f} m/s",
+                    f"Reduce RPM from {n_rpm:.0f} to {n_rpm * 0.7 / max(cr, 0.01):.0f}",
+                    "Alternatively: switch to centrifugal bucket series (AC/AA) if duty allows",
                 ],
             })
-        elif cr > 2.5:
+
+        # ── Chute angle (FABRICATION fix — not operational) ───────────────────
+        # This check must appear BEFORE suggesting fill reduction to the user,
+        # because reducing fill does NOT fix a chute angle problem and creates
+        # a recursive loop if the RCA panel applies fill reductions repeatedly.
+        dc   = results.get("discharge_chute") or {}
+        perf = dc.get("performance") or {}
+        mnt  = dc.get("maintenance") or {}
+        regime_dc  = perf.get("flow_regime", "")
+        chute_ang  = perf.get("chute_angle_deg", 0)
+        mass_ang   = perf.get("mass_flow_angle_deg", 0)
+        min_ang    = perf.get("min_angle_deg", 0)
+        plug_risk  = mnt.get("plugging_risk", "LOW")
+        liner_spec = mnt.get("liner_material", "mild steel")
+
+        if regime_dc in ("FUNNEL_FLOW", "PLUGGING_RISK"):
+            status_dc  = "fail" if regime_dc == "PLUGGING_RISK" else "warn"
+            # Minimum fill that still meets capacity (floor for any fill suggestion)
+            fill_floor = math.ceil(fill * Q_req / max(Q, 0.01) * 1.05)
+            fill_floor = max(fill_floor, 30)
             recs.append({
-                "check":   "CR",
-                "status":  "warn",
-                "problem": f"CR = {cr:.3f} > 2.5 — excessive scatter at head discharge",
+                "check":   "CHUTE_ANGLE",
+                "status":  status_dc,
+                "problem": (
+                    f"Chute back-plate {chute_ang:.0f}° — {regime_dc.replace('_',' ').lower()} "
+                    f"(mass flow requires ≥ {mass_ang:.0f}°)"
+                ),
                 "actions": [
-                    "Reduce RPM or increase head pulley diameter to lower belt speed",
-                    "Install curved discharge hood to capture scattered material",
-                    f"Target CR ≤ 2.0: requires v ≤ {2.0 * 9.81 * (D_mm/2000)**0.5:.2f} m/s",
+                    # PRIMARY fix is always a fabrication/geometry change
+                    f"FABRICATION (primary): Steepen chute back-plate to ≥ {mass_ang:.0f}° "
+                    f"(currently {chute_ang:.0f}° — steepen by {mass_ang - chute_ang:.0f}°). "
+                    f"This does not require changing any operating parameter.",
+                    # Liner can reduce the effective wall-friction angle
+                    f"Specify {liner_spec} liner (reduces effective sticking angle by 5–10°)",
+                    "Install air cannon or vibrator on chute back-plate for intermittent assist",
+                    # Fill reduction is tertiary and must respect capacity floor
+                    (f"SECONDARY only: reduce fill to {fill_floor}% to lower material "
+                     f"head pressure on chute (floor = {fill_floor}% to maintain {Q_req:.0f} t/h). "
+                     f"This alone cannot resolve a {mass_ang - chute_ang:.0f}° angle deficit.")
+                    if fill > fill_floor + 5 else
+                    f"Fill already near minimum for capacity — chute angle change is the only fix",
+                ],
+            })
+
+        if plug_risk in ("HIGH", "SEVERE") and regime_dc not in ("FUNNEL_FLOW", "PLUGGING_RISK"):
+            # Plugging risk despite adequate angle — liner / vibration issue
+            recs.append({
+                "check":   "PLUGGING",
+                "status":  "warn",
+                "problem": f"Chute plugging probability {plug_risk} despite adequate angle — cohesive material",
+                "actions": [
+                    f"Specify {liner_spec} liner to reduce surface adhesion",
+                    "Install vibration motor or air cannon on chute back-plate",
+                    "Consider chute geometry with steeper secondary slope",
                 ],
             })
 

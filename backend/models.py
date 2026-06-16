@@ -45,6 +45,14 @@ class BucketElevatorInput(BaseModel):
     custom_flowability: int   = Field(0,   ge=0,   le=4,    description="Flowability class override 1-4: 1=very free, 4=sluggish (0 = use DB value)")
     custom_moisture:    float = Field(-1,  ge=-1,  le=100,  description="Moisture content override [%] (-1 = use DB value)")
     custom_cohesion:    float = Field(-1,  ge=-1,  le=100,  description="Cohesion index override [kPa] (-1 = use DB value)")
+    custom_particle_size_mm: float = Field(
+        -1, ge=-1, le=500,
+        description=(
+            "Particle size override [mm] (-1 = use DB value). "
+            "Affects: stream envelope spread, chute wear index, liner selection. "
+            "Examples: fly ash 0.05 mm, cement 0.01 mm, coal 25 mm, rock 50 mm."
+        ),
+    )
 
     # Head pulley
     D_mm:           float = Field(500,   ge=100,  le=1500,  description="Head pulley diameter (mm)")
@@ -67,7 +75,9 @@ class BucketElevatorInput(BaseModel):
     # Belt & drive
     K_takeup:       float = Field(0.7,   ge=0.4,  le=0.9,   description="Take-up tension factor K (0.5 screw, 0.7 gravity)")
     mu:             float = Field(0.35,  ge=0.1,  le=0.6,   description="Belt-pulley friction coefficient μ")
-    wrap_deg:       float = Field(180,   ge=90,   le=240,   description="Belt wrap angle at drive pulley (°)")
+    wrap_deg:       float = Field(0,     ge=0,    le=240,   description="Belt wrap angle at drive pulley (°). 0 = auto-calculate from pulley geometry.")
+    snub_pulley:    bool  = Field(False, description="Add snub pulley on return side (+30° wrap)")
+    chute_liner_id: str   = Field("auto", description="Discharge chute liner selection. 'auto' = CEMA wear index selection")
     sf:             float = Field(1.25,  ge=1.0,  le=2.0,   description="Motor service factor")
 
     # ── v1.3.0 — Structural module inputs ──────────────────────────────────────
@@ -198,7 +208,7 @@ class BucketElevatorInput(BaseModel):
     )
 
     chain_n_strands: int = Field(
-        1, ge=1, le=2,
+        1, ge=1, le=4,   # le=4 for heavy-duty SC series (clinker, cement mill feed)
         description=(
             "Number of chain strands. "
             "1 = single-strand (standard centrifugal and continuous series). "
@@ -292,11 +302,10 @@ class BucketElevatorInput(BaseModel):
 
     # Discharge type override — allows forcing continuous mode on non-HF buckets
     # or centrifugal on HF (engineer override for non-standard applications)
-    discharge_type_override: str = Field(
+    discharge_type_override: Literal["", "centrifugal", "continuous"] = Field(
         "",
         description=(
             "Discharge type override. Empty = auto from bucket style. "
-            "'centrifugal' or 'continuous'. "
             "Use only when the bucket series alone does not determine the design intent."
         ),
     )
@@ -321,3 +330,4 @@ class DesignRecord(BaseModel):
     results_json: str
     notes:        Optional[str] = None
     created_at:   Optional[str] = None
+    updated_at:   Optional[str] = None  # main.py reads this from DB — must match schema
