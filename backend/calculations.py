@@ -2310,6 +2310,90 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             f"User fill {inp.fill_pct:.0f}% — material allows up to {rec_fill:.0f}% "
             f"— capacity headroom available"))
 
+
+    # 5b — Bucket-material compatibility check
+    # Compares the SELECTED bucket style against the recommendation engine result.
+    # The recommendation engine (bucket_recommendation) is called here with the
+    # same material dict so we don't need to pass bucket_rec as an extra kwarg.
+    try:
+        _brec = bucket_recommendation(mat)
+        _rec_style = _brec.get("recommended_style", "")
+        _cur_style = (bucket.get("style") or bucket.get("type") or "").upper()
+        _rec_disch  = _brec.get("discharge_type", "centrifugal")
+        # Only flag a mismatch when the styles genuinely differ in suitability
+        _CENT_STYLES = {"AA", "AC", "C", "CC", "A", "B"}
+        _CONT_STYLES = {"HF", "MF", "SC", "HF-L", "MF-L"}
+        _selected_cont = _cur_style in _CONT_STYLES
+        _rec_cont      = _rec_disch == "continuous"
+        _auto = getattr(inp, "auto_bucket", True)
+        if _cur_style and _rec_style and _cur_style != _rec_style:
+            if not _auto and _selected_cont != _rec_cont:
+                # Engineer explicitly chose the wrong discharge regime
+                checks.append(warn(
+                    f"Bucket style {_cur_style} — MANUAL selection conflicts with "
+                    f"recommendation: {_rec_style} preferred for '{mat.get('name','?')}' "
+                    f"({_rec_disch}). {_brec.get('reasoning','')[:100]} [CEMA 375 §6]"))
+            else:
+                # Auto-selected or same regime — advisory info only
+                checks.append(info(
+                    f"Bucket style {_cur_style} — {_rec_style} may be more suitable for "
+                    f"'{mat.get('name','?')}'. {_brec.get('reasoning','')[:90]} [CEMA 375 §6]"))
+        else:
+            checks.append(ok(
+                f"Bucket style {_cur_style or '—'} — good match for "
+                f"'{mat.get('name','?')}' [CEMA 375 §6]"))
+        # Surface supplementary notes as info checks
+        for _note in (_brec.get("notes") or []):
+            checks.append(info(f"Bucket note: {_note} [CEMA 375 §6]"))
+    except Exception:
+        pass   # never block calculation if recommendation engine fails
+
+    # 5c — Bucket spacing check
+    # Derives spacing in-function to avoid propagating fill_eff as extra kwarg.
+    # Compares actual spacing against CEMA §6 optimal and flags interference risk.
+    try:
+        _P_mm     = float(bucket.get("P") or bucket.get("projection_mm") or 150)
+        _H_mm     = float(bucket.get("H") or bucket.get("depth_mm")      or 250)
+        _gap_mm   = float(getattr(inp, "bucket_gap", 25) or 0)
+        _sp_mm    = _P_mm + _gap_mm
+        _sp_m     = _sp_mm / 1000.0
+        _opt_m    = (_P_mm * 1.8 / 1000.0 if not is_continuous else _H_mm / 1000.0)
+        _ratio    = _sp_m / max(_opt_m, 0.001)
+
+        # Geometric interference: spacing must exceed bucket PROJECTION so
+        # adjacent buckets don't overlap. Depth-based check only applies where
+        # depth > projection (very rare for standard CEMA bucket geometries).
+        # Reference: CEMA 375 §3.2, Martin H-143.
+        _ref_geom   = max(_P_mm, _H_mm) if not is_continuous else _H_mm
+        _clear_fac  = 1.05   # 5% clearance above reference dimension
+        _min_sp_mm  = _ref_geom * _clear_fac
+        if _sp_mm < _P_mm:
+            checks.append(fail(
+                f"Bucket spacing {_sp_mm:.0f}mm < bucket projection {_P_mm:.0f}mm — "
+                f"adjacent buckets physically overlap. Increase bucket gap to ≥ {_P_mm - _sp_mm + 10:.0f}mm "
+                f"[CEMA 375 §3.2]"))
+        elif _sp_mm < _min_sp_mm and not is_continuous:
+            checks.append(warn(
+                f"Bucket spacing {_sp_mm:.0f}mm — {_clear_fac:.0f}× clearance below "
+                f"reference {_ref_geom:.0f}mm. Tight spacing at boot pulley wrap — "
+                f"increase gap to ≥ {_min_sp_mm - _sp_mm + 5:.0f}mm [CEMA 375 §3.2]"))
+        elif _ratio < 0.75:
+            checks.append(warn(
+                f"Bucket spacing {_sp_mm:.0f}mm — CEMA optimal is {_opt_m*1000:.0f}mm "
+                f"(ratio {_ratio:.2f}). Under-spaced: boot filling congestion, recirculation risk "
+                f"[CEMA 375 §6]"))
+        elif _ratio > 2.0:
+            checks.append(warn(
+                f"Bucket spacing {_sp_mm:.0f}mm — CEMA optimal is {_opt_m*1000:.0f}mm "
+                f"(ratio {_ratio:.2f}). Over-spaced: inter-bucket material spill, reduced fill "
+                f"efficiency [CEMA 375 §6]"))
+        else:
+            checks.append(ok(
+                f"Bucket spacing {_sp_mm:.0f}mm — within CEMA §6 optimal range "
+                f"(ratio {_ratio:.2f}, optimal {_opt_m*1000:.0f}mm) [CEMA 375 §6]"))
+    except Exception:
+        pass
+
     # 6 — Headshaft load
     T_total = T1 + T2 + T3
     if T_total > 80000:
@@ -2552,6 +2636,20 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 checks.append(ok(
                     f"Casing clearance: {clearance*1000:.0f}mm — stream clears "
                     f"casing wall by adequate margin [CEMA 375 §7]"))
+
+
+    # 21b — Head section hood-strike (CR > 2.0 → stream may arc over head section)
+    if not is_continuous and not is_chain and cr > 2.0:
+        _v_ideal_max = math.sqrt(1.8 * 9.81 * (inp.D_mm / 2000.0))
+        checks.append(warn(
+            f"CR={cr:.3f} > 2.0 — discharge arc may loop back into head section (hood strike). "
+            f"Stream centrifugal energy sufficient to clear the head pulley and impact the hood. "
+            f"Reduce speed to v ≤ {_v_ideal_max:.2f} m/s (CR ≤ 1.8) or install curved hood. "
+            f"[CEMA 375 §3.3]"))
+    elif not is_continuous and not is_chain and cr > 1.8:
+        checks.append(info(
+            f"CR={cr:.3f} in range 1.8–2.0 — monitor discharge; install hood deflector "
+            f"if material scatter is observed at head section [CEMA 375 §3.3]"))
 
     # 22 — Stream interception (does discharge stream enter the chute?)
     if stream_chute:
