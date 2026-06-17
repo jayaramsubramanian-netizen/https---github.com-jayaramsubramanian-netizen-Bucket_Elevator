@@ -341,6 +341,29 @@ class BucketElevatorInput(BaseModel):
         ),
     )
 
+    # ── v1.9.4 — Drive starting method (for dynamic startup analysis) ────────
+    drive_start_type: Literal["DOL", "soft_start", "VFD"] = Field(
+        "soft_start",
+        description=(
+            "Motor starting method — drives the dynamic startup tension model. "
+            "DOL (direct-on-line): fast start, 1-3s to full speed, highest "
+            "inertia-driven peak tension; soft_start (reduced-voltage / "
+            "soft-starter): moderate ramp, 3-8s, default for most bucket "
+            "elevators; VFD (variable-frequency drive): controlled ramp, "
+            "5-30s, lowest peak tension but highest equipment cost. "
+            "Each type maps to a default startup_time_s unless overridden."
+        ),
+    )
+
+    startup_time_s_override: float = Field(
+        0.0, ge=0.0, le=60.0,
+        description=(
+            "Time to reach full belt speed [s]. 0 = auto from drive_start_type "
+            "(DOL: 2s, soft_start: 5s, VFD: 15s). Set explicitly when the "
+            "actual ramp profile from the VFD/soft-starter datasheet is known."
+        ),
+    )
+
     # Discharge type override — allows forcing continuous mode on non-HF buckets
     # or centrifugal on HF (engineer override for non-standard applications)
     discharge_type_override: Literal["", "centrifugal", "continuous"] = Field(

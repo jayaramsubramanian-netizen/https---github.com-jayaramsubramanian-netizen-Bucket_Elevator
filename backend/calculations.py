@@ -56,11 +56,13 @@ try:
     from .constants import (
         CEMA_MAX_SHAFT_SLOPE, SHAFT_Su_PA, SHAFT_Ka, SHAFT_Kc, SHAFT_Kd,
         SHAFT_E_PA, LEQ_DEFAULT, CEFF_BELT, BELT_WEIGHT_DEFAULT,
+        DEFAULT_STARTUP_FACTOR_BELT, DEFAULT_STARTUP_FACTOR_CHAIN,
     )
 except ImportError:
     from constants import (
         CEMA_MAX_SHAFT_SLOPE, SHAFT_Su_PA, SHAFT_Ka, SHAFT_Kc, SHAFT_Kd,
         SHAFT_E_PA, LEQ_DEFAULT, CEFF_BELT, BELT_WEIGHT_DEFAULT,
+        DEFAULT_STARTUP_FACTOR_BELT, DEFAULT_STARTUP_FACTOR_CHAIN,
     )
 try:
     from .physics import DischargePhysics
@@ -1267,6 +1269,144 @@ def _required_wrap_angle(
     }
 
 
+def pickup_efficiency(
+    bucket:         dict,
+    belt_speed_mps: float,
+    boot_D_mm:      float,
+    aor_deg:        float = 35.0,
+    flowability:    int   = 2,
+    elev_type:      str   = "centrifugal",
+) -> dict:
+    """
+    v1.9.3 — Material pickup / digging efficiency.
+
+    Distinct from dynamic_fill_efficiency(), which recommends a target fill %
+    from spacing/speed/flowability. This function models the DIGGING MECHANICS
+    itself: during the brief arc where a centrifugal bucket sweeps through the
+    boot pit, does material actually have time to flow into the bucket cavity
+    before the bucket lip has passed through the pile?
+
+    Physical picture (centrifugal / digging buckets only)
+    ───────────────────────────────────────────────────────────────────────
+    As the boot pulley rotates, each bucket dwells in the "digging zone"
+    (≈90° arc, per feed_design()) for a time:
+        t_dig = (π/2 × R_boot) / v_belt    [s]   (arc length / belt speed)
+
+    During that dwell time, material must flow laterally into the bucket
+    cavity under gravity + the angle of repose. A free-flowing material
+    (low AoR, flowability class 1) fills almost instantly relative to t_dig.
+    A cohesive or angular material (high AoR, flowability class 3-4) takes
+    measurably longer to flow into the cavity — if t_dig is too short
+    relative to the material's "flow time", the bucket exits the pit with
+    a partially dug load even though plenty of material was available.
+
+    Digging resistance factor
+    ──────────────────────────
+    Higher AoR -> material resists flowing sideways into the cavity (it
+    wants to maintain its own pile angle rather than slump into the bucket).
+    Modelled as a flow-time penalty scaling with tan(AoR), normalised so that
+    AoR=30° (free-flowing) gives no penalty and AoR=45°+ (cohesive) gives a
+    significant one.
+
+    Reclaim factor (speed-dependent)
+    ─────────────────────────────────
+    At high belt speed, dwell time t_dig shrinks. The pickup efficiency model
+    combines AoR-driven digging resistance with the available dwell time:
+
+        flow_time_s   = k_flow_base * tan(radians(aor_deg)) * flowability_mult
+        reclaim_ratio = min(1.0, t_dig / max(flow_time_s, 0.001))
+        pickup_eff    = 0.55 + 0.45 * reclaim_ratio    (floor 55% — buckets
+                        always scoop SOME material even in a fast sweep)
+
+    This is a first-principles approximation, not a CFD-validated model — it
+    is intended to flag combinations of high speed + high AoR/cohesion that
+    risk under-filled buckets even when boot material depth is adequate,
+    which dynamic_fill_efficiency()'s spacing-only model cannot see.
+
+    Continuous (spout-fed) elevators do not dig — they are excluded; the
+    feed_design() loading-leg speed warning covers the equivalent concern
+    for that bucket style (spout delivery rate vs bucket arrival frequency).
+
+    Parameters
+    ----------
+    bucket          Bucket dict (needs "P" projection [mm])
+    belt_speed_mps  Belt speed [m/s]
+    boot_D_mm       Boot pulley diameter [mm]
+    aor_deg         Material angle of repose [°]
+    flowability     1 (very free) .. 4 (sluggish)
+    elev_type       "centrifugal" | "continuous"
+
+    Returns
+    -------
+    {
+        "applicable":        bool,   False for continuous (not modelled)
+        "t_dig_s":            float,  dwell time in digging zone [s]
+        "flow_time_s":         float,  estimated material flow-in time [s]
+        "reclaim_ratio":       float,  0..1, how much of t_dig is "spare"
+        "pickup_efficiency":   float,  0.55..1.0
+        "digging_resistance":  "LOW" | "MODERATE" | "HIGH"
+        "note":                str
+    }
+    """
+    if elev_type != "centrifugal":
+        return {
+            "applicable":       False,
+            "pickup_efficiency": 1.0,
+            "note": (
+                "Pickup efficiency model applies to centrifugal (digging) "
+                "buckets only. Continuous elevators are spout-fed — see "
+                "feed_design() loading-leg speed warning for the equivalent "
+                "concern."
+            ),
+        }
+
+    R_boot_m = boot_D_mm / 2000.0
+    v        = max(belt_speed_mps, 0.05)
+
+    # Dwell time in the ~90° digging arc (matches feed_design()'s dig_zone_length_m)
+    dig_zone_length_m = math.pi / 2.0 * R_boot_m
+    t_dig_s = dig_zone_length_m / v
+
+    # Flowability multiplier: 1 (free) -> 1.0x, 4 (sluggish) -> ~2.2x flow time
+    _flow_mult = {1: 1.0, 2: 1.35, 3: 1.75, 4: 2.20}.get(int(flowability), 1.35)
+
+    # Flow-in time scales with tan(AoR), normalised to AoR=30° baseline
+    k_flow_base = 0.12   # empirical calibration constant [s] at AoR=30°, flowability=1
+    aor_factor  = math.tan(math.radians(max(aor_deg, 5.0))) / math.tan(math.radians(30.0))
+    flow_time_s = k_flow_base * aor_factor * _flow_mult
+
+    reclaim_ratio = min(1.0, t_dig_s / max(flow_time_s, 0.001))
+    pickup_eff    = 0.55 + 0.45 * reclaim_ratio
+
+    if reclaim_ratio >= 0.85:
+        resistance = "LOW"
+    elif reclaim_ratio >= 0.50:
+        resistance = "MODERATE"
+    else:
+        resistance = "HIGH"
+
+    note = (
+        f"Dig dwell {t_dig_s*1000:.0f}ms vs estimated flow-in time "
+        f"{flow_time_s*1000:.0f}ms (AoR {aor_deg:.0f}°, flowability class {flowability}). "
+        f"Pickup efficiency {pickup_eff*100:.0f}% — "
+        + ("ample time for full digging." if resistance == "LOW"
+           else "marginal — some buckets may dig partially full." if resistance == "MODERATE"
+           else "insufficient dwell time — buckets likely entering carrying leg "
+                "under-filled despite adequate boot material depth. Reduce speed, "
+                "increase boot pulley diameter, or use a feeder to assist digging.")
+    )
+
+    return {
+        "applicable":         True,
+        "t_dig_s":            round(t_dig_s, 4),
+        "flow_time_s":        round(flow_time_s, 4),
+        "reclaim_ratio":      round(reclaim_ratio, 3),
+        "pickup_efficiency":  round(pickup_eff, 3),
+        "digging_resistance": resistance,
+        "note":               note,
+    }
+
+
 def feed_design(
     Q_th:           float,
     rho:            float,
@@ -2046,6 +2186,100 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         boot_outlet_h = _boot_outlet_h,
     )
 
+    # ── Pickup / digging efficiency (v1.9.3) ──────────────────────────────────
+    pickup_eff = pickup_efficiency(
+        bucket         = bucket,
+        belt_speed_mps = v,
+        boot_D_mm      = float(_boot_D_mm),
+        aor_deg        = float(mat.get("angle_repose", 35.0) or 35.0),
+        flowability    = int(mat.get("flowability", 2) or 2),
+        elev_type      = "continuous" if is_continuous else "centrifugal",
+    )
+
+    # ── Dynamic startup analysis (v1.9.4) ─────────────────────────────────────
+    # Builds an equivalent translating mass from the parts of the system we
+    # can actually compute from first principles:
+    #   - belt + bucket mass over the FULL loop (both legs, 2 x H)
+    #   - material mass currently in transit on the loaded leg
+    # Motor/gearbox/headshaft rotor inertia (WR^2) is NOT included — that
+    # requires a motor/gearbox database with rotor inertia specs, which this
+    # platform does not yet have. The result is therefore a partial inertia
+    # estimate; it will under-state the true peak tension somewhat, but the
+    # belt+bucket+material term is normally the dominant contributor for
+    # bucket elevators (unlike e.g. long overland conveyors where idler and
+    # pulley inertia matter more).
+    _belt_mass_per_m   = (BW_mm / 1000.0) * BELT_WEIGHT_DEFAULT
+    _bucket_mass_per_m = bw_kg / max(spacing, 0.001)
+    _loop_length_m     = 2.0 * inp.H_m
+    _belt_bucket_mass_kg = (_belt_mass_per_m + _bucket_mass_per_m) * _loop_length_m
+
+    # Material in transit: throughput rate x time to traverse the lift height
+    _transit_time_s   = inp.H_m / max(v, 0.05)
+    _G_kgs            = Q / 3.6
+    _material_mass_kg = _G_kgs * _transit_time_s
+
+    mass_equivalent_kg = _belt_bucket_mass_kg + _material_mass_kg
+
+    # Startup time from drive type, unless explicitly overridden
+    _DRIVE_START_TIMES = {"DOL": 2.0, "soft_start": 5.0, "VFD": 15.0}
+    _drive_start_type  = getattr(inp, "drive_start_type", "soft_start") or "soft_start"
+    _startup_t_override = float(getattr(inp, "startup_time_s_override", 0) or 0)
+    startup_time_s = (
+        _startup_t_override if _startup_t_override > 0
+        else _DRIVE_START_TIMES.get(_drive_start_type, 5.0)
+    )
+
+    # Startup factor — CEMA 375 §4 documented ranges are 1.5-2.0 (belt) and
+    # 2.0-2.5 (chain). The controlled-ramp characteristic of the drive type
+    # justifies a value within that range: DOL gets the upper bound (worst
+    # case, abrupt application of full torque), VFD the lower bound
+    # (torque is ramped, so the flat-factor envelope can be tightened),
+    # soft_start sits at the documented default.
+    if is_chain:
+        _factor_lo, _factor_mid, _factor_hi = 2.0, 2.25, 2.5
+    else:
+        _factor_lo, _factor_mid, _factor_hi = 1.5, 1.75, 2.0
+    _FACTOR_BY_DRIVE: dict = {
+        "DOL":        _factor_hi,
+        "soft_start": _factor_mid,
+        "VFD":        _factor_lo,
+    }
+    _default_factor: float = (
+        DEFAULT_STARTUP_FACTOR_CHAIN if is_chain else DEFAULT_STARTUP_FACTOR_BELT
+    )
+    _startup_factor_default: float = float(
+        _FACTOR_BY_DRIVE.get(_drive_start_type, _default_factor)
+    )
+
+    startup_dyn = DynamicLoadEngine.startup_dynamic_tension(
+        T_running          = F_eff,
+        mass_equivalent_kg = mass_equivalent_kg,
+        belt_speed_mps     = v,
+        startup_time_s     = startup_time_s,
+        startup_factor     = _startup_factor_default,
+    )
+    startup_dyn["mass_equivalent_kg"] = round(mass_equivalent_kg, 1)
+    startup_dyn["mass_belt_bucket_kg"] = round(_belt_bucket_mass_kg, 1)
+    startup_dyn["mass_material_kg"]    = round(_material_mass_kg, 1)
+    startup_dyn["drive_start_type"]    = _drive_start_type
+    if not is_chain:
+        _belt_rated_N_startup = (BW_mm / 25.4) * 4450.0 * belt_ply * 0.5
+        startup_dyn["belt_rated_N"] = round(_belt_rated_N_startup, 0)
+        startup_dyn["startup_margin"] = round(
+            _belt_rated_N_startup / max(startup_dyn["T_peak_governing"], 1.0), 2
+        )
+    startup_dyn["note"] = (
+        "Equivalent mass includes belt+bucket (full loop) and in-transit "
+        "material only. Motor/gearbox/headshaft rotor inertia not included "
+        "(requires drive datasheet WR^2 data not currently modelled) — "
+        "true peak tension may be modestly higher than shown."
+    )
+
+    shock_check = DynamicLoadEngine.shock_load_check(
+        startup_factor = _startup_factor_default,
+        elevator_type  = "chain" if is_chain else "belt",
+    )
+
     # ── Engineering checks ─────────────────────────────────────────────────────
     # Backlegging risk classification (v1.9.1) — computed here so it can be
     # exposed as a structured field, not just buried in a check message.
@@ -2086,6 +2320,9 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         critical_speed   = critical_speed,
         fill_eff         = fill_eff,
         tension_profile  = tension_profile,
+        pickup_eff       = pickup_eff,
+        startup_dyn      = startup_dyn,
+        shock_check      = shock_check,
     )
 
     # ── Design recommendations ────────────────────────────────────────────────
@@ -2239,6 +2476,9 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "critical_speed":    critical_speed,       # v1.9.0
         "backlegging_risk":  backlegging_risk,     # v1.9.1
         "tension_profile":   tension_profile,      # v1.9.2
+        "pickup_efficiency": pickup_eff,            # v1.9.3
+        "startup_dynamic":   startup_dyn,            # v1.9.4
+        "shock_check":       shock_check,            # v1.9.4
         "bolt_fatigue":      bolt_fatigue,
         "takeup_gravity":    takeup_gravity,
         "takeup_screw":      takeup_screw,
@@ -2330,6 +2570,9 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   critical_speed:   "dict | None" = None,
                   fill_eff:         "dict | None" = None,
                   tension_profile:  "dict | None" = None,
+                  pickup_eff:       "dict | None" = None,
+                  startup_dyn:      "dict | None" = None,
+                  shock_check:      "dict | None" = None,
                   **kwargs,                         # absorb future additions
                   ) -> list:
     checks = []
@@ -2562,6 +2805,65 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         else:
             checks.append(ok(
                 f"Fill stability: SAFE — {_fnote} [CEMA 375 §6]"))
+
+    # 5e — Pickup / digging efficiency (v1.9.3, centrifugal only)
+    if pickup_eff and pickup_eff.get("applicable"):
+        _pe   = pickup_eff.get("pickup_efficiency", 1.0)
+        _res  = pickup_eff.get("digging_resistance", "LOW")
+        _pnote = pickup_eff.get("note", "")
+        if _res == "HIGH":
+            checks.append(warn(
+                f"Digging efficiency {_pe*100:.0f}% — HIGH resistance. {_pnote} "
+                f"[CEMA 375 §6]"))
+        elif _res == "MODERATE":
+            checks.append(info(
+                f"Digging efficiency {_pe*100:.0f}% — MODERATE resistance. {_pnote} "
+                f"[CEMA 375 §6]"))
+        else:
+            checks.append(ok(
+                f"Digging efficiency {_pe*100:.0f}% — {_pnote} [CEMA 375 §6]"))
+
+    # 5f — Dynamic startup tension (v1.9.4)
+    if startup_dyn:
+        _t_peak = startup_dyn.get("T_peak_governing", 0)
+        _gov_m  = startup_dyn.get("governing_method", "factor")
+        _margin = startup_dyn.get("startup_margin")
+        _dst    = startup_dyn.get("drive_start_type", "soft_start")
+        if _margin is not None:
+            if _margin < 1.0:
+                checks.append(fail(
+                    f"Startup peak tension {_t_peak:.0f} N ({_gov_m}-governed, "
+                    f"{_dst.replace('_',' ')} start) EXCEEDS belt rated capacity "
+                    f"{startup_dyn.get('belt_rated_N',0):.0f} N (margin {_margin:.2f}). "
+                    f"Increase belt ply, use VFD ramped start, or extend startup time "
+                    f"[CEMA 375 §4]"))
+            elif _margin < 1.15:
+                checks.append(warn(
+                    f"Startup peak tension {_t_peak:.0f} N ({_gov_m}-governed, "
+                    f"{_dst.replace('_',' ')} start) — margin {_margin:.2f} against belt "
+                    f"rating is thin. Consider soft-start/VFD or next belt ply [CEMA 375 §4]"))
+            else:
+                checks.append(ok(
+                    f"Startup peak tension {_t_peak:.0f} N ({_gov_m}-governed, "
+                    f"{_dst.replace('_',' ')} start) — margin {_margin:.2f} against belt "
+                    f"rating [CEMA 375 §4]"))
+        else:
+            checks.append(info(
+                f"Startup peak tension {_t_peak:.0f} N ({_gov_m}-governed, "
+                f"{_dst.replace('_',' ')} start, chain elevator) [CEMA 375 §4]"))
+
+    # 5g — Shock load / backstop advisory (v1.9.4)
+    if shock_check:
+        if shock_check.get("backstop_required") and not shock_check.get("adequate_for_normal_shock"):
+            checks.append(warn(
+                f"{shock_check.get('recommendation','')} [CEMA 375 §4]"))
+        elif not shock_check.get("adequate_for_normal_shock"):
+            checks.append(info(
+                f"{shock_check.get('recommendation','')} [CEMA 375 §4]"))
+        else:
+            checks.append(ok(
+                f"Startup factor {shock_check.get('startup_factor',0):.1f} adequate for "
+                f"normal shock loads [CEMA 375 §4]"))
 
     # 6 — Headshaft load
     T_total = T1 + T2 + T3

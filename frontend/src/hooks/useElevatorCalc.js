@@ -433,6 +433,13 @@ function normaliseResult(raw) {
     // v1.9.2 — Position-resolved belt tension profile (boot/loaded leg/head/empty leg)
     tension_profile: raw.tension_profile ?? null,
 
+    // v1.9.3 — Material pickup / digging efficiency (centrifugal buckets only)
+    pickup_efficiency: raw.pickup_efficiency ?? null,
+
+    // v1.9.4 — Dynamic startup analysis + shock load advisory
+    startup_dynamic: raw.startup_dynamic ?? null,
+    shock_check:     raw.shock_check     ?? null,
+
     checks,
     status,
   };
