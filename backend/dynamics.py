@@ -341,6 +341,144 @@ class DynamicLoadEngine:
 
         return result
 
+    # ── 3.5 Position-resolved tension profile (v1.9.2) ────────────────────────
+
+    @staticmethod
+    def belt_tension_profile(
+        T1:               float,
+        T2:               float,
+        T3:               float,
+        height_m:         float,
+        belt_width_mm:    float,
+        bucket_mass_kg:   float,
+        bucket_spacing_m: float,
+        PIW_kgm2:         float = 8.0,
+        n_stations:       int   = 9,
+    ) -> dict:
+        """
+        CEMA 375 §4 — Position-resolved belt tension around the full elevator
+        loop: boot pulley -> loaded (carrying) leg -> head pulley ->
+        empty (return) leg -> back to boot.
+
+        T1, T2, T3 from calc_headshaft_tensions() are LUMPED values defined
+        at the head pulley:
+            T1  effective tension from lifting material               [N]
+            T2  self-weight of belt+buckets on the LOADED leg          [N]
+            T3  slack-side (return leg) tension, governing             [N]
+
+        This function distributes that lumped picture along both legs using
+        the standard bucket-elevator tension-diagram convention:
+
+        Loaded leg (boot -> head), tension increases linearly with height
+        climbed because more of the belt+bucket self-weight and lifted
+        material is "below" the station as you go up:
+            T_loaded(h) = T3 + T1*(h/H) + T2*(h/H)
+            at h=0 (boot):  T_loaded = T3            (tight side minimum)
+            at h=H (head):  T_loaded = T3 + T1 + T2  (= T_effective + T3,
+                                                        i.e. R_headshaft)
+
+        Empty leg (head -> boot), tension decreases linearly because only
+        the belt+bucket self-weight (no material) acts, and it is being
+        "given back" by gravity as you descend:
+            T_empty(h_desc) = T3 + T2_empty*(h_desc/H)
+            where T2_empty is the EMPTY-belt self-weight component only
+            (no material, and roughly half the bucket mass on average
+            since buckets are nominally empty on the return leg).
+
+        This is a simplified linear-gradient model — it does not capture
+        local effects (pulley wrap losses, snub pulleys, individual bucket
+        digging impulses). It is intended for take-up sizing checks, belt
+        rating verification at the correct location (not just at the head),
+        and a tension-diagram visual for the report. For most CEMA bucket
+        elevator designs the all-up linear assumption matches commercial
+        OEM practice (Bossert/Martin/4B preliminary tension diagrams).
+
+        Parameters
+        ----------
+        T1, T2, T3         from calc_headshaft_tensions() [N]
+        height_m           elevator lift height [m]
+        belt_width_mm      belt width [mm] (for empty-leg self-weight)
+        bucket_mass_kg      single bucket mass [kg] (for empty-leg self-weight)
+        bucket_spacing_m   centreline bucket spacing [m]
+        PIW_kgm2           belt mass per unit area [kg/m2]
+        n_stations         number of points to sample per leg (>=3)
+
+        Returns
+        -------
+        {
+            "stations": [
+                {"leg": "loaded"|"empty", "position_m": float,
+                 "height_frac": float, "tension_N": float}, ...
+            ],
+            "T_max_N":        float,  "T_max_location":  str,
+            "T_min_N":        float,  "T_min_location":  str,
+            "T_max_to_min_ratio": float,
+            "loaded_leg_top_N":    float,  (= T1+T2+T3, equals R_headshaft - T3... )
+            "loaded_leg_bottom_N": float,  (= T3, tight-side minimum)
+            "empty_leg_top_N":     float,  (= T3 + empty self-weight)
+            "empty_leg_bottom_N":  float,  (= T3, returning to boot)
+        }
+        """
+        n = max(int(n_stations), 3)
+        H = max(height_m, 0.01)
+
+        # Empty-leg self-weight component: belt + buckets, but buckets carry
+        # no material and are assumed (conservatively) still at full bucket
+        # mass since the bucket structure itself does not change on return.
+        belt_mass_per_m   = (belt_width_mm / 1000.0) * PIW_kgm2
+        bucket_mass_per_m = bucket_mass_kg / max(bucket_spacing_m, 0.001)
+        T2_empty = (belt_mass_per_m + bucket_mass_per_m) * H * GRAVITY
+
+        stations = []
+
+        # Loaded leg: boot (h=0, T=T3) -> head (h=H, T=T1+T2+T3)
+        for i in range(n):
+            frac = i / (n - 1)
+            h    = frac * H
+            T    = T3 + (T1 + T2) * frac
+            stations.append({
+                "leg":         "loaded",
+                "position_m":  round(h, 2),
+                "height_frac": round(frac, 3),
+                "tension_N":   round(T, 1),
+            })
+
+        # Empty leg: head (h=H, descending start, T=T3+T2_empty) ->
+        #            boot (h=0, T=T3)
+        for i in range(n):
+            frac = i / (n - 1)              # 0 = at head, 1 = at boot
+            h    = H * (1.0 - frac)
+            T    = (T3 + T2_empty) - T2_empty * frac
+            stations.append({
+                "leg":         "empty",
+                "position_m":  round(h, 2),
+                "height_frac": round(1.0 - frac, 3),
+                "tension_N":   round(T, 1),
+            })
+
+        T_max = max(stations, key=lambda s: s["tension_N"])
+        T_min = min(stations, key=lambda s: s["tension_N"])
+
+        return {
+            "stations": stations,
+            "T_max_N":        T_max["tension_N"],
+            "T_max_location": f"{T_max['leg']} leg @ {T_max['height_frac']*100:.0f}% height",
+            "T_min_N":        T_min["tension_N"],
+            "T_min_location": f"{T_min['leg']} leg @ {T_min['height_frac']*100:.0f}% height",
+            "T_max_to_min_ratio": round(T_max["tension_N"] / max(T_min["tension_N"], 1.0), 2),
+            "loaded_leg_top_N":    round(T1 + T2 + T3, 1),
+            "loaded_leg_bottom_N": round(T3, 1),
+            "empty_leg_top_N":     round(T3 + T2_empty, 1),
+            "empty_leg_bottom_N":  round(T3, 1),
+            "T2_empty_N":          round(T2_empty, 1),
+            "note": (
+                "Simplified linear-gradient tension diagram. Loaded leg rises "
+                "from T3 (boot) to T1+T2+T3 (head); empty leg falls from "
+                "T3+T2_empty (head) back to T3 (boot). Does not capture local "
+                "pulley wrap losses or individual bucket digging impulses."
+            ),
+        }
+
     # ── 4. Startup and dynamic loads ──────────────────────────────────────────
 
     @staticmethod

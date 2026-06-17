@@ -430,6 +430,9 @@ function normaliseResult(raw) {
     // v1.9.1 — Backlegging risk classification
     backlegging_risk: raw.backlegging_risk ?? null,
 
+    // v1.9.2 — Position-resolved belt tension profile (boot/loaded leg/head/empty leg)
+    tension_profile: raw.tension_profile ?? null,
+
     checks,
     status,
   };

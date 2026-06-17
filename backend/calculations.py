@@ -1619,6 +1619,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     chain_sf_req  = float(getattr(inp, "chain_sf", 6.0) or 6.0)
     chain_n_teeth = int(getattr(inp, "chain_sprocket_teeth", 0) or 0)
     tens: dict = {}   # populated in belt branch; empty dict for chain (safe subscript via .get())
+    tension_profile = None   # v1.9.2 — populated in belt branch only; stays None for chain
 
     if is_chain:
         # ── Chain T2: chain self-weight + bucket weight ───────────────────────
@@ -1681,6 +1682,14 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         F_eff      = tens["F_eff"]
         R_head     = tens["R_headshaft"]
         euler_chk  = tens["euler_check"]
+
+        # v1.9.2 — Position-resolved tension profile (belt elevators only).
+        # Walks the full loop: boot -> loaded leg -> head -> empty leg -> boot.
+        tension_profile = DynamicLoadEngine.belt_tension_profile(
+            T1=T1, T2=T2, T3=T3, height_m=inp.H_m,
+            belt_width_mm=BW_mm, bucket_mass_kg=bw_kg,
+            bucket_spacing_m=spacing,
+        )
 
         chain_selected = None
         chain_SF_act   = None
@@ -1831,6 +1840,14 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     # ── Belt & motor ──────────────────────────────────────────────────────────
     motor_kw = select_motor(P_total, inp.sf)
     belt_ply = math.ceil(F_eff / (BW_mm / 25.4 * 4450 * 0.5))
+
+    # v1.9.2 — Belt rated tension, used to verify the tension PROFILE's actual
+    # peak (not just the lumped F_eff at the head) against belt capacity.
+    if not is_chain and tension_profile:
+        _belt_rated_N = (BW_mm / 25.4) * 4450.0 * belt_ply * 0.5
+        _t_max_N      = tension_profile.get("T_max_N", 0)
+        tension_profile["belt_rated_N"]  = round(_belt_rated_N, 0)
+        tension_profile["rating_margin"] = round(_belt_rated_N / max(_t_max_N, 1.0), 2)
 
     # ── Discharge physics — branched on elevator type ─────────────────────────
     # v1.5.0: HF (continuous discharge) elevators use a pour-curve model.
@@ -2068,6 +2085,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         pulley_shell     = pulley_shell,
         critical_speed   = critical_speed,
         fill_eff         = fill_eff,
+        tension_profile  = tension_profile,
     )
 
     # ── Design recommendations ────────────────────────────────────────────────
@@ -2220,6 +2238,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "pulley_shell":      pulley_shell,        # v1.9.0
         "critical_speed":    critical_speed,       # v1.9.0
         "backlegging_risk":  backlegging_risk,     # v1.9.1
+        "tension_profile":   tension_profile,      # v1.9.2
         "bolt_fatigue":      bolt_fatigue,
         "takeup_gravity":    takeup_gravity,
         "takeup_screw":      takeup_screw,
@@ -2310,6 +2329,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   pulley_shell:     "dict | None" = None,
                   critical_speed:   "dict | None" = None,
                   fill_eff:         "dict | None" = None,
+                  tension_profile:  "dict | None" = None,
                   **kwargs,                         # absorb future additions
                   ) -> list:
     checks = []
@@ -2570,6 +2590,33 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 f"BELT SLIP RISK: T3={T3:.0f} N < Euler min {t3_min:.0f} N "
                 f"(e^μθ={e_ratio:.3f}, μ={inp.mu}, wrap={inp.wrap_deg or 180:.0f}°). "
                 f"Increase take-up tension, add snub pulley, or upgrade lagging [CEMA 375 §4]"))
+
+    # 6c — Tension profile vs belt rating (v1.9.2)
+    # Verifies the ACTUAL peak tension from the position-resolved profile
+    # against belt rated capacity. Normally this matches the lumped F_eff+T3
+    # check already covered elsewhere, but the profile catches configurations
+    # where the peak does not occur at the head (e.g. unusually heavy buckets
+    # making the empty-leg-near-head tension the true governing point).
+    if tension_profile:
+        _t_max   = tension_profile.get("T_max_N", 0)
+        _t_loc   = tension_profile.get("T_max_location", "?")
+        _rated   = tension_profile.get("belt_rated_N", 0)
+        _margin  = tension_profile.get("rating_margin", 0)
+        if _rated > 0:
+            if _margin < 1.0:
+                checks.append(fail(
+                    f"Tension profile peak {_t_max:.0f} N ({_t_loc}) EXCEEDS belt "
+                    f"rated capacity {_rated:.0f} N (margin {_margin:.2f}). "
+                    f"Increase belt ply or reduce loading [CEMA 375 §4]"))
+            elif _margin < 1.25:
+                checks.append(warn(
+                    f"Tension profile peak {_t_max:.0f} N ({_t_loc}) — margin "
+                    f"{_margin:.2f} against belt rating {_rated:.0f} N is thin. "
+                    f"Consider next ply size for service-life margin [CEMA 375 §4]"))
+            else:
+                checks.append(ok(
+                    f"Tension profile peak {_t_max:.0f} N ({_t_loc}) — margin "
+                    f"{_margin:.2f} against belt rating {_rated:.0f} N [CEMA 375 §4]"))
 
     # 7 — Shaft sizing
     checks.append(info(
