@@ -714,12 +714,21 @@ function PulleyEdit({ inp, setField, results }) {
       <F label="Match head pulley diameter" name="boot_pulley_same_as_head"
         type="toggle" value={inp.boot_pulley_same_as_head ?? false}
         onChange={setField} />
-      {!inp.boot_pulley_same_as_head && (
-        <F label="Boot Pulley Diameter" name="boot_pulley_D_mm"
-          value={inp.boot_pulley_D_mm} onChange={setField}
-          unit="mm" min={100} max={1000} step={25}
-          note={`Head = ${inp.D_mm} mm · Ratio = ${(inp.boot_pulley_D_mm / Math.max(inp.D_mm,1)).toFixed(2)}`} />
-      )}
+      {!inp.boot_pulley_same_as_head && (() => {
+        const headBootRatio = inp.D_mm / Math.max(inp.boot_pulley_D_mm, 1);
+        const ratioOk = headBootRatio <= 2.0;
+        return (
+          <F label="Boot Pulley Diameter" name="boot_pulley_D_mm"
+            value={inp.boot_pulley_D_mm} onChange={setField}
+            unit="mm" min={100} max={1000} step={25}
+            note={
+              <span style={{ color: ratioOk ? undefined : T.warning }}>
+                Head:Boot ratio = {headBootRatio.toFixed(2)}
+                {" "}(CEMA §3.2 limit ≤ 2.00){!ratioOk ? " ⚠" : ""}
+              </span>
+            } />
+        );
+      })()}
       {inp.boot_pulley_same_as_head && (
         <div style={{ fontSize: 12, color: T.success, padding: "4px 0 8px" }}>
           Boot locked to head: {inp.D_mm} mm

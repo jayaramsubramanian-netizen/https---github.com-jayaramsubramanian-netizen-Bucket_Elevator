@@ -1127,6 +1127,48 @@ def dynamic_fill_efficiency(
         max_fill = min(max_fill, 80.0)
     min_fill = round(min_fill, 0)
     max_fill = round(max_fill, 0)
+
+    # ── Choking / starving risk classification (v1.9.1) ──────────────────────
+    # Starving: buckets arrive at the boot faster than material can be picked
+    # up (under-spaced + slow speed + sluggish material) — buckets run partly
+    # empty even though feed rate is adequate.
+    # Choking: buckets arrive too slowly relative to feed rate, or spacing is
+    # so wide that material backs up at the boot inlet faster than it clears.
+    #
+    # starvation_factor: how far k_spacing AND k_speed are both depressed on
+    # the "too fast / under-spaced" side — both factors being low simultaneously
+    # is what produces empty or partially-filled buckets.
+    # choking_factor: driven by over-wide spacing combined with sluggish flow —
+    # material has nowhere to go between infrequent bucket arrivals.
+
+    starvation_factor = 0.0
+    choking_factor    = 0.0
+
+    if spacing_status == "too_close" or belt_speed_mps < 0.60:
+        # Buckets arrive faster than the boot can load them
+        spacing_deficit = max(0.0, 0.75 - ratio) / 0.75          # 0..1
+        speed_deficit   = max(0.0, 0.60 - belt_speed_mps) / 0.60  # 0..1
+        starvation_factor = round(min(1.0, 0.6 * spacing_deficit + 0.4 * speed_deficit), 3)
+
+    if spacing_status == "too_wide" and flowability >= 3:
+        # Wide spacing + sluggish material — boot inlet can back up between buckets
+        spacing_excess = max(0.0, ratio - 1.80) / 1.80            # 0..1+
+        flow_penalty    = (flowability - 2) / 2.0                  # 0.5 for fb=3, 1.0 for fb=4
+        choking_factor  = round(min(1.0, 0.7 * min(spacing_excess, 1.0) + 0.3 * flow_penalty), 3)
+
+    if starvation_factor >= 0.5:
+        fill_stability = "HIGH RISK"
+        fs_note = "Buckets likely running partially empty — boot cannot load fast enough"
+    elif choking_factor >= 0.5:
+        fill_stability = "HIGH RISK"
+        fs_note = "Material may back up at boot inlet faster than buckets clear it"
+    elif starvation_factor >= 0.25 or choking_factor >= 0.25:
+        fill_stability = "MARGINAL"
+        fs_note = "Some fill instability possible — monitor at commissioning"
+    else:
+        fill_stability = "SAFE"
+        fs_note = "Stable bucket loading expected at this spacing and speed"
+
     return {
         "recommended_fill_pct": round(rec_fill, 1),
         "min_fill_pct":         min_fill,
@@ -1138,6 +1180,11 @@ def dynamic_fill_efficiency(
         "k_spacing":            round(k_spacing, 3),
         "k_flow":               round(k_flow, 3),
         "k_speed":              round(k_speed, 3),
+        # v1.9.1 — choking/starving risk classification
+        "starvation_factor":    starvation_factor,
+        "choking_factor":       choking_factor,
+        "fill_stability":       fill_stability,
+        "fill_stability_note":  fs_note,
         "note": (
             f"Range {int(min_fill)}\u2013{int(max_fill)}%  \u00b7  "
             f"Optimum {rec_fill:.1f}%  \u00b7  "
@@ -1983,6 +2030,19 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     )
 
     # ── Engineering checks ─────────────────────────────────────────────────────
+    # Backlegging risk classification (v1.9.1) — computed here so it can be
+    # exposed as a structured field, not just buried in a check message.
+    _v_min_bl = bucket.get("v_min", 0.5)
+    if v < _v_min_bl:
+        _bl_deficit_pct = (_v_min_bl - v) / max(_v_min_bl, 0.001) * 100.0
+        backlegging_risk = (
+            "HIGH"   if _bl_deficit_pct > 30 else
+            "MEDIUM" if _bl_deficit_pct > 10 else
+            "LOW"
+        )
+    else:
+        backlegging_risk = "NONE"
+
     checks = _build_checks(
         inp, mat, mat_behavior, bucket, Q, v, cr, T1, T2, T3, F_eff,
         R_head, d_mm, d_stress_mm, d_deflect_mm, governed_by, L10, Ceff,
@@ -2007,6 +2067,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         sprocket         = sprocket,
         pulley_shell     = pulley_shell,
         critical_speed   = critical_speed,
+        fill_eff         = fill_eff,
     )
 
     # ── Design recommendations ────────────────────────────────────────────────
@@ -2158,6 +2219,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "end_disc":          end_disc,
         "pulley_shell":      pulley_shell,        # v1.9.0
         "critical_speed":    critical_speed,       # v1.9.0
+        "backlegging_risk":  backlegging_risk,     # v1.9.1
         "bolt_fatigue":      bolt_fatigue,
         "takeup_gravity":    takeup_gravity,
         "takeup_screw":      takeup_screw,
@@ -2247,6 +2309,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   sprocket:         "dict | None" = None,
                   pulley_shell:     "dict | None" = None,
                   critical_speed:   "dict | None" = None,
+                  fill_eff:         "dict | None" = None,
                   **kwargs,                         # absorb future additions
                   ) -> list:
     checks = []
@@ -2266,9 +2329,31 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
 
     # 2 — Belt speed vs bucket limits
     if v < v_min:
-        checks.append(warn(
-            f"Speed {v:.2f} m/s below CEMA min {v_min:.2f} m/s "
-            f"for bucket {bkt_id} — back-legging risk [CEMA 375 §6]"))
+        # v1.9.1 — graduated backlegging risk instead of a single binary WARN.
+        # Risk scales with how far below v_min the actual speed sits: a speed
+        # that's 95% of v_min is a very different design situation from one
+        # that's 50% of v_min (buckets emptying before discharge vs. material
+        # sliding back inside the bucket before it even reaches mid-leg).
+        _deficit_pct = (v_min - v) / max(v_min, 0.001) * 100.0
+        if _deficit_pct > 30:
+            _bl_risk = "HIGH"
+            checks.append(fail(
+                f"Speed {v:.2f} m/s is {_deficit_pct:.0f}% below CEMA min {v_min:.2f} m/s "
+                f"for bucket {bkt_id} — HIGH back-legging risk. Material will slide back "
+                f"inside buckets well before discharge; raise speed or reduce pulley/rpm "
+                f"mismatch [CEMA 375 §6]"))
+        elif _deficit_pct > 10:
+            _bl_risk = "MEDIUM"
+            checks.append(warn(
+                f"Speed {v:.2f} m/s is {_deficit_pct:.0f}% below CEMA min {v_min:.2f} m/s "
+                f"for bucket {bkt_id} — MEDIUM back-legging risk. Monitor for spillback "
+                f"at commissioning [CEMA 375 §6]"))
+        else:
+            _bl_risk = "LOW"
+            checks.append(warn(
+                f"Speed {v:.2f} m/s is {_deficit_pct:.0f}% below CEMA min {v_min:.2f} m/s "
+                f"for bucket {bkt_id} — LOW back-legging risk, marginal margin only "
+                f"[CEMA 375 §6]"))
     elif v > v_max:
         checks.append(fail(
             f"Speed {v:.2f} m/s exceeds CEMA max {v_max:.2f} m/s "
@@ -2434,6 +2519,29 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 f"to reduce inter-bucket material transfer at high centrifugal discharge [CEMA 375 §6]"))
     except Exception:
         pass
+
+    # 5d — Choking / starving fill stability (v1.9.1)
+    if fill_eff:
+        _stab   = fill_eff.get("fill_stability", "SAFE")
+        _sf     = fill_eff.get("starvation_factor", 0.0)
+        _cf     = fill_eff.get("choking_factor", 0.0)
+        _fnote  = fill_eff.get("fill_stability_note", "")
+        if _stab == "HIGH RISK":
+            if _sf >= _cf:
+                checks.append(fail(
+                    f"Fill stability: HIGH RISK (starvation factor {_sf:.2f}) — {_fnote}. "
+                    f"Reduce gap or increase speed to reach optimal spacing [CEMA 375 §6]"))
+            else:
+                checks.append(fail(
+                    f"Fill stability: HIGH RISK (choking factor {_cf:.2f}) — {_fnote}. "
+                    f"Reduce bucket gap or check material flowability rating [CEMA 375 §6]"))
+        elif _stab == "MARGINAL":
+            checks.append(warn(
+                f"Fill stability: MARGINAL (starve={_sf:.2f}, choke={_cf:.2f}) — "
+                f"{_fnote} [CEMA 375 §6]"))
+        else:
+            checks.append(ok(
+                f"Fill stability: SAFE — {_fnote} [CEMA 375 §6]"))
 
     # 6 — Headshaft load
     T_total = T1 + T2 + T3

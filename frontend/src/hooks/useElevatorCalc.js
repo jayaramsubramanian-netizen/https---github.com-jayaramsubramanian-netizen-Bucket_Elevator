@@ -413,6 +413,23 @@ function normaliseResult(raw) {
     chain_v_ok:      raw.chain_v_ok      ?? null,
     sprocket:        raw.sprocket        ?? null,
 
+    // v1.9.0 — Wrap angle geometry (derived from pulley diameters).
+    // FIX: backend computed these but they were never added to this
+    // whitelist, so the PulleyEdit wrap card always showed "—".
+    wrap_geom_deg:      raw.wrap_geom_deg      ?? null,
+    wrap_effective_deg: raw.wrap_effective_deg ?? null,
+
+    // v1.9.0 — Fill advisory range (min/max operating band)
+    min_fill_pct: raw.min_fill_pct ?? null,
+    max_fill_pct: raw.max_fill_pct ?? null,
+
+    // v1.9.0 — Pulley shell thickness + head shaft critical speed
+    pulley_shell:   raw.pulley_shell   ?? null,
+    critical_speed: raw.critical_speed ?? null,
+
+    // v1.9.1 — Backlegging risk classification
+    backlegging_risk: raw.backlegging_risk ?? null,
+
     checks,
     status,
   };
