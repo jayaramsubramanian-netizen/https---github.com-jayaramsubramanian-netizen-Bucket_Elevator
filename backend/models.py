@@ -85,7 +85,7 @@ class BucketElevatorInput(BaseModel):
     # Now proper validated fields — exposed in FastAPI /docs and passed
     # explicitly by the frontend (DEFAULT_INPUTS updated accordingly).
 
-    environment: Literal["dry", "humid", "wet", "submerged"] = Field(
+    environment: Literal["dry", "humid", "wet", "submerged", "corrosive"] = Field(
         "dry",
         description=(
             "Service environment — drives pulley_lagging() selection. "
@@ -242,6 +242,47 @@ class BucketElevatorInput(BaseModel):
             "0 = auto-calculate from bucket projection (centrifugal) "
             "or loading leg dimensions (continuous). "
             "Set to a preferred standard opening height."
+        ),
+    )
+
+    # ── v1.9.0 — Material & environment extensions ────────────────────────────
+
+    material_temperature_c: float = Field(
+        20.0, ge=-30.0, le=400.0,
+        description=(
+            "Material temperature at inlet [°C]. Default 20°C (ambient). "
+            "Affects: belt temperature derating (EP max 80°C, ST max 120°C), "
+            "bearing grease selection (standard grease limit 80°C), "
+            "liner and bucket material compatibility. "
+            "Set for hot materials: cement 80–120°C, clinker 150–300°C."
+        ),
+    )
+
+    bucket_material: Literal[
+        "steel", "SS304", "SS316", "AR400", "AR500", "HDPE"
+    ] = Field(
+        "steel",
+        description=(
+            "Bucket body material. "
+            "steel: standard carbon steel (default, widest availability); "
+            "SS304: stainless grade 304 (food, fertilizer, mild corrosive); "
+            "SS316: stainless grade 316 (marine, chemical, salt); "
+            "AR400: abrasion-resistant steel 400 HB (mining, aggregate); "
+            "AR500: abrasion-resistant steel 500 HB (extreme abrasion, hard rock); "
+            "HDPE: high-density polyethylene (food, pharmaceutical, light duty). "
+            "Affects bucket mass (SS ~12% heavier; AR400/500 similar to steel; "
+            "HDPE ~80% lighter), corrosion suitability, and wear life."
+        ),
+    )
+
+    counterweight_mass_kg_override: float = Field(
+        0.0, ge=0.0, le=50000.0,
+        description=(
+            "Gravity take-up counterweight mass override [kg]. "
+            "0 = auto-calculate from T3 tension requirement. "
+            "Set to a preferred commercial counterweight mass — solver reports "
+            "PASS/WARN/FAIL against the calculated minimum and maximum (over-heavy "
+            "counterweights increase T3 excessively, reducing belt life)."
         ),
     )
 

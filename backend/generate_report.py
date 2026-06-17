@@ -1271,8 +1271,13 @@ def build_report(results: dict, inputs: dict,
 
     # 5c — Pulley design
     story += sub_section("5c.  Pulley Design")
+    ps     = r.get("pulley_shell") or {}
+    csp    = r.get("critical_speed") or {}
     t_min  = ed.get("t_governing_mm") or "—"
     t_spec = int(float(t_min) * 1.20) if t_min != "—" else "—"
+    n_op   = inp.get("n_rpm", 0) or 0
+    n_crit = csp.get("n_critical_rpm") or 0
+    ratio_pct = f"{(float(n_op)/float(n_crit)*100):.0f}%" if n_crit else "—"
     story += four_col_table([
         ("Lagging type",       (lag.get("lagging_type") or "—").replace("_"," ")),
         ("Lagging thickness",  f"{lag.get('thickness_mm','—')} mm"),
@@ -1283,15 +1288,18 @@ def build_report(results: dict, inputs: dict,
         ("Slip check",         "PASS" if lag.get("slip_safe") else
                                ("FAIL" if lag else "—")),
     ], [
-        ("Shell thickness",    rv("shell_t_mm","casing_t_mm",dp=1) + " mm"),
+        ("Shell min t (CEMA)", f"{ps.get('t_cema_mm','—')} mm"),
+        ("Shell min t (press)",f"{ps.get('t_pressure_mm','—')} mm"),
+        ("Shell governing t",  f"{ps.get('t_governing_mm','—')} mm  ({(ps.get('governed_by') or '—').replace('_',' ')})"),
         ("End disc min t",     f"{t_min} mm"),
         ("End disc specify",   f"{t_spec} mm  (+20%)"),
         ("Disc governed by",   ed.get("governed_by") or "—"),
         ("Disc sigma bend",    f"{ed.get('sigma_bending_MPa','—')} MPa"),
-        ("Disc sigma mem",     f"{ed.get('sigma_membrane_MPa','—')} MPa"),
         ("Force per disc",
          f"{ed.get('F_per_disc_N', 0)/1000:.2f} kN"
          if ed.get("F_per_disc_N") else "—"),
+        ("Shaft critical speed", f"{n_crit:.0f} rpm" if n_crit else "—"),
+        ("Operating ratio",      f"{n_op:.0f} rpm  ({ratio_pct} of critical)"),
     ])
 
     # 5d — Take-Up

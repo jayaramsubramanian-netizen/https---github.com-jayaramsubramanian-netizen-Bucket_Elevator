@@ -458,6 +458,105 @@ class StructuralStressEngine:
             "recommendation":   rec,
         }
 
+    @staticmethod
+    def head_shaft_critical_speed(
+        shaft_diameter_m: float,
+        span_m:           float,
+        overhang_load_N:  float = 0.0,
+        overhang_arm_m:   float = 0.0,
+        E_pa:             float = 205e9,
+        rho_steel_kgm3:   float = 7850.0,
+    ) -> dict:
+        """
+        First lateral (whirling) critical speed of the head shaft, modelled as a
+        simply-supported uniform beam with an optional overhung point mass
+        (pulley + belt load reaction acting between the bearings is already
+        captured by the supported-beam term; the overhang term covers any load
+        acting outside the bearing span, e.g. a coupling or outboard sprocket).
+
+        Two contributions combined by Dunkerley's method (conservative, no
+        cross-coupling assumed — adequate for a preliminary check):
+
+        1. Self-weight of the shaft (uniform simply-supported beam):
+               n_c1 = (pi/2) * sqrt(E*I*g / (w*L^4)) * 60/(2*pi)   [rpm]
+           using the standard first-mode result for a u.d.l. simply-supported
+           beam, n_c1 [rad/s] = pi^2 * sqrt(E*I/(w*L^4)) ; w = mass per length.
+
+        2. Point load deflection at midspan (Rayleigh estimate) if an overhang
+           load is supplied:
+               delta = F*L^3 / (48*E*I)   (midspan point load, simply supported)
+               n_c2  = sqrt(g/delta) * 60/(2*pi)   [rpm]
+
+        Dunkerley:  1/n_c^2 = 1/n_c1^2 + 1/n_c2^2
+
+        This is a preliminary screening calculation, not a full rotor-dynamics
+        analysis. It ignores bearing stiffness, gyroscopic effects, and coupled
+        torsional-lateral modes. Use to flag designs that warrant a full rotor
+        dynamics study, not as a final acceptance criterion.
+
+        Parameters
+        ----------
+        shaft_diameter_m   Governing shaft diameter [m]
+        span_m             Bearing-to-bearing span [m]
+        overhang_load_N    Point load between bearings to include in Rayleigh
+                            term (0 = self-weight only)
+        overhang_arm_m     Unused placeholder for future outboard-load term
+        E_pa               Young's modulus, steel default 205 GPa
+        rho_steel_kgm3     Shaft material density, steel default 7850 kg/m3
+
+        Returns
+        -------
+        {
+            "n_critical_rpm":   float,
+            "n_critical_self_rpm":   float,  self-weight-only mode
+            "n_critical_point_rpm":  float | None,  point-load mode (if load > 0)
+            "operating_ratio":  float,   n_operating / n_critical
+            "status":           "ok" | "warn" | "fail"
+            "note":             str
+        }
+        """
+        import math as _m
+        d  = max(shaft_diameter_m, 0.001)
+        L  = max(span_m, 0.01)
+        I  = _m.pi * d**4 / 64.0                       # second moment of area [m^4]
+        A  = _m.pi * d**2 / 4.0                          # cross-section area [m^2]
+        w  = rho_steel_kgm3 * A                           # mass per unit length [kg/m]
+        g  = 9.81
+
+        # Mode 1 — self-weight, simply-supported uniform beam, first mode
+        # omega_1 = pi^2 * sqrt(E*I / (w*L^4))   [rad/s]
+        omega_self = _m.pi**2 * _m.sqrt((E_pa * I) / (w * L**4))
+        n_self_rpm = omega_self * 60.0 / (2.0 * _m.pi)
+
+        # Mode 2 — point load at midspan (Rayleigh), only if a load is given
+        n_point_rpm = None
+        if overhang_load_N > 0:
+            delta = overhang_load_N * L**3 / (48.0 * E_pa * I)   # [m]
+            if delta > 0:
+                omega_point = _m.sqrt(g / delta)
+                n_point_rpm = omega_point * 60.0 / (2.0 * _m.pi)
+
+        # Dunkerley combination (conservative — combined frequency is always
+        # lower than either individual mode)
+        if n_point_rpm:
+            n_crit_rpm = 1.0 / _m.sqrt((1.0/n_self_rpm)**2 + (1.0/n_point_rpm)**2)
+        else:
+            n_crit_rpm = n_self_rpm
+
+        return {
+            "n_critical_rpm":       round(n_crit_rpm, 0),
+            "n_critical_self_rpm":  round(n_self_rpm, 0),
+            "n_critical_point_rpm": round(n_point_rpm, 0) if n_point_rpm else None,
+            "shaft_diameter_mm":    round(d * 1000.0, 1),
+            "span_mm":              round(L * 1000.0, 0),
+            "note": (
+                "Preliminary Dunkerley/Rayleigh estimate — simply-supported "
+                "uniform shaft, no bearing stiffness or gyroscopic effects. "
+                "Verify with full rotor-dynamics analysis for n_operating > "
+                "0.6 x n_critical or any high-speed (> 150 rpm) application."
+            ),
+        }
+
     # ── 4. Buckets ────────────────────────────────────────────────────────────
 
     @staticmethod

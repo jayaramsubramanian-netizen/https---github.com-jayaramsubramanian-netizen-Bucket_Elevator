@@ -226,6 +226,30 @@ def _init_audit_table() -> None:
     con.close()
 
 
+def _init_versions_table() -> None:
+    """Create design_versions table for revision history.  Called at startup."""
+    con = sqlite3.connect(_DB_PATH)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS design_versions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            design_id       TEXT    NOT NULL,
+            version         INTEGER NOT NULL,
+            module          TEXT    NOT NULL,
+            name            TEXT    NOT NULL,
+            inputs_json     TEXT,
+            results_json    TEXT,
+            notes           TEXT,
+            calc_schema_ver TEXT,
+            saved_at        TEXT    NOT NULL
+        )
+    """)
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS idx_dv_design_id ON design_versions (design_id)"
+    )
+    con.commit()
+    con.close()
+
+
 def _audit_calc(
     module:     str,
     inp_dict:   dict,
@@ -259,7 +283,8 @@ def _audit_calc(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    _init_audit_table()   # create audit table alongside designs table
+    _init_audit_table()        # create audit table alongside designs table
+    _init_versions_table()     # create design revision history table
     yield
 
 
@@ -599,7 +624,10 @@ def save_design(record: DesignRecord, db: sqlite3.Connection = Depends(get_db)):
     remain queryable — you can filter by schema_ver to identify which records
     need recalculation or migration.
     """
+    now = datetime.now(timezone.utc).isoformat()
     cur = db.cursor()
+
+    # Upsert current design record (unchanged — frontend always loads latest)
     cur.execute("""
         INSERT OR REPLACE INTO designs
             (id, module, name, project, inputs_json, results_json,
@@ -609,11 +637,35 @@ def save_design(record: DesignRecord, db: sqlite3.Connection = Depends(get_db)):
         record.id, record.module, record.name, record.project,
         record.inputs_json, record.results_json, record.notes,
         CALC_SCHEMA_VERSION,
-        record.created_at or datetime.now(timezone.utc).isoformat(),
-        datetime.now(timezone.utc).isoformat(),
+        record.created_at or now, now,
     ))
+
+    # Append to design_versions — one row per save, never overwritten
+    # Version number = max existing version for this design_id + 1
+    ver_row = cur.execute(
+        "SELECT COALESCE(MAX(version),0) FROM design_versions WHERE design_id = ?",
+        (record.id,)
+    ).fetchone()
+    next_ver = (ver_row[0] if ver_row else 0) + 1
+
+    cur.execute("""
+        INSERT INTO design_versions
+            (design_id, version, module, name,
+             inputs_json, results_json, notes, calc_schema_ver, saved_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        record.id, next_ver, record.module, record.name,
+        record.inputs_json, record.results_json, record.notes,
+        CALC_SCHEMA_VERSION, now,
+    ))
+
     db.commit()
-    return {"saved": True, "id": record.id, "calc_schema_version": CALC_SCHEMA_VERSION}
+    return {
+        "saved":              True,
+        "id":                 record.id,
+        "version":            next_ver,
+        "calc_schema_version": CALC_SCHEMA_VERSION,
+    }
 
 
 @v1.get("/designs")
@@ -647,9 +699,46 @@ def get_design(design_id: str, db: sqlite3.Connection = Depends(get_db)):
     return dict(row)
 
 
+@v1.get("/designs/{design_id}/versions")
+def list_design_versions(
+    design_id: str,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """
+    Return all saved revisions for a design in reverse-chronological order.
+
+    Each revision contains: version number, inputs_json, results_json,
+    calc_schema_ver, and saved_at timestamp.  The frontend can use this to
+    implement a "restore revision" workflow (load older inputs_json and re-run).
+    """
+    rows = db.cursor().execute(
+        "SELECT version, name, notes, calc_schema_ver, saved_at "
+        "FROM design_versions WHERE design_id = ? ORDER BY version DESC",
+        (design_id,),
+    ).fetchall()
+    return {"design_id": design_id, "versions": [dict(r) for r in rows]}
+
+
+@v1.get("/designs/{design_id}/versions/{version}")
+def get_design_version(
+    design_id: str,
+    version:   int,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Return full inputs_json + results_json for a specific revision."""
+    row = db.cursor().execute(
+        "SELECT * FROM design_versions WHERE design_id = ? AND version = ?",
+        (design_id, version),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Version {version} not found")
+    return dict(row)
+
+
 @v1.delete("/designs/{design_id}")
 def delete_design(design_id: str, db: sqlite3.Connection = Depends(get_db)):
     db.cursor().execute("DELETE FROM designs WHERE id = ?", (design_id,))
+    db.cursor().execute("DELETE FROM design_versions WHERE design_id = ?", (design_id,))
     db.commit()
     return {"deleted": True, "id": design_id}
 
@@ -663,6 +752,115 @@ def list_projects(db: sqlite3.Connection = Depends(get_db)):
         "WHERE project IS NOT NULL ORDER BY project"
     ).fetchall()
     return {"projects": [r["project"] for r in rows]}
+
+
+# ── Design comparison ────────────────────────────────────────────────────────
+
+
+class CompareRequest(BaseModel):
+    """Two designs to compare side-by-side."""
+    base:      BucketElevatorInput
+    candidate: BucketElevatorInput
+    labels:    list[str] = Field(
+        default_factory=list,
+        description="Optional display labels: ['Current design', 'Proposed design']",
+    )
+
+
+@v1.post("/calculate/compare")
+def compare_designs(req: CompareRequest, bg: BackgroundTasks):
+    """
+    Run two BucketElevatorInput designs through solve_elevator() and return a
+    structured side-by-side comparison.  Useful for:
+      - Evaluating a proposed change (wider pulley, different bucket series)
+      - Variant selection during preliminary design
+      - Before / after documentation for engineering change notes
+
+    Returns a delta dict for every numeric KPI so the frontend can render
+    colour-coded improvement / regression indicators.
+    """
+    try:
+        r_base = solve_elevator(req.base)
+        r_cand = solve_elevator(req.candidate)
+    except Exception as e:
+        _err("COMPARE_ERROR", f"Solver error during comparison: {e}", status=500)
+
+    labels = (req.labels + ["Base", "Candidate"])[:2]
+
+    # KPIs to compare — (key, label, unit, lower_is_better)
+    KPI_DEFS = [
+        ("Q",            "Capacity",         "t/h",  False),
+        ("v",            "Belt speed",        "m/s",  None),
+        ("cr",           "Centrifugal ratio", "—",    None),
+        ("P_total",      "Total power",       "kW",   True),
+        ("motor_kw",     "Motor size",        "kW",   True),
+        ("L10",          "Bearing L10",       "h",    False),
+        ("d_mm",         "Shaft diameter",    "mm",   None),
+        ("T3",           "Take-up tension",   "N",    True),
+        ("R_headshaft",  "Headshaft load",    "N",    True),
+        ("recommended_fill_pct", "Rec. fill", "%",    None),
+    ]
+
+    kpi_rows = []
+    for key, label, unit, lower_better in KPI_DEFS:
+        v_b = r_base.get(key)
+        v_c = r_cand.get(key)
+        if v_b is None and v_c is None:
+            continue
+        try:
+            f_b = float(v_b) if v_b is not None else None
+            f_c = float(v_c) if v_c is not None else None
+            if f_b is not None and f_c is not None and f_b != 0:
+                delta_pct = round((f_c - f_b) / abs(f_b) * 100, 1)
+                if lower_better is True:
+                    direction = "better" if delta_pct < 0 else "worse"
+                elif lower_better is False:
+                    direction = "better" if delta_pct > 0 else "worse"
+                else:
+                    direction = "neutral"
+            else:
+                delta_pct = None
+                direction = "neutral"
+        except (TypeError, ValueError):
+            f_b = f_c = delta_pct = None
+            direction = "neutral"
+        kpi_rows.append({
+            "key":       key,
+            "label":     label,
+            "unit":      unit,
+            "base":      round(f_b, 3) if f_b is not None else None,
+            "candidate": round(f_c, 3) if f_c is not None else None,
+            "delta_pct": delta_pct,
+            "direction": direction,
+        })
+
+    # Check-level summary
+    def _check_summary(r: dict) -> dict:
+        chks = r.get("checks", [])
+        return {
+            "pass": sum(1 for c in chks if c["type"] == "ok"),
+            "warn": sum(1 for c in chks if c["type"] == "warn"),
+            "fail": sum(1 for c in chks if c["type"] == "fail"),
+            "info": sum(1 for c in chks if c["type"] == "info"),
+        }
+
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        "meta": {
+            "solver_version": CALC_SCHEMA_VERSION,
+            "timestamp":      now,
+            "labels":         labels,
+        },
+        "kpis":    kpi_rows,
+        "checks": {
+            labels[0]: _check_summary(r_base),
+            labels[1]: _check_summary(r_cand),
+        },
+        "full": {
+            labels[0]: r_base,
+            labels[1]: r_cand,
+        },
+    }
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

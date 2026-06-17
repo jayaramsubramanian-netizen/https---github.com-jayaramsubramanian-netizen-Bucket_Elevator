@@ -465,6 +465,20 @@ BUCKET_SERIES = [
      "note":"SC maximum width — highest capacity super duty"},
 ]
 
+# ── Bucket material properties (v1.9.0) ──────────────────────────────────────
+BUCKET_MATERIAL_PROPS: dict = {
+    "steel": {"name": "Carbon Steel",      "density_factor": 1.00, "abr_limit": 7, "temp_max_c": 400, "corrosion": "none"},
+    "SS304": {"name": "Stainless 304",     "density_factor": 1.12, "abr_limit": 4, "temp_max_c": 400, "corrosion": "mild"},
+    "SS316": {"name": "Stainless 316",     "density_factor": 1.12, "abr_limit": 4, "temp_max_c": 400, "corrosion": "severe"},
+    "AR400": {"name": "AR400 Wear Plate",  "density_factor": 1.02, "abr_limit": 7, "temp_max_c": 300, "corrosion": "none"},
+    "AR500": {"name": "AR500 Wear Plate",  "density_factor": 1.03, "abr_limit": 7, "temp_max_c": 300, "corrosion": "none"},
+    "HDPE":  {"name": "HDPE Polyethylene", "density_factor": 0.18, "abr_limit": 2, "temp_max_c":  60, "corrosion": "severe"},
+}
+BELT_TEMP_LIMITS: dict = {
+    "EP": {"warn_c": 60,  "max_c":  80, "note": "EP rubber — use heat-resistant grade above 60°C"},
+    "ST": {"warn_c": 80,  "max_c": 120, "note": "ST cord  — use ceramic or metallic belt above 80°C"},
+}
+
 # ── Lookup maps ────────────────────────────────────────────────────────────────
 _BUCKET_BY_ID   = {b["id"]: b for b in BUCKET_SERIES}
 _BUCKET_BY_STYLE: dict[str, list] = {}
@@ -1543,7 +1557,9 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     # ── Tensions ──────────────────────────────────────────────────────────────
     # v1.2.0 FIX: actual catalogue bucket mass (not V × 1.5)
     # v1.2.1 FIX: mu and wrap_deg now passed through to Euler check
-    bw_kg = bucket.get("bucket_mass_kg", bucket["V"] * 1.5)
+    _bkt_mat_id = getattr(inp, "bucket_material", "steel") or "steel"
+    _bm_prop    = BUCKET_MATERIAL_PROPS.get(_bkt_mat_id, BUCKET_MATERIAL_PROPS["steel"])
+    bw_kg       = bucket.get("bucket_mass_kg", bucket["V"] * 1.5) * _bm_prop["density_factor"]
 
     # ── Belt width / casing width ─────────────────────────────────────────────
     _bw_override = getattr(inp, "belt_width_override_mm", 0) or 0
@@ -1685,6 +1701,20 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         hub_od_m          = hub["d_hub_m"],
         T_total_N         = T1 + T2 + T3,
         face_width_m      = BW_mm / 1000.0 + 0.050,
+    )
+
+    # ── Pulley shell thickness (v1.9.0 — was written but never wired) ────────
+    pulley_shell = StructuralStressEngine.pulley_shell_thickness(
+        diameter_m     = inp.D_mm / 1000.0,
+        T_total_N      = T1 + T2 + T3,
+        face_width_mm  = BW_mm + 50.0,   # crown/edge allowance, matches end_disc face_width_m
+    )
+
+    # ── Head shaft critical speed (v1.9.0 — new) ──────────────────────────────
+    critical_speed = StructuralStressEngine.head_shaft_critical_speed(
+        shaft_diameter_m = d_governing_m,
+        span_m           = span_m,
+        overhang_load_N  = R_head,   # headshaft radial reaction at the bearing span
     )
 
     # ── Bucket bolt fatigue ───────────────────────────────────────────────────
@@ -1975,6 +2005,8 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         chain_SF_actual  = chain_SF_act,
         chain_v_ok       = chain_v_ok,
         sprocket         = sprocket,
+        pulley_shell     = pulley_shell,
+        critical_speed   = critical_speed,
     )
 
     # ── Design recommendations ────────────────────────────────────────────────
@@ -2124,6 +2156,8 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "key_check":         key,
         "lagging":           lagging,
         "end_disc":          end_disc,
+        "pulley_shell":      pulley_shell,        # v1.9.0
+        "critical_speed":    critical_speed,       # v1.9.0
         "bolt_fatigue":      bolt_fatigue,
         "takeup_gravity":    takeup_gravity,
         "takeup_screw":      takeup_screw,
@@ -2211,6 +2245,8 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   chain_SF_actual:  "float | None" = None,
                   chain_v_ok:       "bool | None"  = None,
                   sprocket:         "dict | None" = None,
+                  pulley_shell:     "dict | None" = None,
+                  critical_speed:   "dict | None" = None,
                   **kwargs,                         # absorb future additions
                   ) -> list:
     checks = []
@@ -2391,6 +2427,11 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             checks.append(ok(
                 f"Bucket spacing {_sp_mm:.0f}mm — within CEMA §6 optimal range "
                 f"(ratio {_ratio:.2f}, optimal {_opt_m*1000:.0f}mm) [CEMA 375 §6]"))
+        # CR-dependent spacing: high centrifugal energy → wider spacing prevents inter-bucket transfer
+        if not is_continuous and cr > 2.0 and _ratio < 1.5:
+            checks.append(info(
+                f"CR={cr:.2f} > 2.0 — consider wider gap (+{_P_mm*0.3:.0f}mm) "
+                f"to reduce inter-bucket material transfer at high centrifugal discharge [CEMA 375 §6]"))
     except Exception:
         pass
 
@@ -2427,6 +2468,34 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         f"Shaft governed by {governed_by}: {d_mm:.1f} mm "
         f"(stress {d_stress_mm:.1f} mm, deflection {d_deflect_mm:.1f} mm) [CEMA 375 §4]"))
 
+    # 7b — Pulley shell thickness (v1.9.0)
+    if pulley_shell:
+        t_gov = pulley_shell.get("t_governing_mm", 0)
+        gov_by_shell = pulley_shell.get("governed_by", "CEMA_minimum")
+        checks.append(info(
+            f"Pulley shell min t={t_gov:.1f}mm (governed by {gov_by_shell.replace('_',' ')}) "
+            f"[CEMA Pulley Standard]"))
+
+    # 7c — Head shaft critical speed (v1.9.0)
+    if critical_speed:
+        n_crit = critical_speed.get("n_critical_rpm", 0)
+        n_op   = float(inp.n_rpm)
+        ratio  = n_op / max(n_crit, 1.0)
+        if ratio > 0.80:
+            checks.append(fail(
+                f"Operating speed {n_op:.0f} rpm is {ratio*100:.0f}% of critical speed "
+                f"{n_crit:.0f} rpm — shaft whirl risk. Increase shaft diameter or "
+                f"reduce bearing span [preliminary Dunkerley estimate]"))
+        elif ratio > 0.60:
+            checks.append(warn(
+                f"Operating speed {n_op:.0f} rpm is {ratio*100:.0f}% of critical speed "
+                f"{n_crit:.0f} rpm — verify with full rotor-dynamics analysis "
+                f"[preliminary Dunkerley estimate]"))
+        else:
+            checks.append(ok(
+                f"Operating speed {n_op:.0f} rpm is {ratio*100:.0f}% of critical speed "
+                f"{n_crit:.0f} rpm — adequate margin [preliminary Dunkerley estimate]"))
+
     # 8 — Bearing life
     if L10 < 20000:
         checks.append(warn(f"Bearing L10={L10:.0f} h < 20,000 h minimum [CEMA 375 §4]"))
@@ -2448,6 +2517,71 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
     elif abr >= 4:
         checks.append(info(
             f"Abrasion class {abr}/7 — hardened bucket lip recommended [CEMA 550]"))
+
+    # 10b — Material temperature (v1.9.0)
+    _mat_temp = float(getattr(inp, "material_temperature_c", 20) or 20)
+    _belt_t   = getattr(inp, "belt_type", "EP") or "EP"
+    _blim     = BELT_TEMP_LIMITS.get(_belt_t, BELT_TEMP_LIMITS["EP"])
+    if _mat_temp > _blim["max_c"]:
+        checks.append(fail(
+            f"Temperature {_mat_temp:.0f}°C exceeds {_belt_t} belt limit "
+            f"{_blim['max_c']:.0f}°C — heat damage. {_blim['note']} [CEMA 375 §3]"))
+    elif _mat_temp > _blim["warn_c"]:
+        checks.append(warn(
+            f"Temperature {_mat_temp:.0f}°C above {_belt_t} belt warning "
+            f"threshold {_blim['warn_c']:.0f}°C. {_blim['note']} [CEMA 375 §3]"))
+    else:
+        checks.append(ok(
+            f"Temperature {_mat_temp:.0f}°C — within {_belt_t} belt limits "
+            f"({_blim['max_c']:.0f}°C max) [CEMA 375 §3]"))
+    if _mat_temp > 80:
+        checks.append(warn(
+            f"Temperature {_mat_temp:.0f}°C — standard bearing grease limit 80°C. "
+            f"Specify high-temp grease (SKF LGWA 2) or oil-bath lubrication [ISO 281]"))
+    if _mat_temp > 200:
+        checks.append(fail(
+            f"Temperature {_mat_temp:.0f}°C — seals and lagging unsuitable. "
+            f"Specify metallic or ceramic-faced components [CEMA 375 §3]"))
+
+    # 10c — Bucket material suitability (v1.9.0)
+    _bkt_mat = getattr(inp, "bucket_material", "steel") or "steel"
+    _bm      = BUCKET_MATERIAL_PROPS.get(_bkt_mat, BUCKET_MATERIAL_PROPS["steel"])
+    _env     = getattr(inp, "environment", "dry") or "dry"
+    _abr_v   = int(mat.get("abr_code") or 0)
+    _bkt_ok  = True
+    if _mat_temp > _bm["temp_max_c"]:
+        checks.append(fail(
+            f"Bucket material {_bkt_mat} max temp {_bm['temp_max_c']:.0f}°C — "
+            f"inlet {_mat_temp:.0f}°C. Select steel or AR400 [CEMA 375 §6]"))
+        _bkt_ok = False
+    if _env == "corrosive" and _bm["corrosion"] == "none":
+        checks.append(warn(
+            f"Corrosive duty — bucket material {_bkt_mat} unprotected. "
+            f"Specify SS304 (mild) or SS316 (severe chemical) [CEMA 550]"))
+        _bkt_ok = False
+    elif _env == "corrosive":
+        checks.append(ok(f"Bucket material {_bkt_mat} — corrosion suitable [CEMA 550]"))
+    if _abr_v > _bm["abr_limit"]:
+        checks.append(warn(
+            f"Bucket {_bkt_mat} — abrasion class {_abr_v}/7 exceeds limit "
+            f"{_bm['abr_limit']}/7. Specify AR400 or AR500 [CEMA 375 §6]"))
+        _bkt_ok = False
+    if _bkt_mat == "HDPE" and _mat_temp > 50:
+        checks.append(fail(
+            f"HDPE buckets — temperature {_mat_temp:.0f}°C exceeds HDPE limit 50°C "
+            f"[CEMA 375 §6]"))
+        _bkt_ok = False
+    if _bkt_ok:
+        checks.append(ok(
+            f"Bucket material {_bkt_mat} ({_bm['name']}) — suitable for this duty "
+            f"[CEMA 375 §6]"))
+
+    # 10d — Corrosive environment system flags
+    if _env == "corrosive":
+        checks.append(warn(
+            f"Corrosive environment — verify: casing (CS+paint or SS), "
+            f"fasteners (A4-SS stainless), belt cover (PVC/special rubber), "
+            f"shaft end seals [CEMA 550 §A-8]"))
 
     # 11 — Hazard flags (v1.2.0)
     hazards = mat_behavior["hazards"]
@@ -2650,6 +2784,19 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         checks.append(info(
             f"CR={cr:.3f} in range 1.8–2.0 — monitor discharge; install hood deflector "
             f"if material scatter is observed at head section [CEMA 375 §3.3]"))
+
+    # 21c — Throat-plate impact (centrifugal CR < 0.90)
+    if not is_continuous and not is_chain:
+        if cr < 0.80:
+            checks.append(fail(
+                f"CR={cr:.3f} — material cannot throw into chute. "
+                f"Stream impacts throat plate; backlegging certain. "
+                f"Raise v to ≥ {math.sqrt(0.90*9.81*(inp.D_mm/2000)):.2f} m/s [CEMA 375 §3.3]"))
+        elif cr < 0.90:
+            checks.append(warn(
+                f"CR={cr:.3f} — marginal throw; throat-plate impact risk. "
+                f"Target CR ≥ 1.0. Raise v to ≥ {math.sqrt(1.0*9.81*(inp.D_mm/2000)):.2f} m/s "
+                f"[CEMA 375 §3.3]"))
 
     # 22 — Stream interception (does discharge stream enter the chute?)
     if stream_chute:
