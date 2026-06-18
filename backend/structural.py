@@ -1304,6 +1304,9 @@ class StructuralStressEngine:
             "t_bending_mm":      round(t_bend * 1000, 1),
             "t_cema_min_mm":     round(t_cema * 1000, 0),
             "t_governing_mm":    round(t_final * 1000, 1),
+            # v1.9.9 — pre-computed spec thickness (+20% construction tolerance
+            # allowance) so the frontend doesn't need Math.ceil(t * 1.20).
+            "t_specified_mm":    math.ceil(t_final * 1000 * 1.20),
             "governed_by":       governed_by,
             "sigma_membrane_MPa":round(sig_mem  / 1e6, 1),
             "sigma_bending_MPa": round(sig_bend / 1e6, 1),

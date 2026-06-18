@@ -1544,6 +1544,38 @@ function DischargeEdit({ inp, setField, results }) {
         </div>
       )}
 
+      <SectionHead label="Chute Position" />
+      {/* Chute position — v1.9.9. Previously the stream interception check
+          could warn "review chute position" but the UI had no control for it. */}
+      <F label="Chute inlet offset from wall" name="chute_x_offset_m"
+        value={inp.chute_x_offset_m ?? 0} onChange={setField}
+        unit="m" min={0} max={0.5} step={0.01}
+        note="Move chute inlet inward from casing wall. 0 = auto (flush - 10mm). Increase if stream misses chute." />
+      <F label="Chute opening height" name="chute_opening_height_m"
+        value={inp.chute_opening_height_m ?? 0} onChange={setField}
+        unit="m" min={0} max={1.0} step={0.05}
+        note="Vertical height of chute inlet opening. 0 = auto (derived from head pulley diameter)." />
+      {/* Live stream interception feedback */}
+      {results?.stream_chute && (
+        <div style={{
+          background: results.stream_chute.intercepted
+            ? "rgba(31,184,110,.08)" : "rgba(239,68,68,.08)",
+          border: `1px solid ${results.stream_chute.intercepted
+            ? T.successBorder ?? "rgba(31,184,110,.3)"
+            : T.dangerBorder  ?? "rgba(239,68,68,.3)"}`,
+          borderRadius: 5, padding: "8px 10px", marginTop: 4, fontSize: 10,
+        }}>
+          {results.stream_chute.intercepted
+            ? <span style={{ color: "var(--success)" }}>
+                ✓ Stream intercepted — impact angle {results.stream_chute.impact_angle_deg?.toFixed(1) ?? "—"}°
+              </span>
+            : <span style={{ color: "var(--danger)" }}>
+                ✗ Stream misses chute — increase chute inlet offset or reduce belt speed
+              </span>
+          }
+        </div>
+      )}
+
       <SectionHead label="Casing Width Override" />
       <F label="Belt Width Override" name="belt_width_override_mm"
         value={inp.belt_width_override_mm ?? 0} onChange={setField}

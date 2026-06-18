@@ -2286,9 +2286,11 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         )
 
         _rp_chute   = DischargePhysics.calculate_release_point(v, inp.D_mm / 2000.0)
-        _chute_x    = _casing_inner_x - 0.010
+        _chute_x    = _casing_inner_x - 0.010 + float(inp.chute_x_offset_m or 0.0)
         _chute_ytop = _rp_chute.y0 + 0.020
-        _chute_ybot = _rp_chute.y0 - inp.D_mm / 500.0
+        # chute_opening_height_m: 0 = auto (D_mm / 500 gives ~2× radius in mm → metres)
+        _chute_opening = float(inp.chute_opening_height_m or 0.0)
+        _chute_ybot = _rp_chute.y0 - (_chute_opening if _chute_opening > 0 else inp.D_mm / 500.0)
         stream_chute = DischargePhysics.stream_intersects_chute(
             trajectory    = traj_center,
             chute_x0_m   = _chute_x,
@@ -2589,6 +2591,13 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "casing_stiffener": casing_stiffener,
         "shaft_span_mm":    round(span_m * 1000, 0),
         "motor_kw":         motor_kw,
+        # v1.9.9 — motor nominal speed and gearbox ratio pre-computed so
+        # no frontend or report file needs to hardcode 1450 rpm.
+        # Standard IEC 4-pole motor synchronous speed is 1500 rpm; nominal
+        # (slip) is ~1450 rpm. Both exposed so consumers can display either.
+        "motor_sync_rpm":    1500,
+        "motor_nominal_rpm": 1450,
+        "gearbox_ratio":     round(1450.0 / max(float(inp.n_rpm), 1.0), 1),
         "T_Nm":             round(T_Nm, 2),
         "L10":              round(L10, 0),
         "mat":              mat,
@@ -2650,6 +2659,11 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "H_equiv":      pwr["H_equiv"],
         "H_total":      pwr["H_total"],
         "Leq": Leq, "Ceff": Ceff, "motor_kw": motor_kw,
+        # v1.9.9 — motor nominal speed and gearbox ratio pre-computed so
+        # no frontend or report file needs to hardcode 1450 rpm.
+        "motor_sync_rpm":    1500,
+        "motor_nominal_rpm": 1450,
+        "gearbox_ratio":     round(1450.0 / max(float(inp.n_rpm), 1.0), 1),
         # Tensions
         "T1": round(T1, 1), "T2": round(T2, 1), "T3": round(T3, 1),
         "T3_ktakeup":   tens.get("T3_ktakeup",   round(T3, 1)),
@@ -2753,6 +2767,25 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         ),
         # Checks
         "checks": checks,
+        # v1.9.9 — Pre-computed summary fields so the frontend does zero
+        # engineering computation. Previously KpiGrid.jsx, ReportView.jsx,
+        # and ChecksPanel.jsx all re-derived these from raw result fields.
+        "status":       "PASS" if not any(c["type"] == "fail" for c in checks) else "FAIL",
+        "fail_count":   sum(1 for c in checks if c["type"] == "fail"),
+        "warn_count":   sum(1 for c in checks if c["type"] == "warn"),
+        "pass_count":   sum(1 for c in checks if c["type"] == "ok"),
+        "info_count":   sum(1 for c in checks if c["type"] == "info"),
+        "cap_ok":       float(Q) >= float(inp.Q_req),
+        "speed_ok":     (bucket.get("v_min", 0.5) <= v <= bucket.get("v_max", 9.9)),
+        "cr_ok":        1.0 <= float(cr) <= 1.8,
+        "l10_ok":       L10 >= 40000.0,
+        # Margins as percentages — avoids (value - target) / target in JS
+        "cap_margin_pct":   round((float(Q) / float(inp.Q_req) - 1.0) * 100.0, 1),
+        "motor_margin_pct": round((float(motor_kw) / float(P_total) - 1.0) * 100.0, 1)
+                            if P_total > 0 else 0.0,
+        # T_total = R_headshaft is already in the dict as R_headshaft, but
+        # expose T_total alias so KpiGrid / ReportView don't need to sum T1+T2+T3
+        "T_total":  round(T1 + T2 + T3, 1),
         # Context
         "bucket": bucket, "mat": mat, "rho": rho,
         # v1.7.0 — bucket geometry for UI / report

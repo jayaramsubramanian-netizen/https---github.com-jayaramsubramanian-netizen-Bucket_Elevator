@@ -817,22 +817,49 @@ def compare_designs(req: CompareRequest, bg: BackgroundTasks):
 
     # KPIs to compare — (key, label, unit, lower_is_better)
     KPI_DEFS = [
-        ("Q",            "Capacity",         "t/h",  False),
-        ("v",            "Belt speed",        "m/s",  None),
-        ("cr",           "Centrifugal ratio", "—",    None),
-        ("P_total",      "Total power",       "kW",   True),
-        ("motor_kw",     "Motor size",        "kW",   True),
-        ("L10",          "Bearing L10",       "h",    False),
-        ("d_mm",         "Shaft diameter",    "mm",   None),
-        ("T3",           "Take-up tension",   "N",    True),
-        ("R_headshaft",  "Headshaft load",    "N",    True),
-        ("recommended_fill_pct", "Rec. fill", "%",    None),
+        # Core performance
+        ("Q",                  "Capacity",            "t/h",  False),
+        ("v",                  "Belt speed",          "m/s",  None),
+        ("cr",                 "Centrifugal ratio",   "—",    None),
+        # Power
+        ("P_total",            "Total power",         "kW",   True),
+        ("motor_kw",           "Motor size",          "kW",   True),
+        ("gearbox_ratio",      "Gearbox ratio",       ":1",   None),
+        # Belt & buckets
+        ("belt_length_total_m","Belt length",         "m",    None),
+        ("n_buckets",          "Bucket count",        "off",  None),
+        # Shaft
+        ("d_mm",               "Shaft diameter",      "mm",   None),
+        ("shaft_tau_allow_MPa","Shaft allowable τ",   "MPa",  False),
+        # Tensions
+        ("T3",                 "Take-up tension",     "N",    True),
+        ("R_headshaft",        "Headshaft load",      "N",    True),
+        ("T_total",            "Belt tight side",     "N",    True),
+        # Startup
+        ("startup_dynamic.T_peak_governing",
+                               "Startup peak tension","N",    True),
+        # Bearing & life
+        ("L10",                "Bearing L10",         "h",    False),
+        # Process
+        ("recommended_fill_pct","Rec. fill",          "%",    None),
+        ("cap_margin_pct",     "Capacity margin",     "%",    False),
+        ("motor_margin_pct",   "Motor margin",        "%",    False),
     ]
+
+    def _get_kpi(result: dict, key: str):
+        """Support dot-notation for nested keys e.g. 'startup_dynamic.T_peak_governing'."""
+        if "." in key:
+            parts = key.split(".", 1)
+            sub = result.get(parts[0])
+            if isinstance(sub, dict):
+                return sub.get(parts[1])
+            return None
+        return result.get(key)
 
     kpi_rows = []
     for key, label, unit, lower_better in KPI_DEFS:
-        v_b = r_base.get(key)
-        v_c = r_cand.get(key)
+        v_b = _get_kpi(r_base, key)
+        v_c = _get_kpi(r_cand, key)
         if v_b is None and v_c is None:
             continue
         try:
@@ -872,6 +899,29 @@ def compare_designs(req: CompareRequest, bg: BackgroundTasks):
             "info": sum(1 for c in chks if c["type"] == "info"),
         }
 
+    # String-valued configuration fields that are meaningful to compare
+    # but can't be expressed as numeric deltas
+    STRING_FIELDS = [
+        ("shaft_material_name",  "Shaft material"),
+        ("shaft_section",        "Shaft section"),
+        ("shaft_hub_connection", "Hub connection"),
+        ("governed_by",          "Shaft governed by"),
+        ("discharge_type",       "Discharge type"),
+    ]
+    config_rows = []
+    for key, label in STRING_FIELDS:
+        v_b = r_base.get(key)
+        v_c = r_cand.get(key)
+        if v_b is None and v_c is None:
+            continue
+        config_rows.append({
+            "key":       key,
+            "label":     label,
+            "base":      str(v_b) if v_b is not None else "—",
+            "candidate": str(v_c) if v_c is not None else "—",
+            "changed":   v_b != v_c,
+        })
+
     now = datetime.now(timezone.utc).isoformat()
     return {
         "meta": {
@@ -880,6 +930,7 @@ def compare_designs(req: CompareRequest, bg: BackgroundTasks):
             "labels":         labels,
         },
         "kpis":    kpi_rows,
+        "config":  config_rows,      # string-valued fields (shaft material, section, etc.)
         "checks": {
             labels[0]: _check_summary(r_base),
             labels[1]: _check_summary(r_cand),

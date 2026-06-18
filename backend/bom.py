@@ -396,7 +396,7 @@ def generate_bom(results: dict, inputs: dict) -> dict:
 
     # Gearbox mass estimate: ~10 kg/kW for helical-bevel
     gbx_mass = motor_kw * 10.5
-    ratio = 1450.0 / max(n_rpm, 1)
+    ratio = float(r.get("gearbox_ratio") or round(1450.0 / max(n_rpm, 1), 1))
     add("Helical-bevel gearbox",
         1, "EA",
         "Cast iron housing / alloy steel gears",

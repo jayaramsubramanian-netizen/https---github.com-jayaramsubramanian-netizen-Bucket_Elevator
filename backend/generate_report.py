@@ -1321,7 +1321,7 @@ def build_report(results: dict, inputs: dict,
         (f"Design power  (x service factor {sf_val})",   f"{fmt(P_tot * sf_val, 2)} kW"),
         ("Selected motor",                                f"{motor} kW"),
         ("Gearbox ratio  (at 1450 rpm input)",
-         f"{1450/float(inp.get('n_rpm',60)):.1f} : 1"),
+         f"{rv('gearbox_ratio', dp=1)} : 1"),
         ("Drive efficiency factor  Ceff",                 rv("Ceff",dp=3)),
         ("CEMA LEQ factor",                               rv("Leq",dp=1)),
     ], col_widths=[AVAIL * 0.62, AVAIL * 0.38])

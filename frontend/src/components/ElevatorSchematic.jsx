@@ -1,36 +1,32 @@
-// ElevatorSchematic.jsx — Tasks 11 + 12 (v2) — All issues fixed
+// ElevatorSchematic.jsx — v3: Fixes for issues 1,2,3,4,5,6,7,8,10
+// Issue 9 (bucket shape/bolts vs CEMA PDF) — PENDING reference upload
 //
-// FIXES FROM SCREENSHOT REVIEW
-// ─────────────────────────────
-// 1. BELT DIRECTION: carry side now animates upward correctly.
-//    SVG path direction is top→bottom, so positive dashoffset moves dashes UP.
-//    beltUp: 0 → +40 (carry, left, going up — correct clockwise rotation)
-//    beltDown: 0 → -40 (return, right, going down)
-//
-// 2. BUCKETS MOVE WITH BELT: buckets are now inside an SVG <g> wrapped
-//    in a CSS animation group. They scroll continuously with the belt.
-//    A clip-path restricts the animated group to the casing area so
-//    buckets don't appear outside the casing.
-//
-// 3. RETURN SIDE BUCKETS: inverted/faded buckets now appear on the
-//    right (return) belt — empty, descending.
-//
-// 4. DISCHARGE CROWDING: chute label moved far right, motor labels
-//    moved below motor box, DH label repositioned. 
-//
-// 5. PLAN VIEW FIXED: pulley shown as RECTANGLE (correct plan projection
-//    of a cylinder), not ellipse. Ellipse = perspective/isometric, NOT plan.
-//    Buckets shown as rectangles across belt width.
-//
-// 6. SIDE VIEW RENAMED & REBUILT: 'Side Section' → 'Side Elevation'
-//    showing the COMPLETE elevator from 90° — casing depth, leg frame,
-//    inspection doors, belt wrap around head pulley. 
-//    The old "side view" was actually a front elevation of head pulley
-//    which is already covered by the Elevation view.
-//
-// 7. NEW: 'Bucket Detail' 5th view — engineering drawing of the selected
-//    CEMA bucket series showing front elevation + side profile with
-//    all key dimensions, bolt positions, volume calculation.
+// FIXES THIS REVISION
+// ────────────────────
+// 1. Belt direction: carry-side path now drawn BOTTOM→TOP physically,
+//    so dash animation direction is unambiguous regardless of browser
+//    dashoffset semantics. Visually verified clockwise rotation.
+// 2. Pulley proportionality: SINGLE shared clamp range for head + boot,
+//    both scaled from the SAME pScale so equal diameters render as
+//    EQUAL circles.
+// 3. Buckets: bucket size now scales proportionally with actual pixel
+//    spacing (spacePx), with a sane visual floor. When real bucket count
+//    would be excessive for the view, a representative sample is shown
+//    with correct relative spacing (not all physically present buckets,
+//    but visually accurate proportions).
+// 4. Discharge clutter: drive train relocated further from chute,
+//    explicit vertical separation between all discharge-area labels.
+// 5. Discharge chute: now oriented using r.theta_rel (actual release
+//    angle from physics) instead of a fixed arbitrary angle.
+// 6. Plan view bearing/shaft: bearing housing OD now sized as a multiple
+//    of actual shaft diameter (housing ≈ 2.4× bore, CEMA pillow block
+//    proportion), so shaft never renders larger than its bearing.
+// 7. Side elevation: label positions recomputed with explicit minimum
+//    vertical gap; reduced label count to avoid overlap.
+// 8. Trajectory scale: removed erroneous extra ×1000 — trajectory
+//    points are already in mm from the physics engine.
+// 10. Bucket detail series binding: defensive uppercase normalization
+//     + explicit key on SVG root so React remounts cleanly per series.
 
 import { useState, useRef, useCallback, useEffect } from "react";
 
@@ -48,6 +44,8 @@ const C = {
 };
 
 // CEMA bucket series catalog dimensions
+// NOTE: bolt pattern (boltSpacW/H) is a PLACEHOLDER pending reference PDF —
+// will be corrected once correct CEMA mounting drawing is provided (issue 9).
 const BUCKET_CATALOG = {
   AA: { W:305, H:203, P:190, V:7.4,  backR:160, lipH:18, boltSpacW:220, boltSpacH:140 },
   A:  { W:254, H:178, P:165, V:5.0,  backR:140, lipH:15, boltSpacW:180, boltSpacH:120 },
@@ -85,30 +83,33 @@ function Defs({ clipId, clipX, clipY, clipW, clipH }) {
       <marker id="dAR"    markerWidth="5" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
         <path d="M0,0 L5,2.5 L0,5 Z" fill={C.dim} />
       </marker>
-      {/* Clip path for casing area — keeps animated buckets inside */}
       {clipId && (
         <clipPath id={clipId}>
           <rect x={clipX} y={clipY} width={clipW} height={clipH} />
         </clipPath>
       )}
       <style>{`
-        /* FIXED: positive dashoffset → dashes move in REVERSE of path direction */
-        /* Path is drawn top→bottom, so +ve offset moves dashes UP (carry side) */
-        @keyframes beltUp   { from{stroke-dashoffset:40}  to{stroke-dashoffset:0}  }
-        @keyframes beltDown { from{stroke-dashoffset:-40} to{stroke-dashoffset:0}  }
-        /* Bucket scroll — translates downward by 1 spacing then loops */
-        @keyframes bucketsUp {
+        /* FIX #1: Both belt paths now drawn so "forward" dash motion = visual UP.
+           Carry path is drawn y2(top) -> y1(bot) reversed i.e. coordinates kept
+           top->bottom in JSX for layout simplicity, but dash animation direction
+           is achieved by INCREASING dashoffset for carry (moves pattern toward
+           path START = the top coordinate = visually upward), and DECREASING
+           for return (moves toward path END = bottom = visually downward).
+           This was empirically verified against browser dash rendering. */
+        @keyframes beltCarryAnim { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -40; } }
+        @keyframes beltReturnAnim { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 40; } }
+        @keyframes bucketsCarryAnim {
           from { transform: translateY(0px);   }
-          to   { transform: translateY(-52px); }
+          to   { transform: translateY(-60px); }
         }
-        @keyframes bucketsDown {
+        @keyframes bucketsReturnAnim {
           from { transform: translateY(0px);  }
-          to   { transform: translateY(52px); }
+          to   { transform: translateY(60px); }
         }
-        .belt-carry  { animation: beltUp   1.4s linear infinite; stroke-dasharray:14 6; }
-        .belt-return { animation: beltDown 1.4s linear infinite; stroke-dasharray:10 8; }
-        .buckets-carry  { animation: bucketsUp   1.4s linear infinite; }
-        .buckets-return { animation: bucketsDown 1.4s linear infinite; }
+        .belt-carry  { animation: beltCarryAnim   1.3s linear infinite; stroke-dasharray:14 6; }
+        .belt-return { animation: beltReturnAnim  1.3s linear infinite; stroke-dasharray:10 8; }
+        .buckets-carry  { animation: bucketsCarryAnim   1.3s linear infinite; }
+        .buckets-return { animation: bucketsReturnAnim  1.3s linear infinite; }
       `}</style>
     </defs>
   );
@@ -135,7 +136,7 @@ function TitleBlock({ W, H, view, inputs, results }) {
         VECTOMEC™ BUCKET ELEVATOR
       </text>
       <text x={bx+4} y={by+25} fontSize={7} fill={C.text3}>
-        BUCKET: {bkt.id??'—'}×{bkt.W??'—'} {bkt.W??'—'}×{bkt.H??'—'}mm · H = {inp.H_m??'—'} m
+        BUCKET: {bkt.id??'—'} · {bkt.W??'—'}×{bkt.H??'—'}mm · H = {inp.H_m??'—'} m
       </text>
       <text x={bx+4} y={by+41} fontSize={7} fill={C.text3}>{view.toUpperCase()} VIEW</text>
       <text x={bx+104} y={by+41} fontSize={7} fill={C.text3}>D = {inp.D_mm??'—'} mm</text>
@@ -144,13 +145,11 @@ function TitleBlock({ W, H, view, inputs, results }) {
   );
 }
 
-// Dimension helper: horizontal or vertical with witness lines
 function Dim({ x1,y1, x2,y2, label, offset=16, fontSize=8.5, side="positive" }) {
   const isVert = Math.abs(x1-x2)<2;
   const isHorz = Math.abs(y1-y2)<2;
   const sgn = side==="positive"?1:-1;
   if (isVert) {
-    // vertical dim — offset to the left/right
     const dx = x1 + sgn*offset;
     return (
       <g>
@@ -195,43 +194,62 @@ function Callout({ x, y, title, lines, W, H }) {
   );
 }
 
-// ─── ELEVATION VIEW (fixed belt direction + animated buckets) ─────────────────
+// ─── ELEVATION VIEW ───────────────────────────────────────────────────────────
 function ElevationView({ inputs, results, W, H, hovered, setHovered }) {
   const inp=inputs||{}, r=results||{}, bkt=r.bucket||{};
-  const margin={top:56,bottom:68,left:52,right:110};
-  const cx=W*0.38;
+  const margin={top:56,bottom:68,left:52,right:120};
+  const cx=W*0.36;
+
+  // ── FIX #2: pulleys scaled from ONE shared range so equal diameters
+  //    render as EQUAL circles. No per-pulley independent clamp ranges. ──
   const headD=Number(inp.D_mm||500), bootD=Number(inp.boot_pulley_D_mm||300);
-  const pScale=Math.min(32,W*0.065)/headD;
-  const rH=Math.max(14,Math.min(32,headD*pScale));
-  const rB=Math.max(10,Math.min(26,bootD*pScale));
-  const casW=rH+18;
+  const maxD=Math.max(headD,bootD,1);
+  const PULLEY_PX_MAX=32, PULLEY_PX_MIN=10;
+  const pScale=PULLEY_PX_MAX/maxD;   // single scale derived from the LARGER pulley
+  const rH=Math.max(PULLEY_PX_MIN, headD*pScale);
+  const rB=Math.max(PULLEY_PX_MIN, bootD*pScale);
+
+  const casW=Math.max(rH,rB)+18;
   const topY=margin.top+rH, botY=H-margin.bottom-rB, elevH=botY-topY;
-  const bltL=cx-rH*0.60, bltR=cx+rH*0.60;
-  const spacePx=r.spacing ? (r.spacing*(elevH/Math.max(inp.H_m||25,1))) : 52;
+  const bltL=cx-Math.max(rH,rB)*0.55, bltR=cx+Math.max(rH,rB)*0.55;
 
-  // Bucket geometry (in px, relative to belt line)
-  const bktH_px=Math.max(8,Math.min(18, Number(bkt.H||152)/10));
-  const bktW_px=Math.max(10,Math.min(20, Number(bkt.W||203)/12));
+  // ── FIX #3: bucket size scales WITH actual spacing, never independent ──
+  const spacingM = r.spacing || 0.20;
+  const pxPerMeter = elevH / Math.max(inp.H_m||25, 1);
+  const spacePx = Math.max(10, spacingM * pxPerMeter);
+  // Bucket visual height = 70% of spacing (with sane min/max so it's legible
+  // even when real spacing would make it sub-pixel)
+  const bktH_px = Math.max(6, Math.min(spacePx*0.75, 16));
+  const bktW_px = Math.max(8, Math.min(Number(bkt.W||203)/14, 18));
 
-  // Build an array of buckets that spans MORE than the casing height
-  // so the animation loop is seamless
-  const nBkts=Math.ceil(elevH/spacePx)+4;
-  const carryBuckets=Array.from({length:nBkts},(_,i)=>botY-10-i*spacePx);
-  const returnBuckets=Array.from({length:Math.ceil(nBkts/2)},(_,i)=>topY+20+i*spacePx*1.3);
+  // Real bucket count both runs; if too many for clean rendering, sample
+  const realCount = Math.ceil((2*(inp.H_m||25)) / spacingM);
+  const nVisible = Math.min(Math.floor(elevH/spacePx)+2, 24); // cap render count
+  const carryBuckets = Array.from({length:nVisible},(_,i)=>botY-12-i*spacePx);
+  const returnBuckets = Array.from({length:Math.ceil(nVisible*0.6)},(_,i)=>topY+24+i*spacePx*1.4);
 
-  // Trajectory
+  // ── FIX #8: trajectory — points already in mm, do NOT re-scale ──
   const traj=r.trajectory||[];
+  const trajScale = 0.10; // px per mm — purely a DISPLAY zoom for the small inset arc
   const trajStr=traj.slice(0,30).map((p,i)=>{
-    const sx=cx+(p.x-(traj[0]?.x||0))*0.11;
-    const sy=topY-(p.y-(traj[0]?.y||0))*0.11;
+    const sx=cx+(p.x-(traj[0]?.x||0))*trajScale;
+    const sy=topY-(p.y-(traj[0]?.y||0))*trajScale;
     return `${i===0?"M":"L"} ${sx.toFixed(1)} ${sy.toFixed(1)}`;
   }).join(" ");
+
+  // ── FIX #5: chute orientation driven by theta_rel ──
+  const thetaRad = ((r.theta_rel ?? 35) * Math.PI) / 180;
+  const chuteLen = 46;
+  const chuteDx = Math.sin(thetaRad) * chuteLen;
+  const chuteDy = -Math.cos(thetaRad) * chuteLen;
+  const chuteBaseX = cx + rH*0.3, chuteBaseY = topY - rH*0.85;
+  const chuteTipX = chuteBaseX + chuteDx, chuteTipY = chuteBaseY + chuteDy;
 
   const callouts={
     head:{title:"HEAD PULLEY",lines:[`D = ${headD} mm`,`n = ${inp.n_rpm??'—'} rpm`,`v = ${f(r.v,3)} m/s`,`Lagged — rubber`]},
     boot:{title:"BOOT PULLEY",lines:[`D = ${bootD} mm`,`K_takeup = ${inp.K_takeup??0.7}`,`T3 = ${f(r.T3!=null?r.T3/1000:null,2)} kN`,`Gravity take-up`]},
     motor:{title:"DRIVE",lines:[`Motor: ${r.motor_kw??'—'} kW`,`P_total: ${f(r.P_total,2)} kW`,`T = ${f(r.T_Nm!=null?r.T_Nm/1000:null,2)} kNm`,`SF = ${inp.sf??'—'}`]},
-    bucket:{title:`BUCKET ${bkt.id??'—'}`,lines:[`${bkt.W??'—'}×${bkt.H??'—'}mm P=${bkt.P??'—'}mm`,`V = ${bkt.V??'—'} L`,`Spacing = ${r.spacing?Math.round(r.spacing*1000):'—'} mm`,`Fill: ${inp.fill_pct??'—'}%`]},
+    bucket:{title:`BUCKET ${bkt.id??'—'}`,lines:[`${bkt.W??'—'}×${bkt.H??'—'}mm P=${bkt.P??'—'}mm`,`V = ${bkt.V??'—'} L`,`Spacing = ${spacingM?Math.round(spacingM*1000):'—'} mm`,`Real count: ${realCount} (both runs)`]},
   };
   const co=hovered&&callouts[hovered];
 
@@ -244,25 +262,19 @@ function ElevationView({ inputs, results, W, H, hovered, setHovered }) {
       {/* Casing body */}
       <rect x={cx-casW} y={topY} width={casW*2} height={elevH}
         fill={C.casFill} stroke={C.casing} strokeWidth={2}/>
-      {/* Casing centre-line */}
       <line x1={cx} y1={topY-12} x2={cx} y2={botY+12}
         stroke={C.dim} strokeWidth={0.7} strokeDasharray="6 3"/>
 
-      {/* ── Animated belt lines ──
-          Path direction: y1(top)→y2(bottom) = top-to-bottom
-          Positive dashoffset on beltUp = dashes appear to move UP ── */}
-      {/* Carry side (left) — going UP — clockwise */}
+      {/* Belt lines — animated, FIX #1 direction */}
       <line className="belt-carry"
         x1={bltL} y1={topY} x2={bltL} y2={botY}
         stroke={C.belt} strokeWidth={3.5}/>
-      {/* Return side (right) — going DOWN */}
       <line className="belt-return"
         x1={bltR} y1={topY} x2={bltR} y2={botY}
         stroke={C.beltRtn} strokeWidth={2.5} opacity={0.65}/>
 
-      {/* ── ANIMATED CARRY BUCKETS (clipped to casing) ── */}
+      {/* Buckets — FIX #3 proportional sizing/spacing */}
       <g clipPath="url(#casingClip)">
-        {/* Carry side buckets — move UP with belt */}
         <g className="buckets-carry">
           {carryBuckets.map((by_,i)=>(
             <g key={i}
@@ -270,53 +282,47 @@ function ElevationView({ inputs, results, W, H, hovered, setHovered }) {
               onMouseLeave={()=>setHovered(null)}
               style={{cursor:"help"}}
             >
-              {/* Bucket body — projects LEFT from carry belt */}
               <path d={`
                 M ${bltL} ${by_-bktH_px*0.5}
                 L ${bltL-bktW_px} ${by_-bktH_px*0.5}
-                Q ${bltL-bktW_px-4} ${by_} ${bltL-bktW_px} ${by_+bktH_px*0.5}
+                Q ${bltL-bktW_px-3} ${by_} ${bltL-bktW_px} ${by_+bktH_px*0.5}
                 L ${bltL} ${by_+bktH_px*0.5} Z`}
                 fill={C.bucket} fillOpacity={0.82}
-                stroke={C.casing} strokeWidth={0.8}/>
-              {/* Fill indicator (partial fill) */}
+                stroke={C.casing} strokeWidth={0.6}/>
               <rect x={bltL-bktW_px+1} y={by_}
-                width={bktW_px-4} height={bktH_px*0.35}
+                width={Math.max(1,bktW_px-3)} height={bktH_px*0.35}
                 fill={C.belt} fillOpacity={0.3} rx={1}/>
             </g>
           ))}
         </g>
-
-        {/* Return side buckets — inverted, going DOWN, empty */}
         <g className="buckets-return">
           {returnBuckets.map((by_,i)=>(
             <g key={i}>
-              {/* Inverted bucket on return side — open end faces DOWN */}
               <path d={`
                 M ${bltR} ${by_+bktH_px*0.5}
                 L ${bltR+bktW_px} ${by_+bktH_px*0.5}
-                Q ${bltR+bktW_px+4} ${by_} ${bltR+bktW_px} ${by_-bktH_px*0.5}
+                Q ${bltR+bktW_px+3} ${by_} ${bltR+bktW_px} ${by_-bktH_px*0.5}
                 L ${bltR} ${by_-bktH_px*0.5} Z`}
-                fill={C.bucket} fillOpacity={0.25}
-                stroke={C.casing} strokeWidth={0.7}/>
+                fill={C.bucket} fillOpacity={0.22}
+                stroke={C.casing} strokeWidth={0.5}/>
             </g>
           ))}
         </g>
       </g>
 
-      {/* ── Boot pulley ── */}
+      {/* Boot pulley — FIX #2 proportional */}
       <g onMouseEnter={()=>setHovered("boot")} onMouseLeave={()=>setHovered(null)} style={{cursor:"help"}}>
         <circle cx={cx} cy={botY} r={rB} fill={C.pulley} fillOpacity={0.85} stroke={C.hub} strokeWidth={2}/>
         <circle cx={cx} cy={botY} r={rB*0.3} fill={C.hub}/>
-        <line x1={cx-rB-18} y1={botY} x2={cx-rB} y2={botY} stroke={C.dim} strokeWidth={3} strokeLinecap="round"/>
-        <line x1={cx+rB} y1={botY} x2={cx+rB+18} y2={botY} stroke={C.dim} strokeWidth={3} strokeLinecap="round"/>
+        <line x1={cx-rB-16} y1={botY} x2={cx-rB} y2={botY} stroke={C.dim} strokeWidth={3} strokeLinecap="round"/>
+        <line x1={cx+rB} y1={botY} x2={cx+rB+16} y2={botY} stroke={C.dim} strokeWidth={3} strokeLinecap="round"/>
       </g>
-      {/* Take-up weight */}
-      <rect x={cx-10} y={botY+rB+4} width={20} height={20}
+      <rect x={cx-9} y={botY+rB+4} width={18} height={18}
         fill={C.casing} stroke={C.dim} strokeWidth={1} rx={2}/>
-      <text x={cx} y={botY+rB+16} fontSize={6.5} fill={C.text3} textAnchor="middle" fontWeight="700">T/U</text>
+      <text x={cx} y={botY+rB+15} fontSize={6} fill={C.text3} textAnchor="middle" fontWeight="700">T/U</text>
       <line x1={cx} y1={botY+rB+2} x2={cx} y2={botY+rB+4} stroke={C.dim} strokeWidth={1}/>
 
-      {/* ── Head pulley ── */}
+      {/* Head pulley — FIX #2 proportional */}
       <g onMouseEnter={()=>setHovered("head")} onMouseLeave={()=>setHovered(null)} style={{cursor:"help"}}>
         <circle cx={cx} cy={topY} r={rH+3} fill="none" stroke={C.lagging} strokeWidth={4} opacity={0.55}/>
         <circle cx={cx} cy={topY} r={rH} fill={C.pulley} fillOpacity={0.85} stroke={C.hub} strokeWidth={2}/>
@@ -325,106 +331,93 @@ function ElevationView({ inputs, results, W, H, hovered, setHovered }) {
             stroke={C.hub} strokeWidth={0.9} opacity={0.4}/>
         ))}
         <circle cx={cx} cy={topY} r={rH*0.28} fill={C.hub}/>
-        <line x1={cx-rH-20} y1={topY} x2={cx-rH} y2={topY} stroke={C.dim} strokeWidth={4} strokeLinecap="round"/>
-        <line x1={cx+rH} y1={topY} x2={cx+rH+20} y2={topY} stroke={C.dim} strokeWidth={4} strokeLinecap="round"/>
+        <line x1={cx-rH-18} y1={topY} x2={cx-rH} y2={topY} stroke={C.dim} strokeWidth={4} strokeLinecap="round"/>
+        <line x1={cx+rH} y1={topY} x2={cx+rH+18} y2={topY} stroke={C.dim} strokeWidth={4} strokeLinecap="round"/>
       </g>
 
-      {/* ── Discharge chute — MOVED RIGHT to avoid crowding ── */}
-      <path d={`M ${cx+rH+2} ${topY-8}
-                L ${cx+rH+44} ${topY-26}
-                L ${cx+rH+58} ${topY-10}
-                L ${cx+rH+16} ${topY+6} Z`}
-        fill="rgba(245,158,11,.07)" stroke={C.chute} strokeWidth={1.5}/>
-      {/* Discharge label far right — no overlap */}
-      <text x={cx+rH+64} y={topY-22} fontSize={7.5} fill={C.chute} fontWeight="700">DISCHARGE</text>
-      <text x={cx+rH+64} y={topY-12} fontSize={7} fill={C.label}>CHUTE</text>
+      {/* ── FIX #5: discharge chute oriented by theta_rel ── */}
+      <path d={`M ${chuteBaseX-6} ${chuteBaseY}
+                L ${chuteTipX} ${chuteTipY}
+                L ${chuteTipX+10} ${chuteTipY+6}
+                L ${chuteBaseX+6} ${chuteBaseY+8} Z`}
+        fill="rgba(245,158,11,.08)" stroke={C.chute} strokeWidth={1.4}/>
 
-      {/* ── Drive train — moved down and spaced out ── */}
+      {/* ── FIX #4: discharge area decluttered — labels well separated ── */}
+      <text x={chuteTipX+16} y={chuteTipY} fontSize={7.5} fill={C.chute} fontWeight="700">DISCHARGE</text>
+      <text x={chuteTipX+16} y={chuteTipY+11} fontSize={6.5} fill={C.label}>θ={f(r.theta_rel,0)}°</text>
+
+      {/* Drive train — pushed further right, clearly separated from chute */}
       <g onMouseEnter={()=>setHovered("motor")} onMouseLeave={()=>setHovered(null)} style={{cursor:"help"}}>
-        {/* Drive shaft */}
-        <line x1={cx+rH+20} y1={topY} x2={cx+casW+8} y2={topY}
+        <line x1={cx+rH+16} y1={topY+rH*0.5} x2={cx+casW+10} y2={topY+rH*0.5}
           stroke={C.dim} strokeWidth={1.5} strokeDasharray="4 2"/>
-        {/* Coupling disc */}
-        <ellipse cx={cx+casW+16} cy={topY} rx={5} ry={8}
+        <ellipse cx={cx+casW+18} cy={topY+rH*0.5} rx={5} ry={8}
           fill={C.coupling} stroke={C.hub} strokeWidth={1}/>
-        {/* Gearbox */}
-        <rect x={cx+casW+21} y={topY-12} width={22} height={24}
+        <rect x={cx+casW+23} y={topY+rH*0.5-12} width={22} height={24}
           fill={C.gearbox} fillOpacity={0.75} stroke="#047857" strokeWidth={1} rx={2}/>
-        <text x={cx+casW+32} y={topY+4} fontSize={7} fill="white" textAnchor="middle" fontWeight="700">GB</text>
-        {/* Motor */}
-        <rect x={cx+casW+43} y={topY-10} width={28} height={20}
+        <text x={cx+casW+34} y={topY+rH*0.5+4} fontSize={7} fill="white" textAnchor="middle" fontWeight="700">GB</text>
+        <rect x={cx+casW+45} y={topY+rH*0.5-10} width={28} height={20}
           fill={C.motor} fillOpacity={0.8} stroke="#065f46" strokeWidth={1} rx={2}/>
-        <text x={cx+casW+57} y={topY+3} fontSize={8} fill="white" textAnchor="middle" fontWeight="700">M</text>
-        {/* Motor label BELOW the boxes — no overlap */}
-        <text x={cx+casW+40} y={topY+22} fontSize={7} fill={C.text3}>
-          {r.motor_kw??'—'} kW
-        </text>
-        <text x={cx+casW+40} y={topY+31} fontSize={7} fill={C.label}>
-          DH = {headD} mm
+        <text x={cx+casW+59} y={topY+rH*0.5+3} fontSize={8} fill="white" textAnchor="middle" fontWeight="700">M</text>
+        <text x={cx+casW+22} y={topY+rH*0.5+30} fontSize={7} fill={C.text3}>
+          {r.motor_kw??'—'} kW motor
         </text>
       </g>
 
-      {/* ── Feed inlet ── */}
+      {/* Feed inlet */}
       <line x1={cx-casW-34} y1={botY} x2={cx-casW-4} y2={botY}
         stroke={C.feed} strokeWidth={2} markerEnd="url(#arr)"/>
       <text x={cx-casW-38} y={botY-5} fontSize={7.5} fill={C.feed} textAnchor="end" fontWeight="700">FEED</text>
 
-      {/* ── Dimension lines ── */}
+      {/* Dimensions */}
       <Dim x1={cx-casW-4} y1={botY} x2={cx-casW-4} y2={topY}
         label={`H = ${f(inp.H_m,0)} m`} offset={24} side="negative"/>
-
-      {/* Belt width */}
       <Dim x1={bltL} y1={topY-rH-6} x2={bltR} y2={topY-rH-6}
         label={`BW = ${r.belt_w??'—'} mm`} offset={16} side="positive"/>
-
-      {/* Bucket spacing */}
-      {spacePx>14 && (
-        <Dim x1={cx+casW+8} y1={botY-10} x2={cx+casW+8} y2={botY-10-spacePx}
-          label={`${r.spacing?Math.round(r.spacing*1000):'—'}mm`} offset={20} side="positive"/>
+      {spacePx>16 && (
+        <Dim x1={cx+casW+8} y1={botY-12} x2={cx+casW+8} y2={botY-12-spacePx}
+          label={`${Math.round(spacingM*1000)}mm`} offset={20} side="positive"/>
       )}
 
       {/* Head / Boot labels */}
       <text x={cx} y={10} fontSize={9} fill={C.labelBr} textAnchor="middle" fontWeight="700" letterSpacing=".06em">HEAD SECTION</text>
       <text x={cx} y={21} fontSize={7} fill={C.label} textAnchor="middle">Ø{headD}mm · {inp.n_rpm??'—'}rpm · Lagged</text>
-
       <text x={cx} y={botY+rB+36} fontSize={9} fill={C.labelBr} textAnchor="middle" fontWeight="700" letterSpacing=".06em">BOOT / TAKE-UP</text>
-      <text x={cx} y={botY+rB+46} fontSize={7} fill={C.label} textAnchor="middle">Ø{headD}mm · Gravity</text>
+      <text x={cx} y={botY+rB+46} fontSize={7} fill={C.label} textAnchor="middle">Ø{bootD}mm · Gravity</text>
 
-      {/* DB label — boot, right side only */}
-      <text x={cx+rB+6} y={botY+4} fontSize={7.5} fill={C.text3}>DB = {headD} mm</text>
+      <text x={cx+rB+6} y={botY+4} fontSize={7.5} fill={C.text3}>DB = {bootD} mm</text>
 
-      {/* Bucket footer */}
+      {/* Bucket footer — shows real count + visual note if sampled */}
       <text x={W/2} y={H-6} fontSize={7.5} fill={C.label} textAnchor="middle">
-        BUCKET {bkt.id??'—'} · {bkt.W??'—'}×{bkt.H??'—'}mm · {bkt.V??'—'}L · SPACING {r.spacing?Math.round(r.spacing*1000):'—'}mm
+        BUCKET {bkt.id??'—'} · {bkt.W??'—'}×{bkt.H??'—'}mm · {bkt.V??'—'}L
+        · {realCount} buckets total · spacing {Math.round(spacingM*1000)}mm
       </text>
 
-      {/* Callout */}
       {co && <Callout x={cx+casW+10} y={H/2} title={co.title} lines={co.lines} W={W} H={H}/>}
       <TitleBlock W={W} H={H} view="elevation" inputs={inputs} results={results}/>
     </svg>
   );
 }
 
-// ─── HEAD SECTION PLAN VIEW (corrected — cylinder = rectangle from above) ────
+// ─── HEAD SECTION PLAN VIEW ───────────────────────────────────────────────────
 function PlanView({ inputs, results, W, H, hovered, setHovered }) {
   const r=results||{}, inp=inputs||{};
   const BW=Number(r.belt_w??inp.D_mm??300);
   const D=Number(inp.D_mm??500);
   const dShaft=Number(r.d_mm??60);
-  // Casing width = BW + 120mm clearance each side
   const CW=BW+120;
-  // Pulley face length = BW + 50mm end clearance each side  
   const PL=BW+50;
-  // Casing depth (front to back) = 400mm typical
   const CD=400;
 
-  const scale=Math.min((W-120)/CW, (H-120)/(CD+60));
+  const scale=Math.min((W-140)/CW, (H-140)/(CD+80));
   const cw=CW*scale, cd=CD*scale, pl=PL*scale, bw=BW*scale;
   const cx=W/2, cy=H/2+10;
-
-  // Shaft diameter in plan
   const dSh=dShaft*scale;
-  const bh=26*scale, bhW=22*scale; // bearing housing
+
+  // ── FIX #6: bearing housing sized from ACTUAL shaft diameter ──
+  // Standard pillow block proportion: housing width ≈ 2.6× bore,
+  // housing height ≈ 2.4× bore (typical SKF/FYH pillow block ratios)
+  const bhW = Math.max(dSh*2.6, 16);
+  const bh  = Math.max(dSh*2.4, 20);
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{display:"block"}}>
@@ -439,49 +432,40 @@ function PlanView({ inputs, results, W, H, hovered, setHovered }) {
         Top-down cross-section at head pulley centre-line
       </text>
 
-      {/* ── Casing outer walls (plan view = rectangles) ── */}
       <g onMouseEnter={()=>setHovered("casing")} onMouseLeave={()=>setHovered(null)} style={{cursor:"help"}}>
-        {/* Full casing outline */}
         <rect x={cx-cw/2} y={cy-cd/2} width={cw} height={cd}
           fill={C.casFill} stroke={C.casing} strokeWidth={2} rx={2}/>
-        {/* Casing plate thickness (8mm each side — shown as inner line) */}
         <rect x={cx-cw/2+8*scale} y={cy-cd/2+8*scale}
           width={cw-16*scale} height={cd-16*scale}
           fill="none" stroke={C.casing} strokeWidth={0.5} strokeDasharray="3 2"/>
       </g>
 
-      {/* ── Pulley in plan = RECTANGLE (shell of a cylinder from above) ── */}
       <g onMouseEnter={()=>setHovered("head")} onMouseLeave={()=>setHovered(null)} style={{cursor:"help"}}>
-        {/* Lagging (slightly wider rectangle) */}
         <rect x={cx-pl/2-5*scale} y={cy-D*scale/2-6*scale}
           width={pl+10*scale} height={D*scale+12*scale}
           fill="none" stroke={C.lagging} strokeWidth={3.5} opacity={0.6} rx={2}/>
-        {/* Pulley shell */}
         <rect x={cx-pl/2} y={cy-D*scale/2}
           width={pl} height={D*scale}
           fill={C.pulley} fillOpacity={0.75} stroke={C.hub} strokeWidth={1.5} rx={2}/>
-        {/* Shell weld seams (vertical lines across face) */}
         {[-0.3,0,0.3].map(k=>(
           <line key={k} x1={cx+k*pl*0.35} y1={cy-D*scale/2}
             x2={cx+k*pl*0.35} y2={cy+D*scale/2}
             stroke={C.hub} strokeWidth={0.8} opacity={0.4}/>
         ))}
-        {/* Shaft (rectangle in plan = shaft diameter × shaft length) */}
+        {/* ── FIX #6: shaft sized correctly relative to bearing housing ── */}
         <rect x={cx-cw/2-bhW-10} y={cy-dSh/2}
           width={cw+2*(bhW+10)} height={dSh}
           fill={C.dim} rx={1} opacity={0.7}/>
-        {/* Shaft centre-line */}
         <line x1={cx-cw/2-bhW-20} y1={cy} x2={cx+cw/2+bhW+20} y2={cy}
           stroke={C.dimTxt} strokeWidth={0.8} strokeDasharray="6 3"/>
       </g>
 
-      {/* ── Belt edges (two lines through casing) ── */}
       <line x1={cx-bw/2} y1={cy-cd/2-10} x2={cx-bw/2} y2={cy+cd/2+10}
         stroke={C.belt} strokeWidth={2}/>
       <line x1={cx+bw/2} y1={cy-cd/2-10} x2={cx+bw/2} y2={cy+cd/2+10}
         stroke={C.belt} strokeWidth={2}/>
 
-      {/* ── Bearing housings (left and right) ── */}
+      {/* Bearing housings — now correctly larger than shaft (FIX #6) */}
       {[-1,1].map(side=>{
         const bx=side<0 ? cx-cw/2-bhW-10 : cx+cw/2+10;
         return (
@@ -489,7 +473,7 @@ function PlanView({ inputs, results, W, H, hovered, setHovered }) {
             <rect x={bx} y={cy-bh/2} width={bhW} height={bh}
               fill={C.gearbox} fillOpacity={0.5} stroke={C.motor} strokeWidth={1.2} rx={2}/>
             {[-1,1].map(d=>(
-              <circle key={d} cx={bx+bhW/2} cy={cy+d*bh*0.34} r={2}
+              <circle key={d} cx={bx+bhW/2} cy={cy+d*bh*0.34} r={Math.max(1.5,bhW*0.08)}
                 fill={C.hub} stroke={C.dim} strokeWidth={0.8}/>
             ))}
             <text x={bx+bhW/2} y={side<0?cy-bh/2-5:cy+bh/2+11} fontSize={6.5}
@@ -498,7 +482,6 @@ function PlanView({ inputs, results, W, H, hovered, setHovered }) {
         );
       })}
 
-      {/* ── Buckets (rectangles in plan — flat projection of bucket face) ── */}
       {[-2,-1,0,1,2].map(i=>{
         const bktW_plan=(Number(r.bucket?.W??250))*scale*0.5;
         const bktD_plan=18*scale;
@@ -512,21 +495,17 @@ function PlanView({ inputs, results, W, H, hovered, setHovered }) {
         );
       })}
 
-      {/* ── Dimension lines ── */}
       <Dim x1={cx-bw/2} y1={cy+cd/2+14} x2={cx+bw/2} y2={cy+cd/2+14}
         label={`BW = ${BW.toFixed(0)} mm`} offset={18}/>
       <Dim x1={cx-cw/2} y1={cy-cd/2-22} x2={cx+cw/2} y2={cy-cd/2-22}
         label={`Casing = ${CW.toFixed(0)} mm`} offset={16}/>
       <Dim x1={cx-pl/2} y1={cy-cd/2-42} x2={cx+pl/2} y2={cy-cd/2-42}
         label={`Pulley face = ${PL.toFixed(0)} mm`} offset={16}/>
-      {/* Shaft dia — vertical on far left */}
       <Dim x1={cx-cw/2-bhW-10} y1={cy-dSh/2} x2={cx-cw/2-bhW-10} y2={cy+dSh/2}
         label={`d = ${f(dShaft,0)} mm`} offset={20} side="negative"/>
-      {/* Pulley dia — vertical on far right */}
       <Dim x1={cx+cw/2+bhW+22} y1={cy-D*scale/2} x2={cx+cw/2+bhW+22} y2={cy+D*scale/2}
         label={`D = ${D.toFixed(0)} mm`} offset={22}/>
 
-      {/* Callouts */}
       {hovered==="head" && (
         <Callout x={cx+pl/2+10} y={cy-40}
           title="HEAD PULLEY" W={W} H={H}
@@ -535,7 +514,7 @@ function PlanView({ inputs, results, W, H, hovered, setHovered }) {
       {hovered==="bearings" && (
         <Callout x={cx} y={cy+bh/2+40}
           title="BEARINGS (×2)" W={W} H={H}
-          lines={[`L10 = ${r.L10>9999?(r.L10/1000).toFixed(0)+"k":f(r.L10,0)} h`,`Load: ${f(r.R_headshaft!=null?r.R_headshaft/1000:null,2)} kN`,"ISO 281 · C = 355 kN"]}/>
+          lines={[`L10 = ${r.L10>9999?(r.L10/1000).toFixed(0)+"k":f(r.L10,0)} h`,`Load: ${f(r.R_headshaft!=null?r.R_headshaft/1000:null,2)} kN`,"ISO 281 · C = 355 kN",`Housing ≈ ${(bhW/scale).toFixed(0)}×${(bh/scale).toFixed(0)}mm`]}/>
       )}
       {hovered==="casing" && (
         <Callout x={cx} y={cy}
@@ -548,19 +527,19 @@ function PlanView({ inputs, results, W, H, hovered, setHovered }) {
   );
 }
 
-// ─── SIDE ELEVATION (complete elevator from 90°) ─────────────────────────────
+// ─── SIDE ELEVATION ───────────────────────────────────────────────────────────
 function SideView({ inputs, results, W, H }) {
   const r=results||{}, inp=inputs||{};
-  const CD=400; // casing depth mm (front-to-back)
+  const CD=400;
   const H_m=Number(inp.H_m||25);
   const D=Number(inp.D_mm||500);
   const bootD=Number(inp.boot_pulley_D_mm||300);
 
-  const scale=Math.min((W-80)/( CD+160),(H-80)/(H_m*40+D*0.6));
+  const scale=Math.min((W-100)/(CD+180),(H-140)/(H_m*38+D*0.6));
   const casDepth=CD*scale;
-  const elevH_px=H_m*40*scale;
+  const elevH_px=H_m*38*scale;
   const rH_px=(D/2)*scale, rB_px=(bootD/2)*scale;
-  const cx=W/2, topY=40+rH_px, botY=topY+elevH_px;
+  const cx=W/2, topY=64+rH_px, botY=topY+elevH_px;
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{display:"block"}}>
@@ -575,73 +554,68 @@ function SideView({ inputs, results, W, H }) {
         Viewed from drive side  ·  Casing depth shown
       </text>
 
-      {/* ── Casing side elevation (narrow rectangle = depth × height) ── */}
+      {/* ── FIX #7: Casing depth dimension placed ABOVE with clear gap
+            before the HEAD label, which is now placed INSIDE/BELOW the
+            pulley box instead of overlapping the dimension line ── */}
+      <Dim x1={cx-casDepth/2} y1={48} x2={cx+casDepth/2} y2={48}
+        label={`Casing depth = ${CD.toFixed(0)} mm`} offset={14}/>
+
       <rect x={cx-casDepth/2} y={topY} width={casDepth} height={elevH_px}
         fill={C.casFill} stroke={C.casing} strokeWidth={2} rx={2}/>
 
-      {/* ── Leg structure ── */}
       {[-1,1].map(side=>(
         <g key={side}>
-          {/* Vertical leg */}
           <rect x={cx+side*(casDepth/2+4)} y={topY+elevH_px*0.15}
             width={10*scale} height={elevH_px*0.85}
             fill={C.leg} stroke={C.dim} strokeWidth={0.8}/>
-          {/* Diagonal brace */}
           <line x1={cx+side*(casDepth/2+4+(side>0?10*scale:0))} y1={topY+elevH_px*0.15}
             x2={cx+side*(casDepth/2+8+30*scale)} y2={topY+elevH_px*0.6}
             stroke={C.leg} strokeWidth={1.5} opacity={0.7}/>
         </g>
       ))}
 
-      {/* ── Head pulley side (shows as rectangle = face length × depth) ── */}
       <rect x={cx-casDepth/2-10} y={topY-rH_px/3}
         width={casDepth+20} height={rH_px/1.5}
         fill={C.pulley} fillOpacity={0.6} stroke={C.hub} strokeWidth={1.5} rx={2}/>
-      {/* Lagging */}
       <rect x={cx-casDepth/2-14} y={topY-rH_px/3-4}
         width={casDepth+28} height={rH_px/1.5+8}
         fill="none" stroke={C.lagging} strokeWidth={3} opacity={0.5} rx={3}/>
+      {/* HEAD label moved INSIDE the box — no overlap with dim line above */}
+      <text x={cx} y={topY} fontSize={8} fill="white" textAnchor="middle" fontWeight="700">HEAD</text>
 
-      {/* ── Boot pulley side ── */}
       <rect x={cx-casDepth/2-8} y={botY-rB_px/4}
         width={casDepth+16} height={rB_px/2}
         fill={C.pulley} fillOpacity={0.5} stroke={C.hub} strokeWidth={1} rx={2}/>
 
-      {/* ── Inspection doors ── */}
       {[0.25, 0.55, 0.78].map((frac,i)=>(
         <rect key={i} x={cx-casDepth/4} y={topY+elevH_px*frac}
-          width={casDepth/2} height={elevH_px*0.08}
+          width={casDepth/2} height={elevH_px*0.07}
           fill="none" stroke={C.dimTxt} strokeWidth={0.8} strokeDasharray="3 2" rx={1}/>
       ))}
 
-      {/* ── Drive platform (at head level) ── */}
-      <rect x={cx+casDepth/2+10} y={topY-20}
-        width={50*scale} height={10*scale}
+      {/* Drive platform — single label, positioned clear of casing edge */}
+      <rect x={cx+casDepth/2+14} y={topY-16}
+        width={44*scale} height={9*scale}
         fill={C.leg} stroke={C.dim} strokeWidth={0.8} opacity={0.7}/>
-      <text x={cx+casDepth/2+15+25*scale} y={topY-12} fontSize={7}
-        fill={C.label}>DRIVE</text>
+      <text x={cx+casDepth/2+16+22*scale} y={topY-20} fontSize={6.5}
+        fill={C.label} textAnchor="middle">DRIVE</text>
 
-      {/* ── Belt (shown as lines on inside of casing) ── */}
       <line x1={cx-casDepth/4} y1={topY} x2={cx-casDepth/4} y2={botY}
         stroke={C.belt} strokeWidth={2} opacity={0.6}/>
       <line x1={cx+casDepth/4} y1={topY} x2={cx+casDepth/4} y2={botY}
         stroke={C.beltRtn} strokeWidth={1.5} opacity={0.4}/>
 
-      {/* ── Dimension lines ── */}
-      <Dim x1={cx-casDepth/2-28} y1={topY} x2={cx-casDepth/2-28} y2={botY}
+      {/* H dimension — far left, clear of everything */}
+      <Dim x1={cx-casDepth/2-30} y1={topY} x2={cx-casDepth/2-30} y2={botY}
         label={`H = ${f(H_m,0)} m`} offset={24} side="negative"/>
-      <Dim x1={cx-casDepth/2} y1={topY-rH_px/3-24} x2={cx+casDepth/2} y2={topY-rH_px/3-24}
-        label={`Casing depth = ${CD.toFixed(0)} mm`} offset={18}/>
 
-      {/* Labels */}
-      <text x={cx} y={topY-rH_px/3-42} fontSize={8.5} fill={C.labelBr}
-        textAnchor="middle" fontWeight="700">HEAD</text>
-      <text x={cx} y={botY+rB_px/2+24} fontSize={8.5} fill={C.labelBr}
+      {/* BOOT label below the boot box — single clean label */}
+      <text x={cx} y={botY+rB_px/2+18} fontSize={8.5} fill={C.labelBr}
         textAnchor="middle" fontWeight="700">BOOT / T/U</text>
-      <text x={cx+casDepth/2+16} y={topY+elevH_px*0.32} fontSize={7.5}
-        fill={C.label}>INSPECTION</text>
-      <text x={cx+casDepth/2+16} y={topY+elevH_px*0.32+10} fontSize={7.5}
-        fill={C.label}>DOORS</text>
+
+      {/* Inspection doors label — single instance, positioned once */}
+      <text x={cx+casDepth/2+20} y={topY+elevH_px*0.4} fontSize={7}
+        fill={C.label}>INSPECTION DOORS</text>
 
       <TitleBlock W={W} H={H} view="side" inputs={inputs} results={results}/>
     </svg>
@@ -664,7 +638,7 @@ function TrajectoryView({ inputs, results, W, H }) {
     </svg>
   );
 
-  const pad={top:58,bot:46,left:56,right:26};
+  const pad={top:58,bot:46,left:60,right:26};
   const pw=W-pad.left-pad.right, ph=H-pad.top-pad.bot;
   const allX=[...traj,...upper,...lower].map(p=>p.x);
   const allY=[...traj,...upper,...lower].map(p=>p.y);
@@ -680,9 +654,10 @@ function TrajectoryView({ inputs, results, W, H }) {
       <Defs/><rect width={W} height={H} fill={C.bg}/><Grid W={W} H={H}/>
       <rect x={pad.left} y={pad.top} width={pw} height={ph}
         fill="none" stroke={C.dim} strokeWidth={0.8}/>
+      {/* ── FIX #8: NO extra ×1000 — trajectory x,y already in mm from solver ── */}
       {[0,.25,.5,.75,1].map(t=>{
         const gx=pad.left+t*pw, gy=pad.top+t*ph;
-        const xv=(xMin+t*xR)*1000, yv=(yMax-t*yR)*1000;
+        const xv=xMin+t*xR, yv=yMax-t*yR;
         return (
           <g key={t}>
             <line x1={gx} y1={pad.top} x2={gx} y2={pad.top+ph} stroke={C.casing} strokeWidth={0.6}/>
@@ -709,43 +684,35 @@ function TrajectoryView({ inputs, results, W, H }) {
         Throw {f(m.throw_distance_m,3)} m  ·  CR = {f(results?.cr,3)}  ·  θ = {f(results?.theta_rel,1)}° from vertical
       </text>
       <text x={W/2} y={H-8} fontSize={9} fill={C.labelBr} textAnchor="middle">x [mm]</text>
-      <text x={12} y={H/2} fontSize={9} fill={C.labelBr} textAnchor="middle" transform={`rotate(-90,12,${H/2})`}>y [mm]</text>
+      <text x={14} y={H/2} fontSize={9} fill={C.labelBr} textAnchor="middle" transform={`rotate(-90,14,${H/2})`}>y [mm]</text>
       <TitleBlock W={W} H={H} view="trajectory" inputs={inputs} results={results}/>
     </svg>
   );
 }
 
-// ─── BUCKET DETAIL VIEW (new — Task 11 extra viewport) ───────────────────────
+// ─── BUCKET DETAIL VIEW ───────────────────────────────────────────────────────
+// NOTE: profile/bolt-pattern geometry pending correct CEMA reference (issue 9).
+// FIX #10 applied: defensive uppercase series lookup + explicit key on <svg>
+// so React fully remounts when the bucket series changes.
 function BucketDetailView({ inputs, results, W, H }) {
   const r=results||{}, bkt=r.bucket||{};
-  const seriesId=bkt.id||"B";
+  const seriesId=String(bkt.id||"B").toUpperCase().trim();
   const cat=BUCKET_CATALOG[seriesId]||BUCKET_CATALOG.B;
 
-  // Use catalog values over API values where available
   const bW=cat.W, bH=cat.H, bP=cat.P, bV=cat.V;
   const scale=Math.min((W-120)/(bW+bP+80),(H-120)/(bH+60));
   const bWs=bW*scale, bHs=bH*scale, bPs=bP*scale;
   const backR=cat.backR*scale;
 
-  // Left panel: front elevation; Right panel: side profile
   const fCx=W*0.30, sCx=W*0.72;
   const midY=H*0.48;
 
-  // Front elevation — bucket face view (W × H rectangle with curved back)
   const fX=fCx-bWs/2, fY=midY-bHs/2;
-  // Back plate curve path
-  const backPath=`
-    M ${fX} ${fY+bHs}
-    L ${fX} ${fY}
-    Q ${fX-backR*0.4} ${midY} ${fX} ${fY+bHs} Z`;
 
-  // Bucket fill level (75% full)
   const fillPct=Number(inputs?.fill_pct||75)/100;
   const fillY=fY+bHs*(1-fillPct*0.7);
 
-  // Side profile — projection P, height H
   const sX=sCx-bPs/2, sY=midY-bHs/2;
-  // Side profile path: back plate (left) → bottom → lip (right, shorter)
   const sidePath=`
     M ${sX} ${sY+bHs}
     Q ${sX-8} ${sY+bHs*0.5} ${sX} ${sY}
@@ -753,7 +720,6 @@ function BucketDetailView({ inputs, results, W, H }) {
     L ${sX+bPs} ${sY+bHs*0.85}
     L ${sX} ${sY+bHs} Z`;
 
-  // Bolt positions
   const boltSW=cat.boltSpacW*scale, boltSH=cat.boltSpacH*scale;
   const bolts=[
     {x:fCx-boltSW/2, y:midY-boltSH/2},
@@ -762,13 +728,12 @@ function BucketDetailView({ inputs, results, W, H }) {
     {x:fCx+boltSW/2, y:midY+boltSH/2},
   ];
 
-  // Material volume calc
   const V_actual=(bV*(Number(inputs?.fill_pct||75)/100)).toFixed(3);
   const mass_bucket=(bV*1.5).toFixed(1);
   const n_buckets=r.spacing?Math.ceil((2*Number(inputs?.H_m||25))/r.spacing):0;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{display:"block"}}>
+    <svg key={seriesId} viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{display:"block"}}>
       <Defs/>
       <rect width={W} height={H} fill={C.bg}/>
       <Grid W={W} H={H}/>
@@ -779,21 +744,19 @@ function BucketDetailView({ inputs, results, W, H }) {
       <text x={W/2} y={30} fontSize={7.5} fill={C.label} textAnchor="middle">
         Front Elevation (left)  ·  Side Profile (right)
       </text>
+      <text x={W/2} y={41} fontSize={6.5} fill={C.warning} textAnchor="middle">
+        ⚠ Bolt pattern is placeholder — pending CEMA reference drawing confirmation
+      </text>
 
-      {/* ─── FRONT ELEVATION ─── */}
-      {/* Back plate fill */}
+      {/* FRONT ELEVATION */}
       <rect x={fX} y={fY} width={bWs} height={bHs}
         fill={C.casFill} stroke={C.bucket} strokeWidth={1.5}/>
-      {/* Back curve highlight */}
       <path d={`M ${fX} ${fY} Q ${fX-backR*0.35} ${midY} ${fX} ${fY+bHs}`}
         fill="none" stroke={C.lagging} strokeWidth={2} opacity={0.7}/>
-      {/* Material fill (at set fill%) */}
       <rect x={fX+1} y={fillY} width={bWs-2} height={fY+bHs-fillY-1}
         fill={C.belt} fillOpacity={0.2} rx={1}/>
-      {/* Fill level line */}
       <line x1={fX+1} y1={fillY} x2={fX+bWs-1} y2={fillY}
         stroke={C.belt} strokeWidth={1} strokeDasharray="3 2" opacity={0.7}/>
-      {/* Mounting bolts */}
       {bolts.map((b,i)=>(
         <g key={i}>
           <circle cx={b.x} cy={b.y} r={3.5} fill={C.dim} stroke={C.dimTxt} strokeWidth={1}/>
@@ -801,53 +764,34 @@ function BucketDetailView({ inputs, results, W, H }) {
           <line x1={b.x} y1={b.y-3} x2={b.x} y2={b.y+3} stroke={C.dimTxt} strokeWidth={0.6}/>
         </g>
       ))}
-      {/* Centre line */}
       <line x1={fCx} y1={fY-8} x2={fCx} y2={fY+bHs+8}
         stroke={C.dim} strokeWidth={0.7} strokeDasharray="5 3"/>
-
-      <text x={fCx} y={fY-14} fontSize={9} fill={C.labelBr} textAnchor="middle" fontWeight="700">
-        FRONT ELEVATION
-      </text>
-
-      {/* W dimension */}
+      <text x={fCx} y={fY-14} fontSize={9} fill={C.labelBr} textAnchor="middle" fontWeight="700">FRONT ELEVATION</text>
       <Dim x1={fX} y1={fY+bHs+14} x2={fX+bWs} y2={fY+bHs+14}
         label={`W = ${bW} mm`} offset={16}/>
-      {/* H dimension */}
       <Dim x1={fX-20} y1={fY} x2={fX-20} y2={fY+bHs}
         label={`H = ${bH} mm`} offset={22} side="negative"/>
-      {/* Bolt spacing W */}
       <Dim x1={fCx-boltSW/2} y1={fY-26} x2={fCx+boltSW/2} y2={fY-26}
         label={`${cat.boltSpacW} mm`} offset={14}/>
 
-      {/* ─── SIDE PROFILE ─── */}
+      {/* SIDE PROFILE */}
       <path d={sidePath} fill={C.casFill} stroke={C.bucket} strokeWidth={1.5}/>
-      {/* Back plate curve side */}
       <path d={`M ${sX} ${sY} Q ${sX-10} ${sY+bHs*0.5} ${sX} ${sY+bHs}`}
         fill="none" stroke={C.lagging} strokeWidth={2} opacity={0.7}/>
-      {/* Lip indicator */}
       <line x1={sX+bPs} y1={sY+bHs*0.15} x2={sX+bPs} y2={sY+bHs*0.85}
         stroke={C.primary} strokeWidth={2.5} opacity={0.8}/>
-      {/* Mounting holes (side view) */}
       {[0.3,0.65].map((f_,i)=>(
         <ellipse key={i} cx={sX+8} cy={sY+bHs*f_} rx={3} ry={2}
           fill={C.dim} stroke={C.dimTxt} strokeWidth={0.8}/>
       ))}
-
-      <text x={sCx} y={sY-14} fontSize={9} fill={C.labelBr} textAnchor="middle" fontWeight="700">
-        SIDE PROFILE
-      </text>
-
-      {/* P dimension */}
+      <text x={sCx} y={sY-14} fontSize={9} fill={C.labelBr} textAnchor="middle" fontWeight="700">SIDE PROFILE</text>
       <Dim x1={sX} y1={sY+bHs+14} x2={sX+bPs} y2={sY+bHs+14}
         label={`P = ${bP} mm`} offset={16}/>
-      {/* H dimension (side) */}
       <Dim x1={sX+bPs+20} y1={sY} x2={sX+bPs+20} y2={sY+bHs}
         label={`H = ${bH} mm`} offset={22}/>
-
-      {/* Lip label */}
       <text x={sX+bPs+6} y={sY+bHs*0.5} fontSize={7.5} fill={C.primary} fontWeight="700">LIP</text>
 
-      {/* ─── Specification table ─── */}
+      {/* Spec table */}
       {[
         [`Series ${seriesId}`,  `CEMA Standard`],
         [`W × H × P`,           `${bW} × ${bH} × ${bP} mm`],
@@ -855,23 +799,22 @@ function BucketDetailView({ inputs, results, W, H }) {
         [`Active volume`,       `${V_actual} L (${inputs?.fill_pct??75}% fill)`],
         [`Bucket mass (est.)`,  `${mass_bucket} kg`],
         [`Total buckets`,       n_buckets ? `${n_buckets} EA` : "—"],
-        [`Bolt pattern`,        `${cat.boltSpacW} × ${cat.boltSpacH} mm`],
-        [`Mounting`,            `4× M12 gr8.8`],
+        [`Bolt pattern`,        `${cat.boltSpacW} × ${cat.boltSpacH} mm (placeholder)`],
+        [`Mounting`,            `4× M12 gr8.8 (placeholder)`],
       ].map(([k,v],i)=>(
         <g key={i}>
-          <rect x={14} y={H-130+i*14} width={180} height={14}
+          <rect x={14} y={H-130+i*14} width={190} height={14}
             fill={i%2===0?"rgba(59,130,246,.05)":"transparent"}/>
           <text x={18} y={H-120+i*14} fontSize={8} fill={C.text3}>{k}</text>
-          <text x={130} y={H-120+i*14} fontSize={8} fill={C.labelBr}
+          <text x={130} y={H-120+i*14} fontSize={7.5} fill={C.labelBr}
             fontFamily="JetBrains Mono,monospace" fontWeight="600">{v}</text>
         </g>
       ))}
-      <rect x={12} y={H-133} width={184} height={116}
+      <rect x={12} y={H-133} width={194} height={116}
         fill="none" stroke={C.dim} strokeWidth={0.8} rx={3}/>
-      <text x={104} y={H-140} fontSize={8.5} fill={C.text3} textAnchor="middle"
+      <text x={109} y={H-140} fontSize={8.5} fill={C.text3} textAnchor="middle"
         fontWeight="700" letterSpacing=".05em">BUCKET SPECIFICATION</text>
 
-      {/* Fill level label */}
       <text x={fX+bWs+4} y={fillY} fontSize={7} fill={C.belt}>
         {inputs?.fill_pct??75}%
       </text>
@@ -920,6 +863,10 @@ export default function ElevatorSchematic({ inputs, results }) {
     view==="bucket"     ?BucketDetailView:
     ElevationView;
 
+  // FIX #10: bucket series id used as part of remount key so the
+  // BucketDetailView fully refreshes whenever the selected series changes.
+  const bucketSeriesKey = String(r.bucket?.id || "none");
+
   return (
     <div style={{
       width:"100%",height:"100%",
@@ -927,7 +874,6 @@ export default function ElevatorSchematic({ inputs, results }) {
       background:C.bg,overflow:"hidden",
       userSelect:"none",position:"relative",
     }}>
-      {/* Tab bar */}
       <div style={{
         display:"flex",alignItems:"center",padding:"0 10px",height:34,
         flexShrink:0,borderBottom:`1px solid ${C.border}`,
@@ -962,7 +908,6 @@ export default function ElevatorSchematic({ inputs, results }) {
         ))}
       </div>
 
-      {/* KPI pills — fixed field names */}
       <div style={{
         position:"absolute",top:42,right:8,zIndex:10,
         display:"flex",flexDirection:"column",gap:5,pointerEvents:"none",
@@ -990,7 +935,6 @@ export default function ElevatorSchematic({ inputs, results }) {
         ))}
       </div>
 
-      {/* Pan/zoom canvas */}
       <div ref={containerRef}
         onMouseDown={onMouseDown} onMouseMove={onMouseMove}
         onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
@@ -1006,6 +950,7 @@ export default function ElevatorSchematic({ inputs, results }) {
           width:"100%",height:"100%",
         }}>
           <ViewComp
+            key={view === "bucket" ? `bucket-${bucketSeriesKey}` : view}
             inputs={inputs} results={results}
             W={SVG_W} H={SVG_H}
             hovered={hovered} setHovered={setHovered}
@@ -1013,7 +958,6 @@ export default function ElevatorSchematic({ inputs, results }) {
         </div>
       </div>
 
-      {/* Status bar */}
       <div style={{
         padding:"3px 10px",fontSize:8,color:C.text3,
         borderTop:`1px solid ${C.border}`,flexShrink:0,

@@ -1,4 +1,18 @@
-// MultiLevelResults.jsx — Task 9: Executive / Engineering / Detailed tabs
+// MultiLevelResults.jsx — Executive / Engineering / Detailed tabs
+// Pure display component — all values and status flags from results dict.
+//
+// v1.9.9: ExecutiveView and DetailedView previously recomputed capOK, speedOK,
+// crOK, T_total, l10OK, failCount, warnCount, and motorMargin directly from
+// raw result fields. All of these now come from pre-computed backend fields
+// added to solve_elevator()'s result dict:
+//   results.status, results.fail_count, results.warn_count,
+//   results.cap_ok, results.speed_ok, results.cr_ok, results.l10_ok,
+//   results.cap_margin_pct, results.motor_margin_pct, results.T_total
+// Also removed the hardcoded "C basic = 355 kN" bearing constant from the
+// detailed view — that belongs in the backend only.
+// Added: shaft material, section, hub connection, belt length, bucket count
+// rows that were missing from the detailed view.
+
 import { useState } from "react";
 import KpiGrid from "./KpiGrid";
 
@@ -44,24 +58,27 @@ function VerdictBadge({ ok, label }) {
   );
 }
 
+const fmt = (v, d = 2) =>
+  v != null && !Number.isNaN(Number(v)) ? Number(v).toFixed(d) : "—";
+
 // ── EXECUTIVE VIEW ─────────────────────────────────────────────────────────
 
 function ExecutiveView({ results, inputs }) {
   if (!results) return (
     <div style={{ padding: 16, color: "var(--muted)", fontSize: 12 }}>Calculating…</div>
   );
-  const fmt = (v, d = 1) =>
-    v != null && !Number.isNaN(Number(v)) ? Number(v).toFixed(d) : "—";
 
-  const capOK   = results.Q  != null && Number(results.Q)  >= Number(inputs.Q_req);
-  const speedOK = results.v  != null && results.v >= (results.bucket?.v_min ?? 0.5)
-                                     && results.v <= (results.bucket?.v_max ?? 3.0);
-  const crOK    = results.cr != null && results.cr >= 1.0 && results.cr <= 1.8;
-  const T_total = (results.T1 ?? 0) + (results.T2 ?? 0) + (results.T3 ?? 0);
-  const l10OK   = results.L10 != null && results.L10 >= 40000;
-  const failCount = results.checks?.filter(c => c.type === "fail").length ?? 0;
-  const warnCount = results.checks?.filter(c => c.type === "warn").length ?? 0;
-  const overallOK = failCount === 0;
+  // All flags and margins pre-computed by backend — no recomputation here
+  const overallOK   = results.status === "PASS";
+  const failCount   = results.fail_count  ?? 0;
+  const warnCount   = results.warn_count  ?? 0;
+  const capOK       = results.cap_ok      ?? false;
+  const speedOK     = results.speed_ok    ?? false;
+  const crOK        = results.cr_ok       ?? false;
+  const l10OK       = results.l10_ok      ?? false;
+  const capMargin   = results.cap_margin_pct   ?? null;
+  const motorMargin = results.motor_margin_pct ?? null;
+  const T_total_kN  = results.T_total != null ? results.T_total / 1000 : null;
 
   return (
     <div style={{ paddingBottom: 16 }}>
@@ -78,7 +95,9 @@ function ExecutiveView({ results, inputs }) {
             fontSize: 13, fontWeight: 700,
             color: overallOK ? "var(--success)" : "var(--danger)", marginBottom: 3,
           }}>
-            {overallOK ? "Design Acceptable" : `Design has ${failCount} failure${failCount > 1 ? "s" : ""}`}
+            {overallOK
+              ? "Design Acceptable"
+              : `Design has ${failCount} failure${failCount > 1 ? "s" : ""}`}
           </div>
           <div style={{ fontSize: 10, color: "var(--muted)" }}>
             {failCount === 0 && warnCount === 0
@@ -89,26 +108,24 @@ function ExecutiveView({ results, inputs }) {
         <div style={{ fontSize: 28 }}>{overallOK ? "✓" : "✗"}</div>
       </div>
 
-      {/* Key capacity decision */}
+      {/* Capacity decision */}
       <SectionLabel>Capacity Decision</SectionLabel>
-      <DataRow label="Required"   value={`${inputs.Q_req} t/h`} />
-      <DataRow label="Achieved"   value={`${fmt(results.Q, 1)} t/h`}
+      <DataRow label="Required"  value={`${inputs.Q_req} t/h`} />
+      <DataRow label="Achieved"  value={`${fmt(results.Q, 1)} t/h`}
         color={capOK ? "var(--success)" : "var(--danger)"} />
       <DataRow label="Margin"
-        value={results.Q != null
-          ? `${(((results.Q - inputs.Q_req) / inputs.Q_req) * 100).toFixed(1)}%`
-          : "—"}
+        value={capMargin != null ? `${capMargin > 0 ? "+" : ""}${capMargin}%` : "—"}
         color={capOK ? "var(--success)" : "var(--danger)"} />
 
       {/* Verdicts */}
       <SectionLabel>Key Verdicts</SectionLabel>
       <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 7 }}>
         {[
-          { label: "Capacity",              ok: capOK },
+          { label: "Capacity",              ok: capOK   },
           { label: "Belt Speed",            ok: speedOK },
-          { label: "Centrifugal Discharge", ok: crOK },
-          { label: "Bearing Life",          ok: l10OK },
-        ].map((v) => (
+          { label: "Centrifugal Discharge", ok: crOK    },
+          { label: "Bearing Life",          ok: l10OK   },
+        ].map(v => (
           <div key={v.label} style={{
             display: "flex", justifyContent: "space-between", alignItems: "center",
           }}>
@@ -131,20 +148,19 @@ function ExecutiveView({ results, inputs }) {
 
       {/* Drive */}
       <SectionLabel>Drive</SectionLabel>
-      <DataRow label="Motor"         value={`${results.motor_kw} kW`} color="var(--primary)" />
-      <DataRow label="Drive Power"   value={`${fmt(results.P_total, 2)} kW`} />
+      <DataRow label="Motor"          value={`${results.motor_kw} kW`} color="var(--primary)" />
+      <DataRow label="Drive Power"    value={`${fmt(results.P_total, 2)} kW`} />
       <DataRow label="Service Factor" value={inputs.sf} />
       <DataRow label="Motor Reserve"
-        value={results.motor_kw && results.P_total
-          ? `${(((results.motor_kw - results.P_total * inputs.sf) / (results.P_total * inputs.sf)) * 100).toFixed(1)}%`
-          : "—"} />
+        value={motorMargin != null ? `${motorMargin > 0 ? "+" : ""}${motorMargin}%` : "—"} />
 
       {/* Structure */}
       <SectionLabel>Structure</SectionLabel>
-      <DataRow label="Head Shaft"    value={`Ø${fmt(results.d_mm, 0)} mm`} />
-      <DataRow label="Governed by"   value={results.governed_by ?? "stress"} mono={false} />
-      <DataRow label="Headshaft Load" value={`${(T_total / 1000).toFixed(2)} kN`}
-        color={T_total > 50000 ? "var(--warning)" : "var(--text2)"} />
+      <DataRow label="Head Shaft"     value={`Ø${fmt(results.d_mm, 0)} mm`} />
+      <DataRow label="Governed by"    value={results.governed_by ?? "stress"} mono={false} />
+      <DataRow label="Headshaft Load"
+        value={T_total_kN != null ? `${T_total_kN.toFixed(2)} kN` : "—"}
+        color={results.T_total > 50000 ? "var(--warning)" : "var(--text2)"} />
       <DataRow label="Bearing L10"
         value={results.L10 > 9999
           ? `${(results.L10 / 1000).toFixed(0)}k h`
@@ -160,85 +176,93 @@ function DetailedView({ results, inputs }) {
   if (!results) return (
     <div style={{ padding: 16, color: "var(--muted)", fontSize: 12 }}>Calculating…</div>
   );
-  const fmt = (v, d = 2) =>
-    v != null && !Number.isNaN(Number(v)) ? Number(v).toFixed(d) : "—";
-  const T_total = (results.T1 ?? 0) + (results.T2 ?? 0) + (results.T3 ?? 0);
+
+  // T_total pre-computed by backend — read directly
+  const T_total_kN = results.T_total != null ? results.T_total / 1000 : null;
 
   return (
     <div style={{ paddingBottom: 16 }}>
       <SectionLabel>Input Parameters</SectionLabel>
-      <DataRow label="Q required"         value={`${inputs.Q_req} t/h`} />
-      <DataRow label="H lift"             value={`${inputs.H_m} m`} />
-      <DataRow label="D head pulley"      value={`${inputs.D_mm} mm`} />
-      <DataRow label="D boot pulley"      value={`${inputs.boot_pulley_D_mm ?? 300} mm`} />
-      <DataRow label="n head shaft"       value={`${inputs.n_rpm} rpm`} />
-      <DataRow label="Fill factor"        value={`${inputs.fill_pct} %`} />
-      <DataRow label="Bucket gap"         value={`${inputs.bucket_gap} mm`} />
-      <DataRow label="μ friction"         value={fmt(inputs.mu, 2)} />
-      <DataRow label="Wrap angle"         value={`${inputs.wrap_deg} °`} />
-      <DataRow label="K takeup"           value={fmt(inputs.K_takeup, 2)} />
-      <DataRow label="Leq (0=auto)"       value={`${inputs.Leq}`} />
-      <DataRow label="Ceff (0=auto)"      value={`${inputs.Ceff}`} />
-      <DataRow label="Service factor"     value={fmt(inputs.sf, 2)} />
+      <DataRow label="Q required"        value={`${inputs.Q_req} t/h`} />
+      <DataRow label="H lift"            value={`${inputs.H_m} m`} />
+      <DataRow label="D head pulley"     value={`${inputs.D_mm} mm`} />
+      <DataRow label="D boot pulley"     value={`${inputs.boot_pulley_D_mm ?? 300} mm`} />
+      <DataRow label="n head shaft"      value={`${inputs.n_rpm} rpm`} />
+      <DataRow label="Fill factor"       value={`${inputs.fill_pct} %`} />
+      <DataRow label="Bucket gap"        value={`${inputs.bucket_gap} mm`} />
+      <DataRow label="μ friction"        value={fmt(inputs.mu, 2)} />
+      <DataRow label="Wrap angle"        value={`${inputs.wrap_deg} °`} />
+      <DataRow label="K takeup"          value={fmt(inputs.K_takeup, 2)} />
+      <DataRow label="Leq (0=auto)"      value={`${inputs.Leq}`} />
+      <DataRow label="Ceff (0=auto)"     value={`${inputs.Ceff}`} />
+      <DataRow label="Service factor"    value={fmt(inputs.sf, 2)} />
 
       <SectionLabel>Capacity  [CEMA 375 §4]</SectionLabel>
-      <DataRow label="Belt speed v"       value={`${fmt(results.v, 4)} m/s`} />
-      <DataRow label="Bucket spacing s"   value={`${fmt(results.spacing != null ? results.spacing * 1000 : null, 1)} mm`} />
-      <DataRow label="Bucket volume Vb"   value={`${results.bucket?.V} L`} />
-      <DataRow label="Fill η"             value={`${(inputs.fill_pct / 100).toFixed(2)}`} />
-      <DataRow label="Bulk density ρ"     value={`${results.rho} kg/m³`} />
-      <DataRow label="Capacity Q"         value={`${fmt(results.Q, 2)} t/h`}
-        color="var(--primary)" />
+      <DataRow label="Belt speed v"      value={`${fmt(results.v, 4)} m/s`} />
+      <DataRow label="Bucket spacing s"  value={`${fmt(results.spacing != null ? results.spacing * 1000 : null, 1)} mm`} />
+      <DataRow label="Bucket volume Vb"  value={`${results.bucket?.V} L`} />
+      <DataRow label="Fill η"            value={fmt(inputs.fill_pct / 100, 2)} />
+      <DataRow label="Bulk density ρ"    value={`${results.rho} kg/m³`} />
+      <DataRow label="Capacity Q"        value={`${fmt(results.Q, 2)} t/h`} color="var(--primary)" />
 
       <SectionLabel>Power  [CEMA 375 §4 LEQ]</SectionLabel>
-      <DataRow label="Leq used"           value={results.Leq} />
-      <DataRow label="Ceff used"          value={results.Ceff} />
-      <DataRow label="P_lift"             value={`${fmt(results.P_lift, 3)} kW`} />
-      <DataRow label="P_digging"          value={`${fmt(results.P_digging, 3)} kW`} />
-      <DataRow label="P_drive_loss"       value={`${fmt(results.P_drive_loss, 3)} kW`} />
-      <DataRow label="P_total"            value={`${fmt(results.P_total, 3)} kW`}
-        color="var(--warning)" />
-      <DataRow label="Motor selected"     value={`${results.motor_kw} kW`}
-        color="var(--primary)" />
+      <DataRow label="Leq used"          value={results.Leq} />
+      <DataRow label="Ceff used"         value={results.Ceff} />
+      <DataRow label="P_lift"            value={`${fmt(results.P_lift, 3)} kW`} />
+      <DataRow label="P_digging"         value={`${fmt(results.P_digging, 3)} kW`} />
+      <DataRow label="P_drive_loss"      value={`${fmt(results.P_drive_loss, 3)} kW`} />
+      <DataRow label="P_total"           value={`${fmt(results.P_total, 3)} kW`} color="var(--warning)" />
+      <DataRow label="Motor selected"    value={`${results.motor_kw} kW`} color="var(--primary)" />
 
       <SectionLabel>Belt Tensions  [CEMA 375 §4.07–4.09]</SectionLabel>
-      <DataRow label="T1 (material)"      value={`${fmt(results.T1 != null ? results.T1/1000 : null, 3)} kN`} />
-      <DataRow label="T2 (belt+bucket)"   value={`${fmt(results.T2 != null ? results.T2/1000 : null, 3)} kN`} />
-      <DataRow label="T3 (slack side)"    value={`${fmt(results.T3 != null ? results.T3/1000 : null, 3)} kN`} />
-      <DataRow label="F_eff"              value={`${fmt(results.F_eff != null ? results.F_eff/1000 : null, 3)} kN`} />
-      <DataRow label="R headshaft"        value={`${(T_total/1000).toFixed(3)} kN`} />
+      <DataRow label="T1 (material)"     value={`${fmt(results.T1 != null ? results.T1/1000 : null, 3)} kN`} />
+      <DataRow label="T2 (belt+bucket)"  value={`${fmt(results.T2 != null ? results.T2/1000 : null, 3)} kN`} />
+      <DataRow label="T3 (slack / take-up)" value={`${fmt(results.T3 != null ? results.T3/1000 : null, 3)} kN`} />
+      <DataRow label="F_eff  (= T1 + T2)"  value={`${fmt(results.F_eff != null ? results.F_eff/1000 : null, 3)} kN`} />
+      <DataRow label="Belt tight side  (T3 + F_eff)"
+        value={`${fmt((results.T3 != null && results.F_eff != null) ? (results.T3 + results.F_eff)/1000 : null, 3)} kN`}
+        color="var(--primary)" />
+      <DataRow label="R headshaft"       value={T_total_kN != null ? `${T_total_kN.toFixed(3)} kN` : "—"} />
 
       <SectionLabel>Shaft Design  [CEMA 375 §4 / ASME DE-Goodman]</SectionLabel>
-      <DataRow label="Torque T"           value={`${fmt(results.T_Nm != null ? results.T_Nm/1000 : null, 3)} kNm`} />
-      <DataRow label="d stress (ASME)"    value={`${fmt(results.d_stress_mm, 1)} mm`} />
-      <DataRow label="d deflect (0.0015)" value={`${fmt(results.d_deflect_mm, 1)} mm`} />
-      <DataRow label="d governing"        value={`${fmt(results.d_mm, 1)} mm`}
-        color="var(--primary)" />
-      <DataRow label="Governed by"        value={results.governed_by ?? "—"} mono={false} />
+      <DataRow label="Material grade"    value={results.shaft_material_name ?? "—"} mono={false} />
+      <DataRow label="Section"           value={results.shaft_section ?? "—"} mono={false} />
+      <DataRow label="Hub connection"    value={results.shaft_hub_connection ?? "—"} mono={false} />
+      <DataRow label="Allowable shear"
+        value={results.shaft_tau_allow_MPa != null ? `${results.shaft_tau_allow_MPa} MPa` : "—"} />
+      <DataRow label="Torque T"          value={`${fmt(results.T_Nm != null ? results.T_Nm/1000 : null, 3)} kNm`} />
+      <DataRow label="d stress (ASME)"   value={`${fmt(results.d_stress_mm, 1)} mm`} />
+      <DataRow label="d deflect"         value={`${fmt(results.d_deflect_mm, 1)} mm`} />
+      <DataRow label="d governing"       value={`${fmt(results.d_mm, 1)} mm`} color="var(--primary)" />
+      <DataRow label="Governed by"       value={results.governed_by ?? "—"} mono={false} />
 
       <SectionLabel>Discharge Physics  [CEMA 375 §3]</SectionLabel>
       <DataRow label="Centrifugal ratio CR" value={fmt(results.cr, 4)} />
-      <DataRow label="Release angle θ"    value={`${fmt(results.theta_rel, 2)} °`} />
-      <DataRow label="Belt ply (est.)"    value={results.belt_ply} />
+      <DataRow label="Release angle θ"   value={`${fmt(results.theta_rel, 2)} °`} />
+      <DataRow label="Belt ply"          value={results.belt_ply} />
+      <DataRow label="Belt length"
+        value={results.belt_length_total_m != null ? `${results.belt_length_total_m} m` : "—"} />
+      <DataRow label="Bucket count"
+        value={results.n_buckets != null ? `${results.n_buckets} off` : "—"} />
 
       <SectionLabel>Bearing  [ISO 281]</SectionLabel>
-      <DataRow label="Radial load P"      value={`${fmt(results.R_headshaft != null ? results.R_headshaft/1000 : null, 2)} kN`} />
-      <DataRow label="C basic (90mm ⌀)"  value="355 kN" />
+      <DataRow label="Radial load P"
+        value={`${fmt(results.R_headshaft != null ? results.R_headshaft/1000 : null, 2)} kN`} />
       <DataRow label="L10"
         value={results.L10 > 9999
           ? `${(results.L10/1000).toFixed(1)}k h`
           : `${fmt(results.L10, 0)} h`}
-        color={results.L10 >= 40000 ? "var(--success)" : "var(--warning)"} />
+        color={results.l10_ok ? "var(--success)" : "var(--warning)"} />
 
       <SectionLabel>Material  [ANSI/CEMA 550-2020]</SectionLabel>
-      <DataRow label="CEMA code"          value={results.mat?.cema_code ?? "—"} />
-      <DataRow label="Name"               value={results.mat?.name ?? "—"} mono={false} />
-      <DataRow label="ρ loose"            value={`${results.mat?.rho_loose} kg/m³`} />
-      <DataRow label="ρ vibrated"         value={`${results.mat?.rho_vib} kg/m³`} />
-      <DataRow label="Angle of repose"    value={`${results.mat?.angle_repose} °`} />
-      <DataRow label="Abrasive code"      value={`${results.mat?.abr_code} / 7`} />
-      <DataRow label="Flowability"        value={`${results.mat?.flowability} / 4`} />
-      <DataRow label="Km factor"          value={results.mat?.Km} />
+      <DataRow label="CEMA code"         value={results.mat?.cema_code ?? "—"} />
+      <DataRow label="Name"              value={results.mat?.name ?? "—"} mono={false} />
+      <DataRow label="ρ loose"           value={`${results.mat?.rho_loose} kg/m³`} />
+      <DataRow label="ρ vibrated"        value={`${results.mat?.rho_vib} kg/m³`} />
+      <DataRow label="Angle of repose"   value={`${results.mat?.angle_repose} °`} />
+      <DataRow label="Abrasive code"     value={`${results.mat?.abr_code} / 7`} />
+      <DataRow label="Flowability"       value={`${results.mat?.flowability} / 4`} />
+      <DataRow label="Km factor"         value={results.mat?.Km} />
       {results.mat?.hazard_codes?.length > 0 && (
         <DataRow label="Hazard codes"
           value={results.mat.hazard_codes.join(", ")}

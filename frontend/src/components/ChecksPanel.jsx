@@ -1,5 +1,6 @@
 // ChecksPanel.jsx — engineering checks, warnings, and design summary
-// Field names match your backend's solve_elevator() return shape.
+// Pure display component — all data from results dict, no recomputation.
+// Field names match backend's solve_elevator() return shape.
 const C = {
   muted: "var(--text3)", hi: "var(--surface)", text: "var(--text)",
 };
@@ -10,41 +11,23 @@ const fmt = (v, dp = 2, fb = "—") =>
 export default function ChecksPanel({ results, inputs }) {
   if (!results || !inputs) return null;
 
-  // ── Field resolution — backend names first, normalised fallbacks ──
   const mat     = results.mat      ?? results.material ?? {};
   const bkt     = results.bucket   ?? {};
   const rho     = results.rho      ?? mat.rho_loose ?? mat.rho ?? inputs.custom_rho ?? "—";
 
-  // Performance
   const Q       = results.Q        ?? results.Q_th        ?? null;
   const v       = results.v        ?? results.v_ms        ?? null;
-
-  // Belt
   const belt_w  = results.belt_w   ?? results.belt_width_mm ?? "—";
-
-  // Power
   const P_lift  = results.P_lift   ?? results.power_P_lift  ?? null;
   const P_total = results.P_total  ?? results.power_P_total ?? null;
-
-  // Motor
   const motor   = results.motor_kw ?? results.motor_kW      ?? "—";
-
-  // Shaft
   const d_mm    = results.d_mm     ?? results.shaft_d_mm    ?? null;
-
-  // Discharge
   const cr      = results.cr       ?? results.centrifugal_ratio ?? null;
   const theta   = results.theta_rel ?? results.release_angle_deg ?? null;
-
-  // Bucket — backend uses id/V, normaliser also adds series/volume_L
   const bktId   = bkt.id          ?? bkt.series    ?? "—";
   const bktV    = bkt.V           ?? bkt.volume_L  ?? "—";
 
-  // Checks — backend uses { type:'ok'|'warn'|'fail'|'info', msg }
-  //          normaliser converts to { status:'pass'|'warn'|'fail', code, msg }
-  //          handle both shapes here
   const checks  = results.checks ?? [];
-
   const getStatus = (c) => c.status ?? (c.type === "ok" ? "pass" : c.type) ?? "info";
   const iconMap   = { pass: "✓", ok: "✓", warn: "⚠", fail: "✗", info: "ℹ" };
   const classMap  = { pass: "w-ok", ok: "w-ok", warn: "w-warn", fail: "w-fail", info: "w-info" };
@@ -62,10 +45,18 @@ export default function ChecksPanel({ results, inputs }) {
     ["Lift Power",         `${fmt(P_lift, 2)} kW`],
     ["Total Power",        `${fmt(P_total, 2)} kW`],
     ["Motor",              `${motor} kW`],
-    ["Tight-side Tension", `${fmt(results.T1 != null ? results.T1 / 1000 : null, 2)} kN`],
+    ["Material Component  T1",  `${fmt(results.T1 != null ? results.T1 / 1000 : null, 2)} kN`],
+    ["Self-Weight Comp.  T2",   `${fmt(results.T2 != null ? results.T2 / 1000 : null, 2)} kN`],
+    ["Take-up / Slack  T3",     `${fmt(results.T3 != null ? results.T3 / 1000 : null, 2)} kN`],
+    ["Belt Tight Side (T3+Feff)", `${fmt((results.T3 != null && results.F_eff != null) ? (results.T3 + results.F_eff) / 1000 : null, 2)} kN`],
     ["Min Shaft Dia.",     `${fmt(d_mm, 1)} mm`],
+    ["Shaft Material",     results.shaft_material_name ?? "—"],
+    ["Shaft Section",      results.shaft_section ?? "—"],
+    ["Hub Connection",     results.shaft_hub_connection ?? "—"],
     ["Centrifugal Ratio",  fmt(cr, 3)],
     ["Discharge Angle",    `${fmt(theta, 1)}° from vertical`],
+    ["Belt Length",        results.belt_length_total_m != null ? `${results.belt_length_total_m} m` : "—"],
+    ["Bucket Count",       results.n_buckets != null ? `${results.n_buckets} off` : "—"],
   ];
 
   return (

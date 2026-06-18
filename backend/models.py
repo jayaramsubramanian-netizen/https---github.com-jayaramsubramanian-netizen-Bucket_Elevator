@@ -94,6 +94,17 @@ class BucketElevatorInput(BaseModel):
     wrap_deg:       float = Field(0,     ge=0,    le=240,   description="Belt wrap angle at drive pulley (°). 0 = auto-calculate from pulley geometry.")
     snub_pulley:    bool  = Field(False, description="Add snub pulley on return side (+30° wrap)")
     chute_liner_id: str   = Field("auto", description="Discharge chute liner selection. 'auto' = CEMA wear index selection")
+    # v1.9.9 — Chute position inputs. Previously the stream_chute check could
+    # warn "review chute position" but the UI had no way to change it.
+    # chute_x_offset_m: how far the chute inlet is set back from the casing
+    #   inner wall (positive = further inward toward centreline). Default 0
+    #   = chute inlet flush with casing wall minus 10mm clearance.
+    # chute_opening_height_m: vertical extent of the chute opening. Default 0
+    #   = auto (pulley D / 500, i.e. approximately 2 × pulley radius in mm).
+    chute_x_offset_m:        float = Field(0.0, ge=0.0, le=0.500,
+        description="Chute inlet offset from casing wall toward centreline [m]. 0 = auto (flush with wall - 10mm)")
+    chute_opening_height_m:  float = Field(0.0, ge=0.0, le=1.0,
+        description="Chute opening vertical height [m]. 0 = auto (derived from head pulley diameter)")
     sf:             float = Field(1.25,  ge=1.0,  le=2.0,   description="Motor service factor")
 
     # ── v1.3.0 — Structural module inputs ──────────────────────────────────────

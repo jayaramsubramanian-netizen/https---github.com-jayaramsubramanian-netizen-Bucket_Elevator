@@ -80,11 +80,22 @@ function RecommendationCard({ rec }) {
   );
 }
 
-export default function DesignRecommendationsPanel({ recommendations }) {
+export default function DesignRecommendationsPanel({ recommendations, checks }) {
   const recs = recommendations ?? [];
 
-  // ── Empty state — positive signal ─────────────────────────────────────────
-  if (recs.length === 0) {
+  // ── Empty state — only show "passes all checks" when design_recommendations
+  // is empty AND results.checks has no fail items.
+  // Previously this banner showed whenever design_recommendations was empty,
+  // which is wrong: design_recommendations only covers structural checks
+  // (shaft, bearing, casing panel). Other check categories (casing clearance,
+  // stream interception, chain SF, etc.) live in results.checks and can still
+  // fail even when design_recommendations is []. The banner must not appear
+  // while any check of any kind is failing.
+  const allChecks   = checks ?? [];
+  const anyFail     = allChecks.some(c => (c.type ?? c.status) === "fail");
+  const trulyClean  = recs.length === 0 && !anyFail;
+
+  if (trulyClean) {
     return (
       <div style={{
         margin: "10px 12px",

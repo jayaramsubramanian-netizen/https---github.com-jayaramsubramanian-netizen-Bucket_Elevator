@@ -558,6 +558,7 @@ export default function BucketElevatorPage({ onResultsChange }) {
               <RootCausePanel results={results} setField={setField} />
               <DesignRecommendationsPanel
                 recommendations={results?.design_recommendations}
+                checks={results?.checks}
               />
               <ChecksPanel results={results} inputs={inputs} />
             </div>
