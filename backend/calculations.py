@@ -57,12 +57,14 @@ try:
         CEMA_MAX_SHAFT_SLOPE, SHAFT_Su_PA, SHAFT_Ka, SHAFT_Kc, SHAFT_Kd,
         SHAFT_E_PA, LEQ_DEFAULT, CEFF_BELT, BELT_WEIGHT_DEFAULT,
         DEFAULT_STARTUP_FACTOR_BELT, DEFAULT_STARTUP_FACTOR_CHAIN,
+        SHAFT_MATERIALS,
     )
 except ImportError:
     from constants import (
         CEMA_MAX_SHAFT_SLOPE, SHAFT_Su_PA, SHAFT_Ka, SHAFT_Kc, SHAFT_Kd,
         SHAFT_E_PA, LEQ_DEFAULT, CEFF_BELT, BELT_WEIGHT_DEFAULT,
         DEFAULT_STARTUP_FACTOR_BELT, DEFAULT_STARTUP_FACTOR_CHAIN,
+        SHAFT_MATERIALS,
     )
 try:
     from .physics import DischargePhysics
@@ -945,6 +947,79 @@ def select_belt_width(bucket_w_mm: float) -> int:
 # They never change the core calculation — engineers can accept or override.
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def bucket_implied_thickness_mm(bucket: dict, density_kgm3: float = 7850.0) -> float:
+    """
+    v1.9.7 — Back-calculate the plate thickness implied by a catalogue
+    bucket's mass entry.
+
+    BUCKET_SERIES stores a single fixed bucket_mass_kg per entry with no
+    explicit gauge/thickness field. Auditing the catalogue against a rough
+    developed-plate-area model shows each STYLE clusters tightly around its
+    own standard gauge (confirmed empirically: AA ~4.5mm, AC ~6.4mm,
+    C ~4.0mm, MF ~4.3mm, HF ~4.7mm, SC ~5.7mm — each within +/-0.4mm of its
+    style average across all catalogue sizes). This means the existing
+    catalogue mass values ARE consistent with a per-style standard gauge,
+    even though that gauge was never stored explicitly.
+
+    Developed area model (simplified open-top trough):
+        A_dev = W*H + W*P + 2*(H*P)   [mm^2]
+              = bottom + back-plate + 2 end-plates
+        (Front opening, lip, and stiffening ribs are not modelled — this is
+        a first-order approximation adequate for relative thickness scaling,
+        not for an absolute weight/BOM figure independent of catalogue data.)
+
+    Returns the implied thickness in mm. Used as the REFERENCE point for
+    bucket_thickness_override_mm: mass scales linearly with the ratio of
+    override thickness to this implied reference thickness.
+    """
+    W   = float(bucket.get("W", 200))
+    H   = float(bucket.get("H", bucket.get("depth_mm", 150)))
+    P   = float(bucket.get("P", 150))
+    m   = float(bucket.get("bucket_mass_kg", bucket.get("V", 5.0) * 1.5))
+    A_dev_mm2 = W * H + W * P + 2.0 * (H * P)
+    A_dev_m2  = max(A_dev_mm2 / 1e6, 0.001)
+    t_mm = (m / density_kgm3) / A_dev_m2 * 1000.0
+    return max(t_mm, 1.0)   # floor to avoid div-by-zero downstream
+
+
+def bucket_mass_for_thickness(
+    bucket: dict, thickness_override_mm: float, density_kgm3: float = 7850.0,
+) -> dict:
+    """
+    v1.9.7 — Scale catalogue bucket mass for a specified plate thickness.
+
+    mass_scaled = mass_catalogue x (thickness_override / thickness_implied)
+
+    This is a linear scaling, not a re-derivation from first principles —
+    it preserves whatever the catalogue's real-world weldment/lip/rib detail
+    contributes to mass (which the simplified developed-area model in
+    bucket_implied_thickness_mm() cannot capture on its own), while still
+    giving a physically reasonable mass change for a thicker or thinner
+    plate spec.
+
+    Returns
+    -------
+    {
+        "t_implied_mm":   float,  reference gauge backed out of catalogue mass
+        "t_override_mm":  float,  requested gauge
+        "mass_catalogue_kg": float,
+        "mass_scaled_kg":    float,
+        "scale_ratio":       float,
+    }
+    """
+    t_implied = bucket_implied_thickness_mm(bucket, density_kgm3)
+    m_cat     = float(bucket.get("bucket_mass_kg", bucket.get("V", 5.0) * 1.5))
+    ratio     = max(thickness_override_mm, 0.5) / t_implied
+    m_scaled  = m_cat * ratio
+    return {
+        "t_implied_mm":      round(t_implied, 2),
+        "t_override_mm":     round(thickness_override_mm, 2),
+        "mass_catalogue_kg": round(m_cat, 2),
+        "mass_scaled_kg":    round(m_scaled, 2),
+        "scale_ratio":       round(ratio, 3),
+    }
+
+
 def bucket_recommendation(material: dict, Q_req: float = 0.0) -> dict:
     """
     3.7 — Material → Bucket Style Recommendation Engine.
@@ -1746,7 +1821,22 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     # v1.2.1 FIX: mu and wrap_deg now passed through to Euler check
     _bkt_mat_id = getattr(inp, "bucket_material", "steel") or "steel"
     _bm_prop    = BUCKET_MATERIAL_PROPS.get(_bkt_mat_id, BUCKET_MATERIAL_PROPS["steel"])
-    bw_kg       = bucket.get("bucket_mass_kg", bucket["V"] * 1.5) * _bm_prop["density_factor"]
+    _bkt_mass_catalogue = bucket.get("bucket_mass_kg", bucket["V"] * 1.5)
+
+    # v1.9.7 — Bucket thickness override (independent of material density
+    # factor above). Thickness changes the GEOMETRY (more/less steel by
+    # volume); material density_factor changes the MATERIAL (kg per unit
+    # volume relative to steel, e.g. HDPE much lighter). The two compose
+    # multiplicatively rather than one overriding the other.
+    _bkt_t_override = getattr(inp, "bucket_thickness_override_mm", 0) or 0
+    if _bkt_t_override > 0:
+        bucket_thickness_calc = bucket_mass_for_thickness(bucket, _bkt_t_override)
+        _bkt_mass_thickness_adjusted = bucket_thickness_calc["mass_scaled_kg"]
+    else:
+        bucket_thickness_calc = None
+        _bkt_mass_thickness_adjusted = _bkt_mass_catalogue
+
+    bw_kg = _bkt_mass_thickness_adjusted * _bm_prop["density_factor"]
 
     # ── Belt width / casing width ─────────────────────────────────────────────
     _bw_override = getattr(inp, "belt_width_override_mm", 0) or 0
@@ -1846,8 +1936,18 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     span_m, A_m, B_m = _shaft_geometry(BW_mm)
     M_Nm = _bending_moment(R_head, A_m, B_m)
 
+    # v1.9.5 — Shaft material grade selection.
+    # SHAFT_MATERIALS in constants.py was defined but never wired anywhere;
+    # this is the first consumer. Bucket elevator head shafts always carry
+    # a keyway, so tau_allow_key_Pa is the correct allowable to use (per the
+    # constants.py design note — using the no-keyway value would overstate
+    # strength and undersize the shaft).
+    _shaft_mat_id  = getattr(inp, "shaft_material", "A36") or "A36"
+    _shaft_mat     = SHAFT_MATERIALS.get(_shaft_mat_id, SHAFT_MATERIALS["A36"])
+    _tau_allow_Pa  = _shaft_mat["tau_allow_key_Pa"]
+
     gov = StructuralStressEngine.shaft_diameter_governing(
-        T_Nm, M_Nm, R_head, A_m, B_m
+        M_Nm, T_Nm, R_head, A_m, B_m, allowable=_tau_allow_Pa
     )
     d_mm_calc    = gov["d_governing_mm"]
     d_stress_mm  = gov["d_stress_mm"]
@@ -1900,11 +2000,25 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     )
 
     # ── Pulley shell thickness (v1.9.0 — was written but never wired) ────────
+    # v1.9.6 — pulley_shell_t_override_mm added, following the same pattern
+    # as casing_t_override_mm: compute the calculated minimum, then if the
+    # engineer specifies a preferred plate thickness, report PASS/FAIL
+    # against that minimum rather than silently substituting it.
     pulley_shell = StructuralStressEngine.pulley_shell_thickness(
         diameter_m     = inp.D_mm / 1000.0,
         T_total_N      = T1 + T2 + T3,
         face_width_mm  = BW_mm + 50.0,   # crown/edge allowance, matches end_disc face_width_m
     )
+    _shell_t_override = getattr(inp, "pulley_shell_t_override_mm", 0) or 0
+    pulley_shell["t_calc_mm"] = pulley_shell["t_governing_mm"]
+    if _shell_t_override > 0:
+        pulley_shell["t_use_mm"]         = round(float(_shell_t_override), 1)
+        pulley_shell["override_applied"] = True
+        pulley_shell["override_pass"]    = _shell_t_override >= pulley_shell["t_governing_mm"]
+    else:
+        pulley_shell["t_use_mm"]         = pulley_shell["t_governing_mm"]
+        pulley_shell["override_applied"] = False
+        pulley_shell["override_pass"]    = True
 
     # ── Head shaft critical speed (v1.9.0 — new) ──────────────────────────────
     critical_speed = StructuralStressEngine.head_shaft_critical_speed(
@@ -2323,6 +2437,9 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         pickup_eff       = pickup_eff,
         startup_dyn      = startup_dyn,
         shock_check      = shock_check,
+        shaft_material   = _shaft_mat_id,
+        shaft_tau_allow_MPa = round(_tau_allow_Pa / 1e6, 1),
+        bucket_thickness = bucket_thickness_calc,
     )
 
     # ── Design recommendations ────────────────────────────────────────────────
@@ -2441,9 +2558,13 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "d_stress_mm": round(d_stress_mm, 1), "d_deflect_mm": round(d_deflect_mm, 1),
         "governed_by": governed_by, "shaft_span_mm": round(span_m * 1000, 0),
         "shaft_A_mm": round(A_m * 1000, 0), "shaft_B_mm": round(B_m * 1000, 0),
+        "shaft_material":      _shaft_mat_id,                          # v1.9.5
+        "shaft_material_name": _shaft_mat.get("name", _shaft_mat_id),  # v1.9.5
+        "shaft_tau_allow_MPa": round(_tau_allow_Pa / 1e6, 1),           # v1.9.5
         # Belt & buckets
         "belt_ply": belt_ply, "belt_w": BW_mm,
         "bucket_mass_kg": round(bw_kg, 2),
+        "bucket_thickness": bucket_thickness_calc,   # v1.9.7 — None if no override
         # Discharge — stream envelope (v1.4.0 replaces single trajectory)
         "cr": round(cr, 4), "theta_rel": round(theta_rel, 2),
         "discharge_type":   "continuous" if is_continuous else "centrifugal",
@@ -2573,6 +2694,9 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   pickup_eff:       "dict | None" = None,
                   startup_dyn:      "dict | None" = None,
                   shock_check:      "dict | None" = None,
+                  shaft_material:   "str | None" = None,
+                  shaft_tau_allow_MPa: "float | None" = None,
+                  bucket_thickness: "dict | None" = None,
                   **kwargs,                         # absorb future additions
                   ) -> list:
     checks = []
@@ -2731,6 +2855,29 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             checks.append(info(f"Bucket note: {_note} [CEMA 375 §6]"))
     except Exception:
         pass   # never block calculation if recommendation engine fails
+
+    # 5b2 — Bucket plate thickness override (v1.9.7)
+    if bucket_thickness:
+        _t_imp = bucket_thickness.get("t_implied_mm", 0)
+        _t_ovr = bucket_thickness.get("t_override_mm", 0)
+        _ratio = bucket_thickness.get("scale_ratio", 1.0)
+        if _ratio < 0.70:
+            checks.append(warn(
+                f"Bucket thickness {_t_ovr:.1f}mm vs catalogue standard "
+                f"{_t_imp:.1f}mm (ratio {_ratio:.2f}) — significantly thinner than "
+                f"standard gauge. Verify structural adequacy independently; not "
+                f"validated by bolt fatigue or casing checks [CEMA 375 §6]"))
+        elif _ratio > 1.5:
+            checks.append(info(
+                f"Bucket thickness {_t_ovr:.1f}mm vs catalogue standard "
+                f"{_t_imp:.1f}mm (ratio {_ratio:.2f}) — heavier gauge increases "
+                f"dead load on belt/shaft/bearings; mass scaled to "
+                f"{bucket_thickness.get('mass_scaled_kg','?')}kg per bucket "
+                f"[CEMA 375 §6]"))
+        else:
+            checks.append(ok(
+                f"Bucket thickness {_t_ovr:.1f}mm (catalogue standard "
+                f"{_t_imp:.1f}mm, ratio {_ratio:.2f}) [CEMA 375 §6]"))
 
     # 5c — Bucket spacing check
     # Derives spacing in-function to avoid propagating fill_eff as extra kwarg.
@@ -2925,13 +3072,33 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         f"Shaft governed by {governed_by}: {d_mm:.1f} mm "
         f"(stress {d_stress_mm:.1f} mm, deflection {d_deflect_mm:.1f} mm) [CEMA 375 §4]"))
 
-    # 7b — Pulley shell thickness (v1.9.0)
+    # 7a — Shaft material grade (v1.9.5)
+    if shaft_material and shaft_tau_allow_MPa:
+        checks.append(info(
+            f"Shaft material: {shaft_material} (τ_allow={shaft_tau_allow_MPa:.0f} MPa, "
+            f"keyed shaft basis per ASME B17.1). Higher grades (1045_CD, 4140_QT) "
+            f"permit a smaller diameter for the same load [CEMA 375 §4]"))
+
+    # 7b — Pulley shell thickness (v1.9.0, override support v1.9.6)
     if pulley_shell:
         t_gov = pulley_shell.get("t_governing_mm", 0)
         gov_by_shell = pulley_shell.get("governed_by", "CEMA_minimum")
-        checks.append(info(
-            f"Pulley shell min t={t_gov:.1f}mm (governed by {gov_by_shell.replace('_',' ')}) "
-            f"[CEMA Pulley Standard]"))
+        if pulley_shell.get("override_applied"):
+            t_use = pulley_shell.get("t_use_mm", t_gov)
+            if pulley_shell.get("override_pass"):
+                checks.append(ok(
+                    f"Pulley shell {t_use:.1f}mm (specified) ≥ calculated minimum "
+                    f"{t_gov:.1f}mm (governed by {gov_by_shell.replace('_',' ')}) "
+                    f"[CEMA Pulley Standard]"))
+            else:
+                checks.append(fail(
+                    f"Pulley shell {t_use:.1f}mm (specified) < calculated minimum "
+                    f"{t_gov:.1f}mm (governed by {gov_by_shell.replace('_',' ')}). "
+                    f"Increase plate thickness to ≥ {t_gov:.1f}mm [CEMA Pulley Standard]"))
+        else:
+            checks.append(info(
+                f"Pulley shell min t={t_gov:.1f}mm (governed by {gov_by_shell.replace('_',' ')}) "
+                f"[CEMA Pulley Standard]"))
 
     # 7c — Head shaft critical speed (v1.9.0)
     if critical_speed:

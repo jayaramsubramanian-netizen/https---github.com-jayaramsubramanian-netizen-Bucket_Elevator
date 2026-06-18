@@ -63,6 +63,22 @@ class BucketElevatorInput(BaseModel):
     boot_pulley_same_as_head: bool = Field(False, description="Lock boot pulley diameter to match head pulley")
 
     # Bucket
+    # Bucket
+    bucket_thickness_override_mm: float = Field(
+        0.0, ge=0.0, le=20.0,
+        description=(
+            "Bucket plate thickness override [mm]. "
+            "0 = use catalogue standard gauge for the selected bucket series "
+            "(varies by style: AA ~4.5mm, AC ~6.4mm, HF ~4.7mm, SC ~5.7mm). "
+            "Set to a preferred plate gauge — bucket mass is scaled linearly "
+            "from the catalogue reference, which adjusts T2, headshaft load, "
+            "bearing load, and startup inertia accordingly. Use a heavier "
+            "gauge for added wear allowance; a lighter gauge reduces dead "
+            "load but is not validated against bucket structural adequacy "
+            "(see bucket_bolt_fatigue() and casing checks for load-path limits)."
+        ),
+    )
+
     fill_pct:       float = Field(75,    ge=30,   le=100,   description="Bucket fill factor (%)")
     bucket_gap:     float = Field(25,    ge=0,    le=600,   description="Extra gap added to bucket projection for spacing (mm)")
     auto_bucket:    bool  = Field(True,                      description="Auto-select bucket series from required capacity")
@@ -152,6 +168,21 @@ class BucketElevatorInput(BaseModel):
     )
 
     # Shaft
+    shaft_material: Literal["A36", "1045_HR", "1045_CD", "4140_QT"] = Field(
+        "A36",
+        description=(
+            "Head shaft material grade — drives allowable shear stress for the "
+            "torsion/bending sizing calculation (ASME B17.1 keyed-shaft basis). "
+            "A36: mild steel, default, most bucket elevators (τ_allow=42MPa); "
+            "1045_HR: hot-rolled medium carbon, step-up for higher-capacity or "
+            "impact service (τ_allow=52MPa); "
+            "1045_CD: cold-drawn, precision-machined shafts (τ_allow=70MPa); "
+            "4140_QT: quenched & tempered alloy steel, heavy-duty/high-impact/"
+            "abrasive service (τ_allow=110MPa). Higher grades allow a smaller "
+            "shaft diameter for the same load, at higher material cost."
+        ),
+    )
+
     shaft_d_override_mm: float = Field(
         0.0, ge=0.0, le=500.0,
         description=(
@@ -180,6 +211,19 @@ class BucketElevatorInput(BaseModel):
             "0 = auto-calculate from panel deflection analysis. "
             "Set to a preferred standard plate thickness (e.g. 3, 4, 5, 6, 8) — "
             "solver re-checks deflection with specified thickness."
+        ),
+    )
+
+    # Pulley shell thickness
+    pulley_shell_t_override_mm: float = Field(
+        0.0, ge=0.0, le=50.0,
+        description=(
+            "Pulley shell plate thickness override [mm]. "
+            "0 = auto-calculate from CEMA Pulley Standard minimum and belt-"
+            "pressure hoop stress criteria (whichever governs). "
+            "Set to a preferred standard plate thickness (e.g. 6, 8, 10, 12) — "
+            "solver reports PASS/FAIL against the calculated minimum required "
+            "for the actual belt tension and face width."
         ),
     )
 

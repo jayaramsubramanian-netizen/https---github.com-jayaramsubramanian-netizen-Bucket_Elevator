@@ -440,6 +440,14 @@ function normaliseResult(raw) {
     startup_dynamic: raw.startup_dynamic ?? null,
     shock_check:     raw.shock_check     ?? null,
 
+    // v1.9.5 — Shaft material grade selection
+    shaft_material:      raw.shaft_material      ?? null,
+    shaft_material_name: raw.shaft_material_name ?? null,
+    shaft_tau_allow_MPa: raw.shaft_tau_allow_MPa  ?? null,
+
+    // v1.9.7 — Bucket plate thickness override
+    bucket_thickness: raw.bucket_thickness ?? null,
+
     checks,
     status,
   };
