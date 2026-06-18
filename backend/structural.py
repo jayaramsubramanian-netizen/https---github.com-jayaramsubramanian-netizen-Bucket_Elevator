@@ -308,6 +308,103 @@ class StructuralStressEngine:
             "governed_by":    "stress" if d_s >= d_d else "deflection (CEMA 0.0015 rad)",
         }
 
+    @staticmethod
+    def shaft_diameter_governing_hollow(
+        moment:         float,
+        torque:         float,
+        radial_load_N:  float,
+        bore_ratio:     float = 0.0,
+        overhang_A_m:   float = 0.080,
+        span_B_m:       float = 0.400,
+        allowable:      Optional[float] = None,
+    ) -> dict:
+        """
+        v1.9.8 — Hollow-shaft equivalent of shaft_diameter_governing().
+
+        bore_ratio = 0 reduces exactly to the solid-shaft case (delegates to
+        shaft_diameter_governing() directly) — this lets the same call site
+        handle both configurations with one parameter.
+
+        For a hollow section with bore ratio k = d_i / d_o, both governing
+        formulas substitute the hollow section/polar modulus for the solid
+        one. Because the (1 - k^4) term is a constant once k is fixed, both
+        closed-form solves extend cleanly — no iteration required:
+
+        Stress (torsion + bending combined, ASME-style):
+            Z_hollow = (pi/16) * d_o^3 * (1 - k^4)     [vs pi/16 * d^3 solid]
+            d_o = ( 16*Te / (pi * tau_allow * (1-k^4)) )^(1/3)
+
+        Deflection (CEMA max bushing slope):
+            I_hollow = (pi/64) * d_o^4 * (1 - k^4)     [vs pi/64 * d^4 solid]
+            d_o = [ 64*R*A*(B^2-A^2) / (6*E*B*alpha_max*pi*(1-k^4)) ]^(1/4)
+
+        A hollow shaft of the same OD as an equivalent solid shaft is always
+        WEAKER (less material), so for a given load the solver must report a
+        LARGER outer diameter than the solid case — this is the expected and
+        correct trade a designer makes for weight reduction, not a deficiency.
+
+        Parameters
+        ----------
+        bore_ratio   d_i/d_o, 0 = solid (no hollow penalty), typical hollow
+                     shaft range 0.4-0.7. CEMA does not publish a standard
+                     bore ratio for bucket elevator head shafts — this is an
+                     OEM/customer-specified design choice, not a code value.
+
+        Returns
+        -------
+        Same keys as shaft_diameter_governing(), plus:
+            "bore_ratio":   float
+            "d_inner_mm":   float,  implied bore diameter at the governing OD
+            "mass_saving_pct": float, approx cross-sectional area reduction
+                                vs an equivalent solid shaft at the same OD
+        """
+        k = max(0.0, min(bore_ratio, 0.85))   # cap at 0.85 — thin-wall practicality limit
+        if k <= 0.001:
+            # Degenerates to the solid case — delegate directly, no hollow penalty.
+            solid = StructuralStressEngine.shaft_diameter_governing(
+                moment, torque, radial_load_N, overhang_A_m, span_B_m, allowable
+            )
+            solid["bore_ratio"]      = 0.0
+            solid["d_inner_mm"]      = 0.0
+            solid["mass_saving_pct"] = 0.0
+            return solid
+
+        hollow_factor = 1.0 - k ** 4
+
+        tau = allowable if allowable is not None else _allowable_stress()
+        Te  = StructuralStressEngine.equivalent_torque(moment, torque)
+        d_s = ((16.0 * Te) / (math.pi * tau * hollow_factor)) ** (1.0 / 3.0)
+
+        E         = _shaft_E()
+        alpha_max = _cema_max_slope()
+        R = max(radial_load_N, 1.0)
+        A = max(overhang_A_m, 0.001)
+        B = max(span_B_m, 0.001)
+        numer = 64.0 * R * A * (B ** 2 - A ** 2)
+        denom = 6.0 * E * B * alpha_max * math.pi * hollow_factor
+        d_d = (numer / denom) ** 0.25
+
+        d_g = max(d_s, d_d)
+        d_i_mm = d_g * k * 1000.0
+
+        # Cross-sectional area reduction vs an equivalent SOLID shaft at the
+        # same outer diameter d_g (illustrates the weight-saving trade-off,
+        # not a comparison against the solid-required diameter from above).
+        mass_saving_pct = k ** 2 * 100.0
+
+        return {
+            "d_stress_m":     round(d_s,  5),
+            "d_deflect_m":    round(d_d,  5),
+            "d_governing_m":  round(d_g,  5),
+            "d_stress_mm":    round(d_s  * 1000, 1),
+            "d_deflect_mm":   round(d_d  * 1000, 1),
+            "d_governing_mm": round(d_g  * 1000, 1),
+            "governed_by":    "stress" if d_s >= d_d else "deflection (CEMA 0.0015 rad)",
+            "bore_ratio":      round(k, 3),
+            "d_inner_mm":      round(d_i_mm, 1),
+            "mass_saving_pct": round(mass_saving_pct, 1),
+        }
+
     # ── 3. Shaft — Hub and Keyway ─────────────────────────────────────────────
 
     @staticmethod
@@ -456,6 +553,100 @@ class StructuralStressEngine:
             "bearing_pass":     br_pass,
             "pass":             ok,
             "recommendation":   rec,
+        }
+
+    @staticmethod
+    def weld_throat_sizing(
+        shaft_diameter_m:  float,
+        torque_Nm:         float,
+        radial_load_N:     float = 0.0,
+        weld_allow_pa:     float = 96e6,
+    ) -> dict:
+        """
+        v1.9.8 — Welded-hub alternative to key_stress_check().
+
+        Bucket elevator head shafts are conventionally keyed (the default
+        path, see key_stress_check()). A welded hub is an alternative used
+        when the shop prefers all-welded fabrication over keyway machining,
+        or for low-torque/light-duty designs where a keyway stress
+        concentration is undesirable relative to shaft diameter.
+
+        Models a circumferential fillet weld around the shaft OD, sized for
+        torsion (primary load) with radial/bending load as a secondary
+        check using the standard weld throat shear-stress approach:
+
+            Polar section modulus of a thin circumferential fillet weld,
+            throat thickness t, mean radius r = d/2:
+                J_weld  = 2 * pi * r^3 * t      (thin-ring approximation)
+                tau_T   = T * r / J_weld = T / (2 * pi * r^2 * t)
+
+            Solving for required throat thickness:
+                t_req = T / (2 * pi * r^2 * tau_allow)
+
+        Radial load is checked as a secondary shear-on-throat-area check
+        (conservative — does not combine vectorially with torsional shear,
+        since the controlling location around the weld differs for each):
+                tau_R = radial_load_N / (2 * pi * r * t)
+
+        Default weld_allow_pa = 96 MPa corresponds to E70xx electrode fillet
+        weld allowable shear (AWS D1.1, 0.3 x 70ksi UTS, converted to SI).
+        This is independent of the shaft material grade — weld metal
+        strength governs, not parent metal — so this allowable does NOT
+        change with shaft_material selection the way key_stress_check()'s
+        tau_allow_key_Pa does.
+
+        Parameters
+        ----------
+        shaft_diameter_m  Shaft OD at the weld location [m]
+        torque_Nm         Transmitted torque [N.m]
+        radial_load_N     Radial load at the hub for the secondary check [N]
+        weld_allow_pa     Allowable weld shear stress [Pa], E70xx default
+
+        Returns
+        -------
+        {
+            "t_throat_torsion_mm": float,  required throat from torsion alone
+            "t_throat_radial_mm":  float,  required throat from radial shear alone
+            "t_throat_mm":         float,  governing (larger of the two)
+            "governed_by":         "torsion" | "radial_shear"
+            "tau_torsion_MPa":     float,  actual stress at t_throat_mm
+            "weld_allow_MPa":      float,
+            "recommendation":      str
+        }
+        """
+        r = max(shaft_diameter_m / 2.0, 0.005)
+        T = max(torque_Nm, 0.0)
+        R = max(radial_load_N, 0.0)
+
+        t_torsion = T / (2.0 * math.pi * r ** 2 * weld_allow_pa) if T > 0 else 0.0
+        t_radial  = R / (2.0 * math.pi * r * weld_allow_pa) if R > 0 else 0.0
+
+        if t_torsion >= t_radial:
+            t_gov = t_torsion
+            gov_by = "torsion"
+        else:
+            t_gov = t_radial
+            gov_by = "radial_shear"
+
+        # Practical minimum: a fillet weld throat below ~4mm is rarely
+        # specified on shafts of this size range (fabrication practicality,
+        # not a stress requirement) — floor the recommendation accordingly.
+        t_gov_practical = max(t_gov, 0.004)
+
+        tau_check = T / (2.0 * math.pi * r ** 2 * max(t_gov_practical, 1e-6))
+
+        return {
+            "t_throat_torsion_mm": round(t_torsion * 1000.0, 2),
+            "t_throat_radial_mm":  round(t_radial * 1000.0, 2),
+            "t_throat_mm":         round(t_gov_practical * 1000.0, 2),
+            "governed_by":         gov_by,
+            "tau_torsion_MPa":     round(tau_check / 1e6, 2),
+            "weld_allow_MPa":      round(weld_allow_pa / 1e6, 1),
+            "recommendation": (
+                f"Specify {round(t_gov_practical*1000.0,1)}mm fillet throat, "
+                f"E70xx or equivalent, full 360° around shaft OD. "
+                f"Governed by {gov_by.replace('_',' ')}."
+            ),
         }
 
     @staticmethod
@@ -1514,6 +1705,93 @@ class StructuralStressEngine:
                 "Use recommended spacing (85% of maximum) to allow for "
                 "construction tolerance and combined wind + seismic loading."
             ),
+        }
+
+    @staticmethod
+    def casing_bolt_quantities(
+        height_m:           float,
+        belt_width_mm:      float,
+        plate_thickness_mm: float,
+        n_stiffener_sets:   int = 1,
+        bolt_pitch_mm:      float = 150.0,
+    ) -> dict:
+        """
+        v1.9.9 — Casing assembly bolt count and size.
+
+        Distinct from bucket_bolt_fatigue()'s bolt_spacing_mm, which sizes
+        the bucket-to-belt attachment bolts under cyclic fatigue loading.
+        This sizes the STRUCTURAL ASSEMBLY bolts that join casing panel
+        sections to each other and to the stiffener frame — a dust/wind
+        seal and structural joint, not a fatigue-loaded fastener.
+
+        Bolt size selected by plate thickness (standard shop practice —
+        thin sheet doesn't need or support a large bolt; thick plate
+        warrants a larger one for adequate bearing area):
+            t <= 3mm  -> M8
+            t <= 6mm  -> M10
+            t <= 10mm -> M12
+            t >  10mm -> M16
+
+        Quantity estimated from total panel perimeter (4 vertical seams
+        over the elevator height, approximating a rectangular casing cross
+        section) divided by a standard bolt pitch, PLUS bolts at each
+        stiffener band (panel-to-stiffener fixing, one bolt per
+        panel-width increment at each stiffener elevation).
+
+        This is a first-order fabrication estimate, not a structural
+        connection design — actual bolt pattern depends on the OEM's
+        panel module size and stiffener detail, which varies by shop
+        practice.
+
+        Parameters
+        ----------
+        height_m            Elevator lift height [m]
+        belt_width_mm        Belt width [mm] (casing cross-section driver)
+        plate_thickness_mm   Casing plate thickness [mm] (drives bolt size)
+        n_stiffener_sets     Number of stiffener bands over the height
+        bolt_pitch_mm         Standard bolt spacing along a seam [mm]
+
+        Returns
+        -------
+        {
+            "bolt_size":           str,   e.g. "M10"
+            "n_bolts_seams":       int,   vertical seam bolts
+            "n_bolts_stiffeners":  int,   panel-to-stiffener bolts
+            "n_bolts_total":       int,
+            "seam_length_m":       float,
+        }
+        """
+        t = max(plate_thickness_mm, 1.0)
+        if t <= 3.0:
+            bolt_size = "M8"
+        elif t <= 6.0:
+            bolt_size = "M10"
+        elif t <= 10.0:
+            bolt_size = "M12"
+        else:
+            bolt_size = "M16"
+
+        # 4 vertical seams (approximating a rectangular casing) over the
+        # full lift height, each bolted at bolt_pitch_mm centres.
+        n_seams        = 4
+        seam_length_m  = height_m
+        pitch_m        = max(bolt_pitch_mm, 25.0) / 1000.0
+        n_bolts_seams  = max(4, round(n_seams * seam_length_m / pitch_m))
+
+        # Panel-to-stiffener bolts: roughly 1 bolt per 150mm of girth at
+        # each stiffener elevation (girth approximated from belt width,
+        # consistent with the BOM's casing cross-section assumption).
+        girth_m            = 2.0 * ((belt_width_mm + 120.0) / 1000.0 + 0.20)
+        n_bolts_stiffeners = max(0, round(n_stiffener_sets * girth_m / pitch_m))
+
+        n_bolts_total = n_bolts_seams + n_bolts_stiffeners
+
+        return {
+            "bolt_size":          bolt_size,
+            "n_bolts_seams":      n_bolts_seams,
+            "n_bolts_stiffeners": n_bolts_stiffeners,
+            "n_bolts_total":      n_bolts_total,
+            "seam_length_m":      round(seam_length_m, 2),
         }
 
     # ── 13. Design Recommendation Engine ─────────────────────────────────────

@@ -445,6 +445,14 @@ function normaliseResult(raw) {
     shaft_material_name: raw.shaft_material_name ?? null,
     shaft_tau_allow_MPa: raw.shaft_tau_allow_MPa  ?? null,
 
+    // v1.9.8 — Shaft section (solid/hollow) + hub connection (keyed/welded)
+    weld_check:             raw.weld_check             ?? null,
+    shaft_section:          raw.shaft_section          ?? null,
+    shaft_hub_connection:   raw.shaft_hub_connection   ?? null,
+    shaft_bore_ratio:       raw.shaft_bore_ratio       ?? null,
+    shaft_d_inner_mm:       raw.shaft_d_inner_mm       ?? null,
+    shaft_mass_saving_pct:  raw.shaft_mass_saving_pct  ?? null,
+
     // v1.9.7 — Bucket plate thickness override
     bucket_thickness: raw.bucket_thickness ?? null,
 

@@ -560,21 +560,49 @@ def optimize(req: OptimizerRequest):
 
 # ── Reports ───────────────────────────────────────────────────────────────────
 
+class SignOffPerson(BaseModel):
+    name:        str = ""
+    designation: str = ""
+    date:        str = ""
+
+class SignOff(BaseModel):
+    designed_by: SignOffPerson = SignOffPerson()
+    reviewed_by: SignOffPerson = SignOffPerson()
+    approved_by: SignOffPerson = SignOffPerson()
+
 class ReportRequest(BaseModel):
-    results: dict
-    inputs:  dict
-    project: str | None = ""
-    ref:     str | None = ""
+    results:  dict
+    inputs:   dict
+    project:  str | None = ""
+    ref:      str | None = ""
+    sign_off: Optional[SignOff] = None   # Task 13 — engineering sign-off
 
 
 @v1.post("/bucket-elevator/report")
 def generate_report(data: ReportRequest):
-    """Generate A4 portrait PDF engineering report."""
+    """
+    A4 PDF engineering report with optional engineering sign-off block.
+
+    sign_off body field (optional):
+        {
+            "designed_by":  {"name": "...", "designation": "...", "date": "YYYY-MM-DD"},
+            "reviewed_by":  {"name": "...", "designation": "...", "date": "YYYY-MM-DD"},
+            "approved_by":  {"name": "...", "designation": "...", "date": "YYYY-MM-DD"}
+        }
+    """
     try:
+        sign_off_dict = None
+        if data.sign_off:
+            sign_off_dict = {
+                "designed_by": data.sign_off.designed_by.model_dump(),
+                "reviewed_by": data.sign_off.reviewed_by.model_dump(),
+                "approved_by": data.sign_off.approved_by.model_dump(),
+            }
         pdf = build_report(
             data.results, data.inputs,
             project=data.project or "",
             doc_ref=data.ref or "",
+            sign_off=sign_off_dict,
         )
     except Exception as e:
         _err("REPORT_ERROR", str(e), status=500)

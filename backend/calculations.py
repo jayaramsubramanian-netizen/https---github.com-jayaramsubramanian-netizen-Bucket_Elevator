@@ -1482,6 +1482,60 @@ def pickup_efficiency(
     }
 
 
+def belt_length_and_bucket_count(
+    H_m: float, D_head_mm: float, D_boot_mm: float, spacing_m: float,
+    splice_allowance_m: float = 1.5,
+) -> dict:
+    """
+    v1.9.9 — Proper belt length and bucket count, replacing the rough
+    H_m * 2.15 approximation previously used in bom.py.
+
+    Belt length = straight runs (both legs) + half-wrap around each pulley:
+        L = 2*H + pi*(D_head + D_boot) / 2          [the two half-circumferences
+                                                       sum to one full circumference
+                                                       of the average diameter]
+    Splice allowance covers the overlap/fastening length consumed at the
+    splice point(s) — not part of the working belt length but real material
+    that must be procured.
+
+    Bucket count = belt_length / spacing, rounded to a whole number of
+    buckets. The actual installed spacing will differ very slightly from the
+    nominal spacing to close the loop evenly over a whole number of buckets
+    — this is normal field practice, not an error, and is reported here so
+    the BOM doesn't imply false precision.
+
+    Parameters
+    ----------
+    H_m                 Lift height [m]
+    D_head_mm           Head pulley diameter [mm]
+    D_boot_mm           Boot pulley diameter [mm]
+    spacing_m           Nominal bucket spacing (pitch) [m]
+    splice_allowance_m  Extra belt length consumed at splice(s) [m]
+
+    Returns
+    -------
+    {
+        "belt_length_working_m": float,  straight runs + pulley wraps
+        "belt_length_total_m":   float,  working length + splice allowance
+        "n_buckets":             int,
+        "spacing_actual_m":      float,  belt_length_working_m / n_buckets
+        "spacing_nominal_m":     float,
+    }
+    """
+    L_working = 2.0 * H_m + math.pi * (D_head_mm + D_boot_mm) / 2000.0
+    L_total   = L_working + max(splice_allowance_m, 0.0)
+    n_buckets = max(1, round(L_working / max(spacing_m, 0.01)))
+    spacing_actual = L_working / n_buckets
+
+    return {
+        "belt_length_working_m": round(L_working, 2),
+        "belt_length_total_m":   round(L_total, 2),
+        "n_buckets":              n_buckets,
+        "spacing_actual_m":       round(spacing_actual, 4),
+        "spacing_nominal_m":      round(spacing_m, 4),
+    }
+
+
 def feed_design(
     Q_th:           float,
     rho:            float,
@@ -1938,16 +1992,28 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
 
     # v1.9.5 — Shaft material grade selection.
     # SHAFT_MATERIALS in constants.py was defined but never wired anywhere;
-    # this is the first consumer. Bucket elevator head shafts always carry
-    # a keyway, so tau_allow_key_Pa is the correct allowable to use (per the
-    # constants.py design note — using the no-keyway value would overstate
-    # strength and undersize the shaft).
-    _shaft_mat_id  = getattr(inp, "shaft_material", "A36") or "A36"
-    _shaft_mat     = SHAFT_MATERIALS.get(_shaft_mat_id, SHAFT_MATERIALS["A36"])
-    _tau_allow_Pa  = _shaft_mat["tau_allow_key_Pa"]
+    # this is the first consumer.
+    # v1.9.8 — tau_allow now branches on shaft_hub_connection: keyed shafts
+    # use the keyway-derated allowable (stress concentration at the keyway),
+    # welded shafts use the higher no-keyway allowable since there is no
+    # keyway cut into the shaft.
+    _shaft_mat_id   = getattr(inp, "shaft_material", "A36") or "A36"
+    _shaft_mat      = SHAFT_MATERIALS.get(_shaft_mat_id, SHAFT_MATERIALS["A36"])
+    _hub_connection = getattr(inp, "shaft_hub_connection", "keyed") or "keyed"
+    _tau_allow_Pa   = (
+        _shaft_mat["tau_allow_key_Pa"] if _hub_connection == "keyed"
+        else _shaft_mat["tau_allow_no_key_Pa"]
+    )
 
-    gov = StructuralStressEngine.shaft_diameter_governing(
-        M_Nm, T_Nm, R_head, A_m, B_m, allowable=_tau_allow_Pa
+    # v1.9.8 — Shaft section: solid (default) or hollow.
+    # bore_ratio=0 makes shaft_diameter_governing_hollow() degenerate exactly
+    # to the solid case, so this single call covers both configurations.
+    _shaft_section   = getattr(inp, "shaft_section", "solid") or "solid"
+    _shaft_bore_ratio = float(getattr(inp, "shaft_bore_ratio", 0) or 0) if _shaft_section == "hollow" else 0.0
+
+    gov = StructuralStressEngine.shaft_diameter_governing_hollow(
+        M_Nm, T_Nm, R_head, bore_ratio=_shaft_bore_ratio,
+        overhang_A_m=A_m, span_B_m=B_m, allowable=_tau_allow_Pa,
     )
     d_mm_calc    = gov["d_governing_mm"]
     d_stress_mm  = gov["d_stress_mm"]
@@ -1968,16 +2034,30 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     # Use the governing m-value consistently for hub/key (recalc if override)
     d_governing_m = d_mm / 1000.0
 
-    # ── Hub sizing & keyway check ─────────────────────────────────────────────
+    # ── Hub sizing & shaft-to-hub connection check ────────────────────────────
+    # v1.9.8 — branches on shaft_hub_connection: keyed runs the existing
+    # ASME B17.1 key shear/bearing check; welded runs a fillet weld throat
+    # sizing check instead. Exactly one of (key, weld_check) is populated;
+    # the other is None, distinguishing the configuration downstream.
     hub = StructuralStressEngine.hub_diameter(
         shaft_diameter_m = d_governing_m,
         torque_Nm        = T_Nm,
     )
-    key = StructuralStressEngine.key_stress_check(
-        shaft_diameter_m = d_governing_m,
-        torque_Nm        = T_Nm,
-        key_length_m     = hub["L_hub_m"],
-    )
+    if _hub_connection == "welded":
+        key        = None
+        weld_check = StructuralStressEngine.weld_throat_sizing(
+            shaft_diameter_m = d_governing_m,
+            torque_Nm        = T_Nm,
+            radial_load_N    = R_head,
+        )
+    else:
+        key = StructuralStressEngine.key_stress_check(
+            shaft_diameter_m = d_governing_m,
+            torque_Nm        = T_Nm,
+            key_length_m     = hub["L_hub_m"],
+            tau_allow_pa     = _tau_allow_Pa,
+        )
+        weld_check = None
 
     # ── Pulley lagging selection ───────────────────────────────────────────────
     environment = getattr(inp, "environment", "dry")
@@ -2090,6 +2170,19 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     casing_panel["override_applied"] = _casing_t_override > 0
     casing_panel["t_calc_mm"]        = round(casing_t_m_calc * 1000, 1)
     casing_panel["t_use_mm"]         = round(casing_t_m * 1000, 1)
+
+    # v1.9.9 — Casing assembly bolt count/size. Previously this was only
+    # computed inside bom.py for the BOM; solve_elevator()'s own result dict
+    # never carried it, so the report and checks layer had no visibility.
+    # Computed here using the same casing_stiffener-derived stiffener count
+    # bom.py uses, so the two stay consistent.
+    _n_stiff_sets_for_bolts = max(1, int(inp.H_m / max(panel_span_m, 0.01)))
+    casing_bolts = StructuralStressEngine.casing_bolt_quantities(
+        height_m            = inp.H_m,
+        belt_width_mm       = float(BW_mm),
+        plate_thickness_mm  = casing_t_m * 1000.0,
+        n_stiffener_sets    = _n_stiff_sets_for_bolts,
+    )
 
     # ── Belt & motor ──────────────────────────────────────────────────────────
     motor_kw = select_motor(P_total, inp.sf)
@@ -2394,6 +2487,14 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         elevator_type  = "chain" if is_chain else "belt",
     )
 
+    # ── Belt length & bucket count (v1.9.9) ───────────────────────────────────
+    # Replaces the rough H_m*2.15 approximation previously used only in
+    # bom.py — now a proper geometric calculation available to any consumer.
+    belt_qty = belt_length_and_bucket_count(
+        H_m=inp.H_m, D_head_mm=float(inp.D_mm), D_boot_mm=float(_boot_D_mm),
+        spacing_m=spacing,
+    )
+
     # ── Engineering checks ─────────────────────────────────────────────────────
     # Backlegging risk classification (v1.9.1) — computed here so it can be
     # exposed as a structured field, not just buried in a check message.
@@ -2413,6 +2514,10 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         R_head, d_mm, d_stress_mm, d_deflect_mm, governed_by, L10, Ceff,
         euler_chk        = euler_chk,
         key_check        = key,
+        weld_check       = weld_check,
+        shaft_bore_ratio = gov.get("bore_ratio", 0.0),
+        shaft_d_inner_mm = gov.get("d_inner_mm", 0.0),
+        shaft_mass_saving_pct = gov.get("mass_saving_pct", 0.0),
         lagging          = lagging,
         end_disc         = end_disc,
         bolt_fatigue     = bolt_fatigue,
@@ -2565,6 +2670,10 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "belt_ply": belt_ply, "belt_w": BW_mm,
         "bucket_mass_kg": round(bw_kg, 2),
         "bucket_thickness": bucket_thickness_calc,   # v1.9.7 — None if no override
+        "belt_length_working_m": belt_qty["belt_length_working_m"],   # v1.9.9
+        "belt_length_total_m":   belt_qty["belt_length_total_m"],     # v1.9.9
+        "n_buckets":             belt_qty["n_buckets"],                # v1.9.9
+        "spacing_actual_m":      belt_qty["spacing_actual_m"],          # v1.9.9
         # Discharge — stream envelope (v1.4.0 replaces single trajectory)
         "cr": round(cr, 4), "theta_rel": round(theta_rel, 2),
         "discharge_type":   "continuous" if is_continuous else "centrifugal",
@@ -2591,6 +2700,12 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         # Structural detail — v1.3.0
         "hub":               hub,
         "key_check":         key,
+        "weld_check":        weld_check,           # v1.9.8 — None unless shaft_hub_connection=welded
+        "shaft_section":      _shaft_section,        # v1.9.8
+        "shaft_hub_connection": _hub_connection,     # v1.9.8
+        "shaft_bore_ratio":   gov.get("bore_ratio", 0.0),   # v1.9.8
+        "shaft_d_inner_mm":   gov.get("d_inner_mm", 0.0),   # v1.9.8
+        "shaft_mass_saving_pct": gov.get("mass_saving_pct", 0.0),  # v1.9.8
         "lagging":           lagging,
         "end_disc":          end_disc,
         "pulley_shell":      pulley_shell,        # v1.9.0
@@ -2606,6 +2721,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "casing_t_mm":       round(casing_t_m * 1000.0, 1),
         "casing_panel":      casing_panel,
         "casing_stiffener":  casing_stiffener,
+        "casing_bolts":      casing_bolts,         # v1.9.9
         "design_recommendations": design_recs,
         # Chute flow — v1.4.0
         "discharge_chute":   discharge_chute,
@@ -2670,6 +2786,10 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   d_mm, d_stress_mm, d_deflect_mm, governed_by, L10, Ceff,
                   euler_chk:        "dict | None" = None,
                   key_check:        "dict | None" = None,
+                  weld_check:       "dict | None" = None,
+                  shaft_bore_ratio: "float | None" = None,
+                  shaft_d_inner_mm: "float | None" = None,
+                  shaft_mass_saving_pct: "float | None" = None,
                   lagging:          "dict | None" = None,
                   end_disc:         "dict | None" = None,
                   bolt_fatigue:     "dict | None" = None,
@@ -3235,6 +3355,23 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         else:
             checks.append(fail(
                 f"Keyway FAIL — {key_check['recommendation']} [ASME B17.1]"))
+
+    # 12b — Welded hub connection (v1.9.8, alternative to keyway above)
+    if weld_check:
+        checks.append(info(
+            f"Welded hub: throat {weld_check['t_throat_mm']}mm "
+            f"(governed by {weld_check['governed_by'].replace('_',' ')}, "
+            f"τ={weld_check['tau_torsion_MPa']}MPa vs allow "
+            f"{weld_check['weld_allow_MPa']}MPa). {weld_check['recommendation']} "
+            f"[AWS D1.1]"))
+
+    # 12c — Hollow shaft configuration (v1.9.8)
+    if shaft_bore_ratio and shaft_bore_ratio > 0:
+        checks.append(info(
+            f"Hollow shaft: bore ratio {shaft_bore_ratio:.2f} "
+            f"(ID≈{shaft_d_inner_mm:.0f}mm), ~{shaft_mass_saving_pct:.0f}% cross-"
+            f"sectional mass reduction vs equivalent solid shaft at same OD "
+            f"[OEM design choice — not a CEMA-mandated ratio]"))
 
     # 13 — Pulley lagging
     if lagging:

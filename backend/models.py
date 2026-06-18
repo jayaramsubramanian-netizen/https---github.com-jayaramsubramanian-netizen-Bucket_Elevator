@@ -183,6 +183,44 @@ class BucketElevatorInput(BaseModel):
         ),
     )
 
+    # ── v1.9.8 — Shaft section + hub configuration ────────────────────────────
+    shaft_section: Literal["solid", "hollow"] = Field(
+        "solid",
+        description=(
+            "Shaft cross-section. solid: standard bucket elevator practice "
+            "(default). hollow: weight-reduced tube section — requires a "
+            "larger outer diameter for the same load (less material), at "
+            "net mass savings. Set shaft_bore_ratio to control the trade-off."
+        ),
+    )
+
+    shaft_bore_ratio: float = Field(
+        0.0, ge=0.0, le=0.85,
+        description=(
+            "Hollow shaft bore ratio d_inner/d_outer. Only used when "
+            "shaft_section='hollow'. 0 = solid (no effect). Typical hollow "
+            "shaft practice: 0.4-0.7. CEMA does not publish a standard ratio "
+            "for bucket elevator head shafts — this is a fabrication/weight "
+            "trade-off the OEM specifies, not a code-mandated value. Higher "
+            "ratios increase required OD but increase net mass savings."
+        ),
+    )
+
+    shaft_hub_connection: Literal["keyed", "welded"] = Field(
+        "keyed",
+        description=(
+            "Head pulley hub-to-shaft connection method. "
+            "keyed: standard ASME B17.1 keyway + key (default) — uses the "
+            "keyed allowable shear stress and runs the key shear/bearing "
+            "check. welded: hub welded directly to shaft — uses the "
+            "no-keyway allowable (higher, no keyway stress concentration) "
+            "and runs a fillet weld throat sizing check instead of the key "
+            "check. Welded is common for light-duty or shop-fabrication-"
+            "preference designs; keyed is standard for field-serviceable "
+            "designs where the pulley may need removal."
+        ),
+    )
+
     shaft_d_override_mm: float = Field(
         0.0, ge=0.0, le=500.0,
         description=(

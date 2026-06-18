@@ -804,6 +804,115 @@ def _design_notes(r, inp):
     return notes
 
 
+# ─── Engineering sign-off block (Task 13) ─────────────────────────────────────
+def _sign_off_block(sign_off: dict | None) -> list:
+    """
+    Engineering sign-off block — 3 columns:
+    Designed by | Reviewed by | Approved by
+
+    Each column: Name, Designation/Company, Date, Signature line, Stamp box.
+    Renders empty fields as blank lines so signatory can fill in by hand.
+
+    sign_off dict shape (all fields optional):
+        {
+            "designed_by":  {"name": "", "designation": "", "date": ""},
+            "reviewed_by":  {"name": "", "designation": "", "date": ""},
+            "approved_by":  {"name": "", "designation": "", "date": ""},
+        }
+    """
+    if sign_off is None:
+        sign_off = {}
+
+    col_w = AVAIL / 3
+
+    ROLES = [
+        ("DESIGNED BY",  sign_off.get("designed_by",  {})),
+        ("REVIEWED BY",  sign_off.get("reviewed_by",  {})),
+        ("APPROVED BY",  sign_off.get("approved_by",  {})),
+    ]
+
+    def _col(role_label, info):
+        name        = info.get("name", "")        if info else ""
+        designation = info.get("designation", "") if info else ""
+        date_str    = info.get("date", "")        if info else ""
+
+        BLANK = "_" * 26
+
+        col_items = [
+            # Role header
+            Table([[Paragraph(role_label,
+                ParagraphStyle("sorl", fontName="Helvetica-Bold", fontSize=8,
+                               textColor=NAVY, leading=10))]],
+                colWidths=[col_w - 8*mm]),
+            Spacer(1, 3),
+
+            # Name
+            Paragraph("Name:", ST["h3"]),
+            Paragraph(name or BLANK, ST["body"]),
+            Spacer(1, 2),
+
+            # Designation / Company
+            Paragraph("Designation / Company:", ST["h3"]),
+            Paragraph(designation or BLANK, ST["body"]),
+            Spacer(1, 2),
+
+            # Date
+            Paragraph("Date:", ST["h3"]),
+            Paragraph(date_str or "_" * 16, ST["body"]),
+            Spacer(1, 6),
+
+            # Signature line
+            HRFlowable(width=col_w - 12*mm, thickness=0.5,
+                       color=MUTED, spaceAfter=1),
+            Paragraph("Signature", ST["cap"]),
+            Spacer(1, 4),
+
+            # Stamp / Seal box
+            Table(
+                [[Paragraph("STAMP / SEAL", ST["cap"])]],
+                colWidths=[col_w - 12*mm],
+                rowHeights=[18*mm],
+                style=TableStyle([
+                    ("BOX",           (0,0), (-1,-1), 0.5, MUTED),
+                    ("TOPPADDING",    (0,0), (-1,-1), 4),
+                    ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+                    ("LEFTPADDING",   (0,0), (-1,-1), 4),
+                    ("RIGHTPADDING",  (0,0), (-1,-1), 4),
+                ]),
+            ),
+        ]
+
+        inner = Table(
+            [[item] for item in col_items],
+            colWidths=[col_w - 8*mm],
+            style=TableStyle([
+                ("TOPPADDING",    (0,0), (-1,-1), 1),
+                ("BOTTOMPADDING", (0,0), (-1,-1), 1),
+                ("LEFTPADDING",   (0,0), (-1,-1), 0),
+                ("RIGHTPADDING",  (0,0), (-1,-1), 0),
+            ]),
+        )
+        return inner
+
+    cells = [_col(role, info) for role, info in ROLES]
+
+    outer = Table(
+        [cells],
+        colWidths=[col_w, col_w, col_w],
+        style=TableStyle([
+            ("BOX",           (0,0), (-1,-1), 1,   NAVY),
+            ("INNERGRID",     (0,0), (-1,-1), 0.5, BORDER),
+            ("TOPPADDING",    (0,0), (-1,-1), 6),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+            ("LEFTPADDING",   (0,0), (-1,-1), 5),
+            ("RIGHTPADDING",  (0,0), (-1,-1), 5),
+            ("VALIGN",        (0,0), (-1,-1), "TOP"),
+            ("BACKGROUND",    (0,0), (-1,-1), white),
+        ]),
+    )
+    return [outer, Spacer(1, 4)]
+
+
 # ─── SF check rows builder ────────────────────────────────────────────────────
 def _build_sf_rows(r, inp):
     rows = []
@@ -1024,6 +1133,7 @@ def _build_sf_rows(r, inp):
 
 def build_report(results: dict, inputs: dict,
                  project: str = "", doc_ref: str = "",
+                 sign_off: dict | None = None,
                  output_path=None) -> bytes:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4,
@@ -1223,27 +1333,63 @@ def build_report(results: dict, inputs: dict,
 
     # 5a — Head shaft & drive
     story += sub_section("5a.  Head Shaft & Drive")
-    story += four_col_table([
+    shaft_mat_id    = r.get("shaft_material") or "A36"
+    shaft_mat_name  = r.get("shaft_material_name") or shaft_mat_id
+    shaft_tau_allow = r.get("shaft_tau_allow_MPa")
+    shaft_section_v = r.get("shaft_section") or "solid"
+    hub_conn        = r.get("shaft_hub_connection") or "keyed"
+    weld_chk        = r.get("weld_check") or {}
+
+    shaft_left = [
+        ("Material grade",    shaft_mat_name),
         ("Shaft torque",      f"{rv('T_Nm',dp=1)} Nm"),
+        ("Section",           f"{shaft_section_v.capitalize()}" +
+         (f"  (bore ratio {r.get('shaft_bore_ratio',0):.2f}, ID {r.get('shaft_d_inner_mm',0):.0f}mm)"
+          if shaft_section_v == "hollow" else "")),
         ("Min shaft dia.",    f"{rv('d_mm',dp=1)} mm"),
         ("Governed by",       r.get("governed_by") or "—"),
-        ("Allowable shear",   "42 MPa  (keyed shaft)"),
+        ("Allowable shear",   f"{fmt(shaft_tau_allow,0) if shaft_tau_allow is not None else '—'} MPa"
+                               f"  ({'no keyway' if hub_conn=='welded' else 'keyed'})"),
         ("Bearing span",      f"{rv('shaft_span_mm',dp=0)} mm"),
         ("Drive arm A",       f"{rv('shaft_A_mm',dp=0)} mm"),
         ("Tail arm B",        f"{rv('shaft_B_mm',dp=0)} mm"),
-    ], [
-        ("Hub OD",            f"{hub.get('d_hub_mm','—')} mm"),
-        ("Hub length",        f"{hub.get('L_hub_mm','—')} mm"),
-        ("Key  b x h",
-         f"{hub.get('b_key_mm','—')} x {hub.get('h_key_mm','—')} mm"),
-        ("Key shear",
-         f"{kc.get('tau_actual_MPa','—')} / {kc.get('tau_allow_MPa','—')} MPa"),
-        ("Key bearing",
-         f"{kc.get('sigma_actual_MPa','—')} / {kc.get('sigma_allow_MPa','—')} MPa"),
-        ("Key result",
-         "PASS" if kc.get("pass") else ("FAIL" if kc else "—")),
-        ("Bearing L10",       f"{fmt(L10, 0)} h"),
-    ])
+    ]
+    if shaft_section_v == "hollow":
+        shaft_left.append(
+            ("Mass saving vs solid", f"~{r.get('shaft_mass_saving_pct',0):.0f}%"))
+
+    # Right column branches: keyed shafts show key spec/check; welded shafts
+    # show weld throat spec/check instead. kc is empty {} for welded shafts
+    # (key_check is None at the result-dict level), so this avoids printing
+    # misleading dashes where a weld spec should appear.
+    if hub_conn == "welded" and weld_chk:
+        shaft_right = [
+            ("Hub connection",    "Welded (no keyway)"),
+            ("Hub OD",            f"{hub.get('d_hub_mm','—')} mm"),
+            ("Hub length",        f"{hub.get('L_hub_mm','—')} mm"),
+            ("Weld throat",       f"{weld_chk.get('t_throat_mm','—')} mm"),
+            ("Weld governed by",  (weld_chk.get('governed_by') or '—').replace('_',' ')),
+            ("Weld shear stress",
+             f"{weld_chk.get('tau_torsion_MPa','—')} / {weld_chk.get('weld_allow_MPa','—')} MPa"),
+            ("Weld spec",         "E70xx, full 360 deg around shaft OD"),
+            ("Bearing L10",       f"{fmt(L10, 0)} h"),
+        ]
+    else:
+        shaft_right = [
+            ("Hub connection",    "Keyed (ASME B17.1)"),
+            ("Hub OD",            f"{hub.get('d_hub_mm','—')} mm"),
+            ("Hub length",        f"{hub.get('L_hub_mm','—')} mm"),
+            ("Key  b x h",
+             f"{hub.get('b_key_mm','—')} x {hub.get('h_key_mm','—')} mm"),
+            ("Key shear",
+             f"{kc.get('tau_actual_MPa','—')} / {kc.get('tau_allow_MPa','—')} MPa"),
+            ("Key bearing",
+             f"{kc.get('sigma_actual_MPa','—')} / {kc.get('sigma_allow_MPa','—')} MPa"),
+            ("Key result",
+             "PASS" if kc.get("pass") else ("FAIL" if kc else "—")),
+            ("Bearing L10",       f"{fmt(L10, 0)} h"),
+        ]
+    story += four_col_table(shaft_left, shaft_right)
 
     # 5b — Belt & Bucket
     story += sub_section("5b.  Belt & Bucket Selection")
@@ -1251,23 +1397,39 @@ def build_report(results: dict, inputs: dict,
     bkt_h = bkt.get("H") or bkt.get("depth_mm") or "—"
     bkt_p = bkt.get("P") or bkt.get("projection_mm") or "—"
     bkt_v = bkt.get("V") or bkt.get("volume_L") or "—"
-    story += four_col_table([
+    bkt_thick = r.get("bucket_thickness") or {}
+    n_buckets = r.get("n_buckets")
+    belt_len_total = r.get("belt_length_total_m")
+    spacing_actual = r.get("spacing_actual_m") or r.get("spacing")
+
+    bucket_left = [
         ("Bucket series",     bkt.get("id") or "—"),
         ("Style",             bkt.get("type") or bkt.get("style") or "—"),
         ("Width x depth",     f"{bkt_w} x {bkt_h} mm"),
         ("Projection",        f"{bkt_p} mm"),
         ("Volume (struck)",   f"{bkt_v} L"),
         ("Bucket mass",       f"{rv('bucket_mass_kg',dp=2)} kg"),
-    ], [
+    ]
+    if bkt_thick:
+        bucket_left.append(
+            ("Plate thickness",
+             f"{bkt_thick.get('t_override_mm','—')} mm "
+             f"(catalogue std {bkt_thick.get('t_implied_mm','—')} mm)"))
+
+    bucket_right = [
         ("Belt width",        f"{r.get('belt_w','—')} mm"),
         ("Belt class",        str(r.get("belt_class") or
                                f"{r.get('belt_ply','—')} PLY")),
-        ("Bucket spacing",    f"{rv('spacing',dp=3)} m"),
-        ("Buckets per metre", f"{1/float(r.get('spacing',1)):.2f}"
-                               if r.get("spacing") else "—"),
+        ("Belt length  (total)",
+         f"{fmt(belt_len_total,1) if belt_len_total is not None else '—'} m "
+         f"(incl. splice allowance)"),
+        ("Bucket spacing  (actual)",
+         f"{fmt(spacing_actual,3) if spacing_actual is not None else '—'} m"),
+        ("Bucket count",      f"{n_buckets if n_buckets is not None else '—'} off"),
         ("Fill factor",       f"{inp.get('fill_pct','—')}%"),
         ("Material DB fill",  f"{rv('recommended_fill_pct',dp=1)}%  advisory"),
-    ])
+    ]
+    story += four_col_table(bucket_left, bucket_right)
 
     # 5c — Pulley design
     story += sub_section("5c.  Pulley Design")
@@ -1291,6 +1453,10 @@ def build_report(results: dict, inputs: dict,
         ("Shell min t (CEMA)", f"{ps.get('t_cema_mm','—')} mm"),
         ("Shell min t (press)",f"{ps.get('t_pressure_mm','—')} mm"),
         ("Shell governing t",  f"{ps.get('t_governing_mm','—')} mm  ({(ps.get('governed_by') or '—').replace('_',' ')})"),
+        ("Shell specified t",
+         f"{ps.get('t_use_mm','—')} mm" +
+         (f"  ({'PASS' if ps.get('override_pass') else 'FAIL — below calc minimum'})"
+          if ps.get("override_applied") else "  (= calculated minimum, no override)")),
         ("End disc min t",     f"{t_min} mm"),
         ("End disc specify",   f"{t_spec} mm  (+20%)"),
         ("Disc governed by",   ed.get("governed_by") or "—"),
@@ -1329,6 +1495,7 @@ def build_report(results: dict, inputs: dict,
 
     # 5e — Casing
     story += sub_section("5e.  Casing & Structural")
+    cbolt = r.get("casing_bolts") or {}
     story += four_col_table([
         ("Plate thickness",         f"{r.get('casing_t_mm','—')} mm"),
         ("Max stiffener pitch",     f"{cs.get('max_spacing_mm','—')} mm"),
@@ -1342,6 +1509,9 @@ def build_report(results: dict, inputs: dict,
         ("Panel check",             "PASS" if cp.get("status")=="ok" else
                                     ("FAIL" if cp else "—")),
         ("Bolt fatigue  Goodman",   f"{bf.get('goodman_ratio','—')}"),
+        ("Assembly fasteners",
+         f"{cbolt.get('bolt_size','—')} x {cbolt.get('n_bolts_total','—')} "
+         f"(panel-to-panel + stiffener)" if cbolt else "—"),
     ])
 
     # 5f — Discharge Chute
@@ -1489,6 +1659,24 @@ def build_report(results: dict, inputs: dict,
     for label, note in zip(note_labels, notes):
         story.append(Paragraph(f"<b>{label}:</b>  {note}", ST["note"]))
         story.append(Spacer(1, 3))
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 8  ENGINEERING SIGN-OFF
+    # ══════════════════════════════════════════════════════════════════════════
+    story += section("8.  Engineering Sign-Off")
+    story.append(Paragraph(
+        "This report has been prepared in accordance with CEMA No. 375-2017 and "
+        "ANSI/CEMA 550-2020. The signatory confirms that the design calculations "
+        "have been reviewed and are accepted as the basis for procurement and fabrication.",
+        ST["note"]
+    ))
+    story.append(Spacer(1, 4))
+    story += _sign_off_block(sign_off)
+    story.append(Paragraph(
+        "Standards: CEMA No. 375-2017  ·  ANSI/CEMA 550-2020  ·  "
+        "ISO 281  ·  ASME B17.1  ·  AS 4024 (where applicable)",
+        ST["cap"]
+    ))
 
     # ── FOOTER ───────────────────────────────────────────────────────────────
     story.append(Spacer(1, 6))
