@@ -23,7 +23,7 @@
 // DesignReview is persistent at the top of the right column in ALL tabs.
 // ─────────────────────────────────────────────────────────────────
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useElevatorCalc }          from "./hooks/useElevatorCalc";
 import InputSidebar                 from "./components/InputSidebar";
 import ElevatorSchematic            from "./components/ElevatorSchematic";
@@ -232,8 +232,10 @@ export default function BucketElevatorPage({ onResultsChange }) {
   const [activeTab, setActiveTab]   = useState("design");
   const [showSaveLoad, setShowSaveLoad] = useState(false);
   const [showTree, setShowTree]     = useState(true);
-  const [activeDisc, setActiveDisc] = useState(null);
   const [chartTab, setChartTab]     = useState("speed");
+  // Ref to InputSidebar's open() function — allows EquipmentTree clicks to
+  // open specific editor panels directly without lifting all sidebar state.
+  const openSectionRef = useRef(null);
 
   useEffect(() => {
     if (onResultsChange) onResultsChange({ results, inputs });
@@ -404,10 +406,25 @@ export default function BucketElevatorPage({ onResultsChange }) {
             <div style={{ flex: 1, overflow: "hidden" }}>
               <EquipmentTree
                 results={results} inputs={inputs}
-                onNodeClick={disc => {
-                  setActiveDisc(disc);
-                  document.getElementById(`disc-${disc}`)
-                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                onNodeClick={route => {
+                  // route is { section, chartTab?, view? }
+                  // section: InputSidebar panel to open
+                  // chartTab: optional chart tab to switch to
+                  const section  = typeof route === "string" ? route : route?.section;
+                  const chartTab = typeof route === "object" ? route?.chartTab : null;
+
+                  // Tree lives alongside the Design tab's sidebar + charts —
+                  // switch there so the opened panel is actually visible.
+                  setActiveTab("design");
+
+                  // Open the specific InputSidebar panel
+                  if (section && openSectionRef.current) {
+                    openSectionRef.current(section);
+                  }
+                  // Switch chart tab if specified
+                  if (chartTab) {
+                    setChartTab(chartTab);
+                  }
                 }}
               />
             </div>
@@ -436,7 +453,7 @@ export default function BucketElevatorPage({ onResultsChange }) {
           />
           <InputSidebar
             inputs={inputs} setField={setField}
-            results={results} activeDisc={activeDisc}
+            results={results} openSectionRef={openSectionRef}
           />
         </div>
 

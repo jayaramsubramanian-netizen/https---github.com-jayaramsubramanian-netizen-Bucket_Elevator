@@ -925,19 +925,25 @@ function ChainEdit({ inp, setField, results }) {
 }
 
 function BeltEdit({ inp, setField, results }) {
-  const r = results || {};
+  const r  = results || {};
+  const tp = r.tension_profile || {};
+  // item 4: belt_ply is sized off F_eff (lumped effective tension at the
+  // head), not T_max_N (actual peak tension, which includes the empty-leg
+  // self-weight contribution). rating_margin flags when this matters —
+  // surfacing both numbers here so the gap is visible rather than hidden.
+  const marginBad = tp.rating_margin != null && tp.rating_margin < 1.0;
   return (
     <>
       <SectionHead label="Belt Configuration" />
       <div style={{
         background: T.panel2, border: `1px solid ${T.border}`,
-        borderRadius: 5, padding: "10px 12px", marginBottom: 12, fontSize: 12,
+        borderRadius: 5, padding: "10px 12px", marginBottom: 6, fontSize: 12,
       }}>
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
           {[
             ["Auto Width", `${r.belt_w ?? "—"} mm`],
             ["Plies", `${r.belt_ply ?? "—"}`],
-            ["Eff. Tension", `${r.F_eff != null ? (r.F_eff/1000).toFixed(1) : "—"} kN`],
+            ["Eff. Tension  (sizing basis)", `${r.F_eff != null ? (r.F_eff/1000).toFixed(1) : "—"} kN`],
           ].map(([l,v]) => (
             <div key={l}>
               <div style={{ fontSize: 10, color: T.text3 }}>{l}</div>
@@ -947,6 +953,39 @@ function BeltEdit({ inp, setField, results }) {
           ))}
         </div>
       </div>
+      {tp.T_max_N != null && (
+        <div style={{
+          background: marginBad ? "rgba(224,82,82,.08)" : T.panel2,
+          border: `1px solid ${marginBad ? "var(--danger-border, #4a1515)" : T.border}`,
+          borderRadius: 5, padding: "8px 12px", marginBottom: 12, fontSize: 11,
+        }}>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: marginBad ? 6 : 0 }}>
+            <div>
+              <div style={{ fontSize: 9, color: T.text3 }}>Peak Tension  (actual max, full loop)</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: T.text,
+                fontFamily: "JetBrains Mono,monospace" }}>{(tp.T_max_N/1000).toFixed(1)} kN</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 9, color: T.text3 }}>Belt Rated</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: T.text,
+                fontFamily: "JetBrains Mono,monospace" }}>{tp.belt_rated_N != null ? (tp.belt_rated_N/1000).toFixed(1) : "—"} kN</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 9, color: T.text3 }}>Margin</div>
+              <div style={{ fontSize: 13, fontWeight: 700,
+                color: marginBad ? "var(--danger, #e05252)" : T.text,
+                fontFamily: "JetBrains Mono,monospace" }}>{tp.rating_margin ?? "—"}</div>
+            </div>
+          </div>
+          {marginBad && (
+            <div style={{ fontSize: 10, color: "var(--danger, #e05252)" }}>
+              ⚠ Ply count above is sized for effective tension only — peak tension
+              (including empty-leg self-weight) exceeds belt rating. Increase belt
+              width or specify a higher ply count manually.
+            </div>
+          )}
+        </div>
+      )}
       <F label="Belt Width Override" name="belt_width_override_mm"
         value={inp.belt_width_override_mm ?? 0} onChange={setField}
         unit="mm" min={0} max={1500} step={25}
@@ -1888,13 +1927,26 @@ function PowerEdit({ inp, setField, results }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
-export default function InputSidebar({ inputs, setField, results }) {
+export default function InputSidebar({ inputs, setField, results, openSectionRef }) {
   const inp = inputs || {};
   const r   = results || {};
   const [editSection, setEditSection] = useState(null);
 
   const open  = useCallback(id => setEditSection(id), []);
   const close = useCallback(()  => setEditSection(null), []);
+
+  // Expose open() to the parent (BucketElevatorPage) via ref so EquipmentTree
+  // clicks can open a specific section panel directly, instead of routing
+  // through one coarse "mechanical" identifier with no way to reach a
+  // specific editor (shaft, belt, bucket, takeup, discharge, casing, etc).
+  useEffect(() => {
+    if (openSectionRef) {
+      openSectionRef.current = open;
+    }
+    return () => {
+      if (openSectionRef) openSectionRef.current = null;
+    };
+  }, [openSectionRef, open]);
 
   // ── Status badges ────────────────────────────────────────────────────────
   const badges = {

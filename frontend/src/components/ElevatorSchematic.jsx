@@ -43,19 +43,44 @@ const C = {
   grid:    "rgba(59,130,246,.04)", leg: "#1e3a5a",
 };
 
-// CEMA bucket series catalog dimensions
-// NOTE: bolt pattern (boltSpacW/H) is a PLACEHOLDER pending reference PDF —
-// will be corrected once correct CEMA mounting drawing is provided (issue 9).
+// CEMA bucket series catalog — dimensions and bolt punching pattern sourced
+// directly from Martin Engineering catalog pages H-146 to H-152.
+//
+// Profile shapes (front/side outline) match the catalog nomenclature page
+// H-145: AA/AC/C are CENTRIFUGAL style (curved or angled bottom, water-level
+// line marked X-X); MF/HF/SC are CONTINUOUS style (flat-faced, 30°/45° front
+// angle, extended side panels forming a chute).
+//
+// Bolt punching (page H-152, "Bucket Punching (Belt) — CEMA Standard"):
+// Pattern is on the BACK PLATE (the flat mounting edge against the belt),
+// arranged as evenly-spaced holes along the top mounting flange — NOT
+// 4 corner bolts. B6/B7/B8 patterns use 3 holes per row depending on length;
+// dimension "A" = hole-to-hole spacing along the row, "B" = row offset from
+// the bucket edge.
 const BUCKET_CATALOG = {
-  AA: { W:305, H:203, P:190, V:7.4,  backR:160, lipH:18, boltSpacW:220, boltSpacH:140 },
-  A:  { W:254, H:178, P:165, V:5.0,  backR:140, lipH:15, boltSpacW:180, boltSpacH:120 },
-  B:  { W:203, H:152, P:140, V:3.3,  backR:115, lipH:13, boltSpacW:145, boltSpacH:100 },
-  C:  { W:152, H:127, P:115, V:1.9,  backR: 95, lipH:11, boltSpacW:108, boltSpacH: 85 },
-  D:  { W:102, H: 89, P: 89, V:0.77, backR: 70, lipH: 9, boltSpacW: 72, boltSpacH: 60 },
-  MF: { W:254, H:152, P:152, V:4.0,  backR:120, lipH:14, boltSpacW:180, boltSpacH:105 },
-  PF: { W:305, H:203, P:178, V:6.5,  backR:160, lipH:16, boltSpacW:220, boltSpacH:140 },
-  HF: { W:356, H:254, P:229, V:11.2, backR:200, lipH:22, boltSpacW:260, boltSpacH:175 },
+  // Style AA — Centrifugal — page H-146. Curved bottom, smooth back, no flat front angle.
+  AA: { style:"centrifugal", W:305, P:190, H:203, V_L:7.4*28.3,   // ft3*28.3 ~ L (approx, display only)
+        punch:"B6", boltN:3, boltA:114.3, boltB:25.4, boltDia:7.9, frontAngle:null, profile:"curved" },
+  // Style AC — Centrifugal — page H-147. 50° angled front face, hooded back.
+  AC: { style:"centrifugal", W:305, P:254, H:254, V_L:26.1,
+        punch:"B6", boltN:3, boltA:114.3, boltB:25.4, boltDia:7.9, frontAngle:50, profile:"angled" },
+  // Style C — Centrifugal — page H-148. Open front, angled sides, low profile.
+  C:  { style:"centrifugal", W:152, P:127, H:114, V_L:4.5,
+        punch:"B6", boltN:3, boltA:88.9,  boltB:25.4, boltDia:6.4, frontAngle:null, profile:"openfront" },
+  // Style MF — Continuous — page H-149. 30° front angle, medium front, chute-forming sides.
+  MF: { style:"continuous", W:305, P:178, H:295, V_L:9.6,
+        punch:"B7", boltN:4, boltA:101.6, boltB:25.4, boltDia:7.9, frontAngle:30, profile:"angled" },
+  // Style HF — Continuous — page H-150. 45° front angle, high front, larger capacity.
+  HF: { style:"continuous", W:305, P:178, H:295, V_L:11.2,
+        punch:"B7", boltN:4, boltA:114.3, boltB:25.4, boltDia:7.9, frontAngle:45, profile:"angled" },
+  // Style SC — Continuous — page H-151. Mounted between two chain strands (not belt) —
+  // shown here for completeness; bolt pattern not applicable in the belt sense.
+  SC: { style:"continuous", W:406, P:305, H:448, V_L:44.0,
+        punch:"chain", boltN:2, boltA:165.0, boltB:0, boltDia:12.7, frontAngle:null, profile:"angled" },
 };
+// Default fallback alias so unrecognised series IDs (legacy "A","B","D","PF")
+// degrade gracefully to the nearest real catalog style instead of crashing.
+const BUCKET_ALIAS = { A:"AA", B:"C", D:"C", PF:"AC" };
 
 const VIEWS = [
   { id: "elevation",  label: "Elevation"      },
@@ -228,22 +253,31 @@ function ElevationView({ inputs, results, W, H, hovered, setHovered }) {
   const carryBuckets = Array.from({length:nVisible},(_,i)=>botY-12-i*spacePx);
   const returnBuckets = Array.from({length:Math.ceil(nVisible*0.6)},(_,i)=>topY+24+i*spacePx*1.4);
 
-  // ── FIX #8: trajectory — points already in mm, do NOT re-scale ──
+  // ── FIX (this pass): chute now anchored to the REAL trajectory data,
+  //    not an independent angle calculation. We never recompute physics —
+  //    we only read r.trajectory[] (already solved server-side) and draw
+  //    the chute mouth so it sits where that real arc actually starts and
+  //    points along the real initial direction of travel. ──
   const traj=r.trajectory||[];
-  const trajScale = 0.10; // px per mm — purely a DISPLAY zoom for the small inset arc
-  const trajStr=traj.slice(0,30).map((p,i)=>{
-    const sx=cx+(p.x-(traj[0]?.x||0))*trajScale;
-    const sy=topY-(p.y-(traj[0]?.y||0))*trajScale;
-    return `${i===0?"M":"L"} ${sx.toFixed(1)} ${sy.toFixed(1)}`;
-  }).join(" ");
-
-  // ── FIX #5: chute orientation driven by theta_rel ──
-  const thetaRad = ((r.theta_rel ?? 35) * Math.PI) / 180;
-  const chuteLen = 46;
-  const chuteDx = Math.sin(thetaRad) * chuteLen;
-  const chuteDy = -Math.cos(thetaRad) * chuteLen;
-  const chuteBaseX = cx + rH*0.3, chuteBaseY = topY - rH*0.85;
-  const chuteTipX = chuteBaseX + chuteDx, chuteTipY = chuteBaseY + chuteDy;
+  // Use the first two real trajectory points to get the actual initial
+  // direction of the material stream (this is data, not a re-derived angle).
+  const t0 = traj[0], t1 = traj[Math.min(3, traj.length-1)];
+  let streamAngleRad = 0; // angle of initial travel, measured from +x axis (SVG space)
+  if (t0 && t1 && (t1.x!==t0.x || t1.y!==t0.y)) {
+    // Physics y is up-positive (typical), SVG y is down-positive, so flip dy.
+    const dx = t1.x - t0.x;
+    const dy = -(t1.y - t0.y);
+    streamAngleRad = Math.atan2(dy, dx);
+  } else {
+    // Fallback only if no trajectory data at all — straight up.
+    streamAngleRad = Math.PI/2;
+  }
+  const chuteLen = 44;
+  // Chute mouth sits at the pulley rim, on the side the material actually
+  // releases toward (right side, downstream of rotation).
+  const chuteBaseX = cx + rH*0.55, chuteBaseY = topY - rH*0.55;
+  const chuteTipX = chuteBaseX + Math.cos(streamAngleRad)*chuteLen;
+  const chuteTipY = chuteBaseY - Math.sin(streamAngleRad)*chuteLen;
 
   const callouts={
     head:{title:"HEAD PULLEY",lines:[`D = ${headD} mm`,`n = ${inp.n_rpm??'—'} rpm`,`v = ${f(r.v,3)} m/s`,`Lagged — rubber`]},
@@ -691,46 +725,100 @@ function TrajectoryView({ inputs, results, W, H }) {
 }
 
 // ─── BUCKET DETAIL VIEW ───────────────────────────────────────────────────────
-// NOTE: profile/bolt-pattern geometry pending correct CEMA reference (issue 9).
-// FIX #10 applied: defensive uppercase series lookup + explicit key on <svg>
-// so React fully remounts when the bucket series changes.
+// Profile shapes and bolt punching pattern sourced from Martin Engineering
+// catalog pages H-145 to H-152 (uploaded reference). Key corrections vs the
+// previous placeholder:
+//   - Bolts are on the BACK PLATE mounting flange (top edge), in a single
+//     horizontal row of evenly spaced holes — NOT 4 corners of the face.
+//   - Profile shape now differs by style per the catalog nomenclature
+//     (p.H-145): "centrifugal" styles (AA/AC/C) show the curved or angled
+//     front face with the X-X "water level" reference line; "continuous"
+//     styles (MF/HF/SC) show the 30°/45° front angle with extended side
+//     panels that form a discharge chute over the preceding bucket.
+// FIX #10 preserved: defensive uppercase series lookup + explicit key on
+// <svg> so React fully remounts when the bucket series changes.
 function BucketDetailView({ inputs, results, W, H }) {
   const r=results||{}, bkt=r.bucket||{};
-  const seriesId=String(bkt.id||"B").toUpperCase().trim();
-  const cat=BUCKET_CATALOG[seriesId]||BUCKET_CATALOG.B;
+  const rawId=String(bkt.id||"AA").toUpperCase().trim();
+  const seriesId = BUCKET_CATALOG[rawId] ? rawId : (BUCKET_ALIAS[rawId] || "AA");
+  const cat=BUCKET_CATALOG[seriesId];
 
-  const bW=cat.W, bH=cat.H, bP=cat.P, bV=cat.V;
-  const scale=Math.min((W-120)/(bW+bP+80),(H-120)/(bH+60));
+  const bW=cat.W, bH=cat.H, bP=cat.P;
+  const scale=Math.min((W-140)/(bW+bP+100),(H-160)/(bH+80));
   const bWs=bW*scale, bHs=bH*scale, bPs=bP*scale;
-  const backR=cat.backR*scale;
 
-  const fCx=W*0.30, sCx=W*0.72;
-  const midY=H*0.48;
-
+  const fCx=W*0.28, sCx=W*0.74;
+  const midY=H*0.46;
   const fX=fCx-bWs/2, fY=midY-bHs/2;
+  const sX=sCx-bPs/2, sY=midY-bHs/2;
 
   const fillPct=Number(inputs?.fill_pct||75)/100;
-  const fillY=fY+bHs*(1-fillPct*0.7);
+  const fillY=fY+bHs*(1-fillPct*0.72);
 
-  const sX=sCx-bPs/2, sY=midY-bHs/2;
-  const sidePath=`
-    M ${sX} ${sY+bHs}
-    Q ${sX-8} ${sY+bHs*0.5} ${sX} ${sY}
-    L ${sX+bPs} ${sY+bHs*0.15}
-    L ${sX+bPs} ${sY+bHs*0.85}
-    L ${sX} ${sY+bHs} Z`;
+  // ── Front-elevation outline, by catalog profile type (p.H-145 to H-151) ──
+  let frontPath;
+  if (cat.profile==="curved") {
+    // Style AA: smooth curved bottom-front, like p.H-146 isometric — front
+    // elevation is simply a rectangle (the curve is only visible in side view).
+    frontPath = `M ${fX} ${fY} L ${fX+bWs} ${fY} L ${fX+bWs} ${fY+bHs} L ${fX} ${fY+bHs} Z`;
+  } else {
+    // AC / C / MF / HF / SC: front elevation is a rectangle; the front-face
+    // angle is a SIDE-view feature, not visible face-on. Matches catalog
+    // "Length" view drawings on the right of each style page.
+    frontPath = `M ${fX} ${fY} L ${fX+bWs} ${fY} L ${fX+bWs} ${fY+bHs} L ${fX} ${fY+bHs} Z`;
+  }
 
-  const boltSW=cat.boltSpacW*scale, boltSH=cat.boltSpacH*scale;
-  const bolts=[
-    {x:fCx-boltSW/2, y:midY-boltSH/2},
-    {x:fCx+boltSW/2, y:midY-boltSH/2},
-    {x:fCx-boltSW/2, y:midY+boltSH/2},
-    {x:fCx+boltSW/2, y:midY+boltSH/2},
-  ];
+  // ── Side-profile outline, by catalog profile type ──
+  let sidePath;
+  if (cat.profile==="curved") {
+    // Style AA (p.H-146): curved bottom sweeping from back (top) down and
+    // forward to a point at front-bottom, smooth quarter-round curve.
+    sidePath = `
+      M ${sX} ${sY}
+      L ${sX} ${sY+bHs*0.55}
+      Q ${sX} ${sY+bHs} ${sX+bPs*0.55} ${sY+bHs}
+      Q ${sX+bPs} ${sY+bHs} ${sX+bPs} ${sY+bHs*0.78}
+      L ${sX} ${sY} Z`;
+  } else if (cat.profile==="openfront") {
+    // Style C (p.H-148): open front, angled sides, quarter-round-ish — back
+    // tall, front low, angled face from back-top to front-bottom.
+    sidePath = `
+      M ${sX} ${sY}
+      L ${sX} ${sY+bHs}
+      L ${sX+bPs} ${sY+bHs}
+      L ${sX} ${sY} Z`;
+  } else {
+    // AC / MF / HF (p.H-147, H-149, H-150): straight angled front face at
+    // the catalog-specified angle from the back plate (50°/30°/45°), with
+    // a "water level" X-X line shown dashed at the front tip height —
+    // matches the nomenclature diagram on p.H-145.
+    const angRad = (cat.frontAngle||45) * Math.PI/180;
+    // Front tip height above the bucket bottom, derived from the angle and
+    // projection — taller angle (e.g. 45°) gives a higher front than a
+    // shallow angle (e.g. 30°), matching the catalog side-view drawings.
+    const tipYFrac = 0.15 + 0.55*(1 - cat.frontAngle/90); // empirical fit to catalog look
+    sidePath = `
+      M ${sX} ${sY}
+      L ${sX} ${sY+bHs}
+      L ${sX+bPs} ${sY+bHs*(1-tipYFrac)}
+      L ${sX+bPs*0.92} ${sY+bHs*(1-tipYFrac)-6}
+      L ${sX} ${sY} Z`;
+  }
 
-  const V_actual=(bV*(Number(inputs?.fill_pct||75)/100)).toFixed(3);
-  const mass_bucket=(bV*1.5).toFixed(1);
+  // ── Bolt pattern — back plate mounting row, per catalog p.H-152 ──
+  // Holes run along the TOP back edge (the flange that bolts to the belt),
+  // evenly spaced by "boltA" (CEMA dimension A), with boltN holes total,
+  // and "boltB" inset from each end of the bucket length.
+  const boltRowY = fY + 6*scale; // just inside the top mounting edge
+  const usableW = bWs - 2*(cat.boltB*scale);
+  const boltStep = cat.boltN>1 ? usableW/(cat.boltN-1) : 0;
+  const bolts = Array.from({length:cat.boltN}, (_,i)=>({
+    x: fX + cat.boltB*scale + i*boltStep,
+    y: boltRowY,
+  }));
+
   const n_buckets=r.spacing?Math.ceil((2*Number(inputs?.H_m||25))/r.spacing):0;
+  const styleLabel = cat.style==="centrifugal" ? "Centrifugal Discharge" : "Continuous Discharge";
 
   return (
     <svg key={seriesId} viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{display:"block"}}>
@@ -739,80 +827,87 @@ function BucketDetailView({ inputs, results, W, H }) {
       <Grid W={W} H={H}/>
 
       <text x={W/2} y={18} fontSize={10} fill={C.text3} textAnchor="middle" fontWeight="700" letterSpacing=".06em">
-        BUCKET SERIES {seriesId} — CEMA STANDARD
+        STYLE {seriesId} — {styleLabel.toUpperCase()}
       </text>
       <text x={W/2} y={30} fontSize={7.5} fill={C.label} textAnchor="middle">
-        Front Elevation (left)  ·  Side Profile (right)
-      </text>
-      <text x={W/2} y={41} fontSize={6.5} fill={C.warning} textAnchor="middle">
-        ⚠ Bolt pattern is placeholder — pending CEMA reference drawing confirmation
+        Front Elevation (left)  ·  Side Profile (right)  ·  Punching {cat.punch}
       </text>
 
       {/* FRONT ELEVATION */}
-      <rect x={fX} y={fY} width={bWs} height={bHs}
-        fill={C.casFill} stroke={C.bucket} strokeWidth={1.5}/>
-      <path d={`M ${fX} ${fY} Q ${fX-backR*0.35} ${midY} ${fX} ${fY+bHs}`}
-        fill="none" stroke={C.lagging} strokeWidth={2} opacity={0.7}/>
+      <path d={frontPath} fill={C.casFill} stroke={C.bucket} strokeWidth={1.5}/>
       <rect x={fX+1} y={fillY} width={bWs-2} height={fY+bHs-fillY-1}
         fill={C.belt} fillOpacity={0.2} rx={1}/>
       <line x1={fX+1} y1={fillY} x2={fX+bWs-1} y2={fillY}
         stroke={C.belt} strokeWidth={1} strokeDasharray="3 2" opacity={0.7}/>
+
+      {/* Bolt row — back plate mounting flange (catalog p.H-152) */}
+      <rect x={fX} y={fY} width={bWs} height={12*scale}
+        fill="rgba(245,158,11,.06)" stroke={C.lagging} strokeWidth={0.8} strokeDasharray="3 2"/>
       {bolts.map((b,i)=>(
         <g key={i}>
-          <circle cx={b.x} cy={b.y} r={3.5} fill={C.dim} stroke={C.dimTxt} strokeWidth={1}/>
-          <line x1={b.x-3} y1={b.y} x2={b.x+3} y2={b.y} stroke={C.dimTxt} strokeWidth={0.6}/>
-          <line x1={b.x} y1={b.y-3} x2={b.x} y2={b.y+3} stroke={C.dimTxt} strokeWidth={0.6}/>
+          <circle cx={b.x} cy={b.y} r={Math.max(2.2,cat.boltDia*scale*0.5)}
+            fill={C.dim} stroke={C.dimTxt} strokeWidth={1}/>
+          <line x1={b.x-2.5} y1={b.y} x2={b.x+2.5} y2={b.y} stroke={C.dimTxt} strokeWidth={0.5}/>
+          <line x1={b.x} y1={b.y-2.5} x2={b.x} y2={b.y+2.5} stroke={C.dimTxt} strokeWidth={0.5}/>
         </g>
       ))}
-      <line x1={fCx} y1={fY-8} x2={fCx} y2={fY+bHs+8}
+      <text x={fX+bWs/2} y={fY-4} fontSize={6.5} fill={C.lagging} textAnchor="middle">
+        {cat.punch} mounting flange — {cat.boltN} holes
+      </text>
+
+      <line x1={fCx} y1={fY-22} x2={fCx} y2={fY+bHs+8}
         stroke={C.dim} strokeWidth={0.7} strokeDasharray="5 3"/>
-      <text x={fCx} y={fY-14} fontSize={9} fill={C.labelBr} textAnchor="middle" fontWeight="700">FRONT ELEVATION</text>
+      <text x={fCx} y={fY-28} fontSize={9} fill={C.labelBr} textAnchor="middle" fontWeight="700">FRONT ELEVATION</text>
       <Dim x1={fX} y1={fY+bHs+14} x2={fX+bWs} y2={fY+bHs+14}
-        label={`W = ${bW} mm`} offset={16}/>
+        label={`L = ${bW} mm`} offset={16}/>
       <Dim x1={fX-20} y1={fY} x2={fX-20} y2={fY+bHs}
-        label={`H = ${bH} mm`} offset={22} side="negative"/>
-      <Dim x1={fCx-boltSW/2} y1={fY-26} x2={fCx+boltSW/2} y2={fY-26}
-        label={`${cat.boltSpacW} mm`} offset={14}/>
+        label={`Depth = ${bH} mm`} offset={22} side="negative"/>
+      <Dim x1={bolts[0]?.x??fX} y1={boltRowY-14} x2={bolts[bolts.length-1]?.x??fX+bWs} y2={boltRowY-14}
+        label={`A = ${cat.boltA.toFixed(0)} mm × ${cat.boltN-1}`} offset={10} fontSize={7}/>
 
       {/* SIDE PROFILE */}
       <path d={sidePath} fill={C.casFill} stroke={C.bucket} strokeWidth={1.5}/>
-      <path d={`M ${sX} ${sY} Q ${sX-10} ${sY+bHs*0.5} ${sX} ${sY+bHs}`}
-        fill="none" stroke={C.lagging} strokeWidth={2} opacity={0.7}/>
-      <line x1={sX+bPs} y1={sY+bHs*0.15} x2={sX+bPs} y2={sY+bHs*0.85}
-        stroke={C.primary} strokeWidth={2.5} opacity={0.8}/>
-      {[0.3,0.65].map((f_,i)=>(
-        <ellipse key={i} cx={sX+8} cy={sY+bHs*f_} rx={3} ry={2}
-          fill={C.dim} stroke={C.dimTxt} strokeWidth={0.8}/>
-      ))}
-      <text x={sCx} y={sY-14} fontSize={9} fill={C.labelBr} textAnchor="middle" fontWeight="700">SIDE PROFILE</text>
+      {/* Water-level X-X reference line, per catalog nomenclature p.H-145 */}
+      {cat.style==="centrifugal" && (
+        <>
+          <line x1={sX-6} y1={sY+bHs*0.62} x2={sX+bPs+6} y2={sY+bHs*0.62}
+            stroke={C.dimTxt} strokeWidth={0.7} strokeDasharray="2 2" opacity={0.6}/>
+          <text x={sX-8} y={sY+bHs*0.62+3} fontSize={6} fill={C.dimTxt} textAnchor="end">X-X</text>
+        </>
+      )}
+      {cat.frontAngle!=null && (
+        <text x={sX+bPs*0.5} y={sY+bHs*0.85} fontSize={6.5} fill={C.primary} textAnchor="middle">
+          {cat.frontAngle}°
+        </text>
+      )}
+      <text x={sCx} y={fY-28} fontSize={9} fill={C.labelBr} textAnchor="middle" fontWeight="700">SIDE PROFILE</text>
       <Dim x1={sX} y1={sY+bHs+14} x2={sX+bPs} y2={sY+bHs+14}
         label={`P = ${bP} mm`} offset={16}/>
       <Dim x1={sX+bPs+20} y1={sY} x2={sX+bPs+20} y2={sY+bHs}
-        label={`H = ${bH} mm`} offset={22}/>
-      <text x={sX+bPs+6} y={sY+bHs*0.5} fontSize={7.5} fill={C.primary} fontWeight="700">LIP</text>
+        label={`Depth = ${bH} mm`} offset={22}/>
 
       {/* Spec table */}
       {[
-        [`Series ${seriesId}`,  `CEMA Standard`],
-        [`W × H × P`,           `${bW} × ${bH} × ${bP} mm`],
-        [`Struck capacity`,     `${bV} L`],
-        [`Active volume`,       `${V_actual} L (${inputs?.fill_pct??75}% fill)`],
-        [`Bucket mass (est.)`,  `${mass_bucket} kg`],
+        [`Style`,               `${seriesId} (${cat.style})`],
+        [`L × P × Depth`,       `${bW} × ${bP} × ${bH} mm`],
+        [`Active volume`,       `${(cat.V_L*(fillPct)).toFixed(1)} L (${inputs?.fill_pct??75}% fill)`],
         [`Total buckets`,       n_buckets ? `${n_buckets} EA` : "—"],
-        [`Bolt pattern`,        `${cat.boltSpacW} × ${cat.boltSpacH} mm (placeholder)`],
-        [`Mounting`,            `4× M12 gr8.8 (placeholder)`],
+        [`Belt punching`,       `${cat.punch}  (CEMA standard)`],
+        [`Bolt holes`,          `${cat.boltN} × Ø${cat.boltDia.toFixed(1)}mm`],
+        [`Hole spacing (A)`,    `${cat.boltA.toFixed(1)} mm`],
+        [`Edge inset (B)`,      `${cat.boltB.toFixed(1)} mm`],
       ].map(([k,v],i)=>(
         <g key={i}>
-          <rect x={14} y={H-130+i*14} width={190} height={14}
+          <rect x={14} y={H-130+i*14} width={200} height={14}
             fill={i%2===0?"rgba(59,130,246,.05)":"transparent"}/>
           <text x={18} y={H-120+i*14} fontSize={8} fill={C.text3}>{k}</text>
-          <text x={130} y={H-120+i*14} fontSize={7.5} fill={C.labelBr}
+          <text x={140} y={H-120+i*14} fontSize={7.5} fill={C.labelBr}
             fontFamily="JetBrains Mono,monospace" fontWeight="600">{v}</text>
         </g>
       ))}
-      <rect x={12} y={H-133} width={194} height={116}
+      <rect x={12} y={H-133} width={204} height={116}
         fill="none" stroke={C.dim} strokeWidth={0.8} rx={3}/>
-      <text x={109} y={H-140} fontSize={8.5} fill={C.text3} textAnchor="middle"
+      <text x={114} y={H-140} fontSize={8.5} fill={C.text3} textAnchor="middle"
         fontWeight="700" letterSpacing=".05em">BUCKET SPECIFICATION</text>
 
       <text x={fX+bWs+4} y={fillY} fontSize={7} fill={C.belt}>
@@ -823,7 +918,6 @@ function BucketDetailView({ inputs, results, W, H }) {
     </svg>
   );
 }
-
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function ElevatorSchematic({ inputs, results }) {
   const r=results||{};

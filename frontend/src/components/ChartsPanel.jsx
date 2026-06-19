@@ -45,6 +45,7 @@ export default function ChartsPanel({ results, inputs, activeTab }) {
     { id: "fill",    label: "Fill Analysis" },
     { id: "traj",    label: "Discharge Trajectory" },
     { id: "tension", label: "Tension Model" },
+    { id: "profile", label: "Tension Profile" },
   ];
 
   // Tension model — read directly from backend fields
@@ -217,6 +218,210 @@ export default function ChartsPanel({ results, inputs, activeTab }) {
             )}
           </>
         )}
+
+        {/* ── Tension Profile ────────────────────────────────────────────── */}
+        {tab === "profile" && (() => {
+          const tp = results.tension_profile;
+
+          // Chain elevators: tension profile not applicable
+          if (results.is_chain) return (
+            <div style={{ padding: 24, textAlign: "center", color: C.muted, fontSize: 11 }}>
+              Tension profile is not computed for chain elevators.<br/>
+              <span style={{ fontSize: 10 }}>Chain pull is a single lumped value — see Component tab.</span>
+            </div>
+          );
+
+          // Belt elevator but no profile data
+          if (!tp || !tp.stations?.length) return (
+            <div style={{ padding: 24, textAlign: "center", color: C.muted, fontSize: 11 }}>
+              Tension profile not available — recalculate to generate.
+            </div>
+          );
+
+          const stations  = tp.stations;
+          const loaded    = stations.filter(s => s.leg === "loaded");
+          const empty     = stations.filter(s => s.leg === "empty");
+          const T_max     = tp.T_max_N;
+          const T_min     = tp.T_min_N;
+          const T_rated   = tp.belt_rated_N;
+          const margin    = tp.rating_margin;
+          const marginOk  = margin != null && margin >= 1.0;
+          const marginWarn= margin != null && margin >= 0.9 && margin < 1.0;
+
+          // Chart geometry
+          const W_draw = 420, H_draw = 220;
+          const cl = 50, cb = 28, cr_edge = W_draw - 16, ct = H_draw - 22;
+          const cw = cr_edge - cl, ch = ct - cb;
+
+          const T_top = (T_rated != null ? Math.max(T_max, T_rated) : T_max) * 1.05;
+          const T_bot = T_min * 0.90;
+          const T_range = Math.max(T_top - T_bot, 1);
+
+          const H_m = inputs.H_m || 25;
+
+          const px = pos => cl + (pos / H_m) * cw;
+          const py = T   => ct - ((T - T_bot) / T_range) * ch;
+
+          // Grid lines
+          const gridLines = [];
+          const nGrid = 5;
+          for (let i = 0; i <= nGrid; i++) {
+            const T_grid = T_bot + (i / nGrid) * T_range;
+            const y = py(T_grid);
+            gridLines.push(
+              <line key={`h${i}`} x1={cl} y1={y} x2={cr_edge} y2={y}
+                stroke={C.border} strokeWidth={0.5} strokeDasharray="3,3" />,
+              <text key={`hl${i}`} x={cl - 4} y={y + 3} fontSize={8}
+                fill={C.muted} textAnchor="end">
+                {(T_grid / 1000).toFixed(1)}
+              </text>
+            );
+          }
+          for (let i = 0; i <= 4; i++) {
+            const pos = (i / 4) * H_m;
+            const x = px(pos);
+            gridLines.push(
+              <line key={`v${i}`} x1={x} y1={cb} x2={x} y2={ct}
+                stroke={C.border} strokeWidth={0.5} strokeDasharray="3,3" />,
+              <text key={`vl${i}`} x={x} y={ct + 13} fontSize={8}
+                fill={C.muted} textAnchor="middle">
+                {pos.toFixed(0)}m
+              </text>
+            );
+          }
+
+          // Loaded leg line (ascending, left→right = boot→head)
+          const loadedPath = loaded.map((s, i) =>
+            `${i === 0 ? "M" : "L"} ${px(s.position_m)} ${py(s.tension_N)}`
+          ).join(" ");
+
+          // Empty leg — position_m is ALREADY height-above-boot (same physical
+          // coordinate as the loaded leg, confirmed against backend station
+          // data: height_frac runs 1.0→0.0 as position_m runs 25→0 for H_m=25).
+          // No flip needed — plot directly against the same x-axis.
+          const emptyPath = empty.map((s, i) =>
+            `${i === 0 ? "M" : "L"} ${px(s.position_m)} ${py(s.tension_N)}`
+          ).join(" ");
+
+          // Belt rating line
+          const ratedY = T_rated != null ? py(T_rated) : null;
+
+          return (
+            <>
+              <div className="chart-title">
+                Position-Resolved Belt Tension Profile — CEMA 375 §4.07
+              </div>
+
+              {/* SVG chart */}
+              <svg width="100%" viewBox={`0 0 ${W_draw} ${H_draw}`}
+                style={{ display: "block", background: C.panel }}>
+
+                {/* Grid */}
+                {gridLines}
+
+                {/* Axes */}
+                <line x1={cl} y1={cb} x2={cl} y2={ct} stroke={C.muted} strokeWidth={1} />
+                <line x1={cl} y1={ct} x2={cr_edge} y2={ct} stroke={C.muted} strokeWidth={1} />
+
+                {/* Axis labels */}
+                <text x={cl - 30} y={cb + ch / 2} fontSize={8} fill={C.muted}
+                  textAnchor="middle" transform={`rotate(-90, ${cl-30}, ${cb + ch/2})`}>
+                  Tension (kN)
+                </text>
+                <text x={cl + cw / 2} y={H_draw - 4} fontSize={8} fill={C.muted}
+                  textAnchor="middle">
+                  Position from boot (m)
+                </text>
+
+                {/* Belt rating line */}
+                {ratedY != null && ratedY >= cb && ratedY <= ct && (
+                  <>
+                    <line x1={cl} y1={ratedY} x2={cr_edge} y2={ratedY}
+                      stroke={C.series2} strokeWidth={1.2} strokeDasharray="6,3" />
+                    <text x={cr_edge - 2} y={ratedY - 3} fontSize={8}
+                      fill={C.series2} textAnchor="end">
+                      Rated {(T_rated/1000).toFixed(1)}kN
+                    </text>
+                  </>
+                )}
+
+                {/* Loaded leg — blue (ascending, carries material) */}
+                <path d={loadedPath} fill="none" stroke={C.blue} strokeWidth={2.5} />
+
+                {/* Empty leg — teal (descending, no material) */}
+                <path d={emptyPath} fill="none" stroke={C.teal} strokeWidth={1.8}
+                  strokeDasharray="6,3" />
+
+                {/* Peak marker */}
+                {loaded.length > 0 && (() => {
+                  const peak = loaded[loaded.length - 1];
+                  const px2 = px(peak.position_m);
+                  const py2 = py(peak.tension_N);
+                  return (
+                    <>
+                      <circle cx={px2} cy={py2} r={4} fill={C.blue} stroke={C.text} strokeWidth={1} />
+                      <text x={px2 - 5} y={py2 - 8} fontSize={8} fill={C.blue} textAnchor="end">
+                        {(peak.tension_N/1000).toFixed(2)}kN
+                      </text>
+                    </>
+                  );
+                })()}
+
+                {/* Legend */}
+                <line x1={cl+4} y1={14} x2={cl+22} y2={14} stroke={C.blue} strokeWidth={2.5} />
+                <text x={cl+26} y={17} fontSize={8} fill={C.muted}>Loaded leg (carry)</text>
+                <line x1={cl+110} y1={14} x2={cl+128} y2={14} stroke={C.teal}
+                  strokeWidth={1.8} strokeDasharray="5,3" />
+                <text x={cl+132} y={17} fontSize={8} fill={C.muted}>Empty leg (return)</text>
+              </svg>
+
+              {/* Summary strip */}
+              <div style={{
+                display: "grid", gridTemplateColumns: "repeat(4,1fr)",
+                gap: 6, padding: "10px 12px",
+              }}>
+                {[
+                  { label: "Peak tension  (head)",
+                    value: T_max != null ? (T_max/1000).toFixed(2)+" kN" : "—",
+                    color: C.blue },
+                  { label: "Min tension  (boot)",
+                    value: T_min != null ? (T_min/1000).toFixed(2)+" kN" : "—",
+                    color: C.teal },
+                  { label: "Belt rated",
+                    value: T_rated != null ? (T_rated/1000).toFixed(2)+" kN" : "—",
+                    color: C.muted2 },
+                  { label: "Rating margin",
+                    value: margin != null ? margin.toFixed(3) : "—",
+                    color: marginOk ? C.green : marginWarn ? C.amber : C.series2 },
+                ].map((item, i) => (
+                  <div key={i} style={{
+                    background: C.hi, borderRadius: "var(--r-md)",
+                    padding: "8px 10px", border: `1px solid ${C.border2}`,
+                  }}>
+                    <div style={{ fontSize: 9, color: C.muted, marginBottom: 2 }}>{item.label}</div>
+                    <div style={{ fontFamily: "JetBrains Mono", fontSize: 14,
+                      fontWeight: 700, color: item.color }}>{item.value}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ padding: "2px 12px 10px", fontSize: 10, color: C.muted }}>
+                {tp.T_max_location}  ·  {tp.note ?? ""}
+                {margin != null && (margin < 1.0
+                  ? <span style={{ color: C.series2, marginLeft: 8 }}>
+                      ✗ Peak tension exceeds belt rating — upgrade belt or reduce load
+                    </span>
+                  : margin < 1.25
+                    ? <span style={{ color: C.amber, marginLeft: 8 }}>
+                        ⚠ Margin &lt;1.25 — verify with belt manufacturer
+                      </span>
+                    : <span style={{ color: C.green, marginLeft: 8 }}>
+                        ✓ Adequate belt margin
+                      </span>
+                )}
+              </div>
+            </>
+          );
+        })()}
       </div>
     </div>
   );

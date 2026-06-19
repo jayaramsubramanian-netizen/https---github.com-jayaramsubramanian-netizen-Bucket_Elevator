@@ -75,6 +75,7 @@ export default function ComponentPanel({ results, inputs }) {
 
   const T1    = results.T1 ?? 0;
   const T2    = results.T2 ?? 0;
+  const T3    = results.T3 ?? 0;
   const F_eff = results.F_eff ?? 0;
 
   // T1/T2 is display arithmetic from two backend fields — acceptable
