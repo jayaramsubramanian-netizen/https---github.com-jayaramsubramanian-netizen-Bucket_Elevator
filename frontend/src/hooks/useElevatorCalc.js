@@ -456,6 +456,46 @@ function normaliseResult(raw) {
     // v1.9.7 — Bucket plate thickness override
     bucket_thickness: raw.bucket_thickness ?? null,
 
+    // v1.9.9 — Belt length, bucket count/spacing (proper geometry, replacing
+    // the old H_m*2.15 flat approximation). Missing from this allowlist was
+    // the actual cause of "Bucket Count & Spacing" always showing "—" in
+    // EquipmentTree even though the backend always computed real values.
+    belt_length_working_m: raw.belt_length_working_m ?? null,
+    belt_length_total_m:   raw.belt_length_total_m   ?? null,
+    n_buckets:              raw.n_buckets              ?? null,
+    spacing_actual_m:       raw.spacing_actual_m       ?? null,
+
+    // v1.9.9 — Casing assembly fasteners (bolt count/size)
+    casing_bolts: raw.casing_bolts ?? null,
+
+    // v1.9.9 — Motor nominal speed + gearbox ratio (replaces hardcoded 1450
+    // rpm previously scattered across report/BOM/frontend files)
+    motor_sync_rpm:    raw.motor_sync_rpm    ?? null,
+    motor_nominal_rpm: raw.motor_nominal_rpm ?? null,
+    gearbox_ratio:     raw.gearbox_ratio     ?? null,
+
+    // v1.9.9 — Pre-computed summary/pass-fail fields (frontend should do
+    // zero engineering computation — these replace ad-hoc derivations that
+    // used to live in KpiGrid/ReportView/ChecksPanel/EquipmentTree)
+    fail_count:       raw.fail_count       ?? null,
+    warn_count:       raw.warn_count       ?? null,
+    pass_count:       raw.pass_count       ?? null,
+    info_count:       raw.info_count       ?? null,
+    cap_ok:           raw.cap_ok           ?? null,
+    speed_ok:         raw.speed_ok         ?? null,
+    cr_ok:            raw.cr_ok            ?? null,
+    l10_ok:           raw.l10_ok           ?? null,
+    cap_margin_pct:   raw.cap_margin_pct   ?? null,
+    motor_margin_pct: raw.motor_margin_pct ?? null,
+    T_total:          raw.T_total          ?? null,
+
+    // v1.9.9 — Hydraulic take-up (third alternative alongside gravity/screw)
+    takeup_hydraulic: raw.takeup_hydraulic ?? null,
+
+    // v1.9.9 — Chute position inputs' resulting check (stream interception)
+    // already passed through via stream_chute above; no new field needed
+    // here, but boot_pulley below now carries shaft/shell/end_disc/lagging.
+
     checks,
     status,
   };

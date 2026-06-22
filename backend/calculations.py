@@ -2946,19 +2946,27 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   **kwargs,                         # absorb future additions
                   ) -> list:
     checks = []
-    ok   = lambda msg: {"type": "ok",   "msg": msg}
-    warn = lambda msg: {"type": "warn", "msg": msg}
-    fail = lambda msg: {"type": "fail", "msg": msg}
-    info = lambda msg: {"type": "info", "msg": msg}
+    # v1.9.9 — subsystem tag added to every check, replacing EquipmentTree's
+    # fragile substring-keyword matching against free-text messages (e.g.
+    # "speed" as a keyword matched unrelated checks whose corrective-action
+    # text happened to say "...reduce belt speed", silently cross-
+    # contaminating that subsystem's pass/fail color). Tags are a closed,
+    # stable vocabulary matching the tree's actual leaf groupings:
+    #   process | bucket | belt | shaft | pulley | takeup | casing |
+    #   discharge | boot_pulley | power | service
+    ok   = lambda msg, subsystem="process": {"type": "ok",   "msg": msg, "subsystem": subsystem}
+    warn = lambda msg, subsystem="process": {"type": "warn", "msg": msg, "subsystem": subsystem}
+    fail = lambda msg, subsystem="process": {"type": "fail", "msg": msg, "subsystem": subsystem}
+    info = lambda msg, subsystem="process": {"type": "info", "msg": msg, "subsystem": subsystem}
 
     v_min, v_max = bucket["v_min"], bucket["v_max"]
     bkt_id = bucket.get("id", "?")
 
     # 1 — Capacity
     if Q < inp.Q_req:
-        checks.append(fail(f"Capacity {Q:.1f} t/h < required {inp.Q_req} t/h [CEMA 375 §4]"))
+        checks.append(fail(f"Capacity {Q:.1f} t/h < required {inp.Q_req} t/h [CEMA 375 §4]", subsystem="process"))
     else:
-        checks.append(ok(f"Capacity OK: {Q:.1f} t/h ≥ {inp.Q_req} t/h [CEMA 375 §4]"))
+        checks.append(ok(f"Capacity OK: {Q:.1f} t/h ≥ {inp.Q_req} t/h [CEMA 375 §4]", subsystem="process"))
 
     # 2 — Belt speed vs bucket limits
     if v < v_min:
@@ -2974,27 +2982,27 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 f"Speed {v:.2f} m/s is {_deficit_pct:.0f}% below CEMA min {v_min:.2f} m/s "
                 f"for bucket {bkt_id} — HIGH back-legging risk. Material will slide back "
                 f"inside buckets well before discharge; raise speed or reduce pulley/rpm "
-                f"mismatch [CEMA 375 §6]"))
+                f"mismatch [CEMA 375 §6]", subsystem="process"))
         elif _deficit_pct > 10:
             _bl_risk = "MEDIUM"
             checks.append(warn(
                 f"Speed {v:.2f} m/s is {_deficit_pct:.0f}% below CEMA min {v_min:.2f} m/s "
                 f"for bucket {bkt_id} — MEDIUM back-legging risk. Monitor for spillback "
-                f"at commissioning [CEMA 375 §6]"))
+                f"at commissioning [CEMA 375 §6]", subsystem="process"))
         else:
             _bl_risk = "LOW"
             checks.append(warn(
                 f"Speed {v:.2f} m/s is {_deficit_pct:.0f}% below CEMA min {v_min:.2f} m/s "
                 f"for bucket {bkt_id} — LOW back-legging risk, marginal margin only "
-                f"[CEMA 375 §6]"))
+                f"[CEMA 375 §6]", subsystem="process"))
     elif v > v_max:
         checks.append(fail(
             f"Speed {v:.2f} m/s exceeds CEMA max {v_max:.2f} m/s "
-            f"for bucket {bkt_id} — scatter risk [CEMA 375 §6]"))
+            f"for bucket {bkt_id} — scatter risk [CEMA 375 §6]", subsystem="process"))
     else:
         checks.append(ok(
             f"Speed {v:.2f} m/s within CEMA range {v_min:.2f}–{v_max:.2f} m/s "
-            f"[CEMA 375 §6]"))
+            f"[CEMA 375 §6]", subsystem="process"))
 
     # 3 — Centrifugal ratio — logic REVERSED for HF continuous discharge
     if is_continuous:
@@ -3004,29 +3012,29 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             checks.append(fail(
                 f"CR={cr:.3f} ≥ 1.0 — centrifugal discharge occurring in HF elevator. "
                 f"HF design requires CR < 1.0 (reduce belt speed or increase pulley D) "
-                f"[CEMA 375 §3.3]"))
+                f"[CEMA 375 §3.3]", subsystem="process"))
         elif cr >= 0.7:
             checks.append(warn(
                 f"CR={cr:.3f} approaching 1.0 — centrifugal discharge onset risk in HF mode. "
-                f"Optimal HF range: CR 0.3–0.7 [CEMA 375 §3.3]"))
+                f"Optimal HF range: CR 0.3–0.7 [CEMA 375 §3.3]", subsystem="process"))
         elif cr >= 0.3:
             checks.append(ok(
                 f"CR={cr:.3f} — continuous discharge confirmed (HF optimal range 0.3–0.7) "
-                f"[CEMA 375 §3.3]"))
+                f"[CEMA 375 §3.3]", subsystem="process"))
         else:
             checks.append(warn(
                 f"CR={cr:.3f} < 0.3 — very low belt speed; "
-                f"check material back-flow and filling efficiency [CEMA 375 §3.3]"))
+                f"check material back-flow and filling efficiency [CEMA 375 §3.3]", subsystem="process"))
     else:
         # Standard centrifugal discharge (CC, A, B, etc.)
         if cr < 1.0:
-            checks.append(warn(f"CR={cr:.3f} < 1.0 — gravity/mixed discharge [CEMA 375 §3]"))
+            checks.append(warn(f"CR={cr:.3f} < 1.0 — gravity/mixed discharge [CEMA 375 §3]", subsystem="process"))
         elif cr <= 1.8:
-            checks.append(ok(f"CR={cr:.3f} — optimal centrifugal range 1.0–1.8 [CEMA 375 §3]"))
+            checks.append(ok(f"CR={cr:.3f} — optimal centrifugal range 1.0–1.8 [CEMA 375 §3]", subsystem="process"))
         elif cr <= 2.5:
-            checks.append(info(f"CR={cr:.3f} — centrifugal discharge acceptable [CEMA 375 §3]"))
+            checks.append(info(f"CR={cr:.3f} — centrifugal discharge acceptable [CEMA 375 §3]", subsystem="process"))
         else:
-            checks.append(warn(f"CR={cr:.3f} > 2.5 — excessive scatter risk [CEMA 375 §3]"))
+            checks.append(warn(f"CR={cr:.3f} > 2.5 — excessive scatter risk [CEMA 375 §3]", subsystem="process"))
 
     # 4 — Effective CR for cohesive/moist materials (v1.2.0 — centrifugal only)
     cr_eff_threshold = mat_behavior["effective_cr_threshold"]
@@ -3036,33 +3044,33 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             checks.append(warn(
                 f"Material rollback factor={cr_eff_threshold:.2f} "
                 f"— effective CR={cr_eff:.3f} < 1.0; "
-                f"bucket retention / spillage risk for cohesive/moist material [CEMA 550 §A-12]"))
+                f"bucket retention / spillage risk for cohesive/moist material [CEMA 550 §A-12]", subsystem="process"))
         else:
             checks.append(info(
                 f"Material rollback factor={cr_eff_threshold:.2f} "
-                f"— effective CR={cr_eff:.3f} — adequate for this material [CEMA 550 §A-12]"))
+                f"— effective CR={cr_eff:.3f} — adequate for this material [CEMA 550 §A-12]", subsystem="process"))
     elif is_continuous:
         # For HF: cohesion affects how cleanly material pours from the inverted bucket
         cohesion = float(mat.get("cohesion", 0) or 0)
         if cohesion > 0.5:
             checks.append(warn(
                 f"Material cohesion {cohesion:.2f} kPa — bridging risk in inverted bucket. "
-                f"Consider vibrators on head-section casing [CEMA 550 §A-12]"))
+                f"Consider vibrators on head-section casing [CEMA 550 §A-12]", subsystem="process"))
         elif cohesion > 0.2:
             checks.append(info(
                 f"Material cohesion {cohesion:.2f} kPa — monitor bucket discharge; "
-                f"some residual retention expected [CEMA 550 §A-12]"))
+                f"some residual retention expected [CEMA 550 §A-12]", subsystem="process"))
 
     # 5 — Advisory fill vs material recommendation
     rec_fill = mat_behavior["recommended_fill_pct"]
     if inp.fill_pct > rec_fill + 10.0:
         checks.append(warn(
             f"User fill {inp.fill_pct:.0f}% > material-recommended {rec_fill:.0f}% "
-            f"— overflow / spillage risk [CEMA 550 §A-12]"))
+            f"— overflow / spillage risk [CEMA 550 §A-12]", subsystem="bucket"))
     elif inp.fill_pct < rec_fill - 15.0:
         checks.append(info(
             f"User fill {inp.fill_pct:.0f}% — material allows up to {rec_fill:.0f}% "
-            f"— capacity headroom available"))
+            f"— capacity headroom available", subsystem="bucket"))
 
 
     # 5b — Bucket-material compatibility check
@@ -3086,19 +3094,19 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 checks.append(warn(
                     f"Bucket style {_cur_style} — MANUAL selection conflicts with "
                     f"recommendation: {_rec_style} preferred for '{mat.get('name','?')}' "
-                    f"({_rec_disch}). {_brec.get('reasoning','')[:100]} [CEMA 375 §6]"))
+                    f"({_rec_disch}). {_brec.get('reasoning','')[:100]} [CEMA 375 §6]", subsystem="bucket"))
             else:
                 # Auto-selected or same regime — advisory info only
                 checks.append(info(
                     f"Bucket style {_cur_style} — {_rec_style} may be more suitable for "
-                    f"'{mat.get('name','?')}'. {_brec.get('reasoning','')[:90]} [CEMA 375 §6]"))
+                    f"'{mat.get('name','?')}'. {_brec.get('reasoning','')[:90]} [CEMA 375 §6]", subsystem="bucket"))
         else:
             checks.append(ok(
                 f"Bucket style {_cur_style or '—'} — good match for "
-                f"'{mat.get('name','?')}' [CEMA 375 §6]"))
+                f"'{mat.get('name','?')}' [CEMA 375 §6]", subsystem="bucket"))
         # Surface supplementary notes as info checks
         for _note in (_brec.get("notes") or []):
-            checks.append(info(f"Bucket note: {_note} [CEMA 375 §6]"))
+            checks.append(info(f"Bucket note: {_note} [CEMA 375 §6]", subsystem="bucket"))
     except Exception:
         pass   # never block calculation if recommendation engine fails
 
@@ -3112,18 +3120,18 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 f"Bucket thickness {_t_ovr:.1f}mm vs catalogue standard "
                 f"{_t_imp:.1f}mm (ratio {_ratio:.2f}) — significantly thinner than "
                 f"standard gauge. Verify structural adequacy independently; not "
-                f"validated by bolt fatigue or casing checks [CEMA 375 §6]"))
+                f"validated by bolt fatigue or casing checks [CEMA 375 §6]", subsystem="bucket"))
         elif _ratio > 1.5:
             checks.append(info(
                 f"Bucket thickness {_t_ovr:.1f}mm vs catalogue standard "
                 f"{_t_imp:.1f}mm (ratio {_ratio:.2f}) — heavier gauge increases "
                 f"dead load on belt/shaft/bearings; mass scaled to "
                 f"{bucket_thickness.get('mass_scaled_kg','?')}kg per bucket "
-                f"[CEMA 375 §6]"))
+                f"[CEMA 375 §6]", subsystem="bucket"))
         else:
             checks.append(ok(
                 f"Bucket thickness {_t_ovr:.1f}mm (catalogue standard "
-                f"{_t_imp:.1f}mm, ratio {_ratio:.2f}) [CEMA 375 §6]"))
+                f"{_t_imp:.1f}mm, ratio {_ratio:.2f}) [CEMA 375 §6]", subsystem="bucket"))
 
     # 5c — Bucket spacing check
     # Derives spacing in-function to avoid propagating fill_eff as extra kwarg.
@@ -3148,31 +3156,31 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             checks.append(fail(
                 f"Bucket spacing {_sp_mm:.0f}mm < bucket projection {_P_mm:.0f}mm — "
                 f"adjacent buckets physically overlap. Increase bucket gap to ≥ {_P_mm - _sp_mm + 10:.0f}mm "
-                f"[CEMA 375 §3.2]"))
+                f"[CEMA 375 §3.2]", subsystem="bucket"))
         elif _sp_mm < _min_sp_mm and not is_continuous:
             checks.append(warn(
                 f"Bucket spacing {_sp_mm:.0f}mm — {_clear_fac:.0f}× clearance below "
                 f"reference {_ref_geom:.0f}mm. Tight spacing at boot pulley wrap — "
-                f"increase gap to ≥ {_min_sp_mm - _sp_mm + 5:.0f}mm [CEMA 375 §3.2]"))
+                f"increase gap to ≥ {_min_sp_mm - _sp_mm + 5:.0f}mm [CEMA 375 §3.2]", subsystem="bucket"))
         elif _ratio < 0.75:
             checks.append(warn(
                 f"Bucket spacing {_sp_mm:.0f}mm — CEMA optimal is {_opt_m*1000:.0f}mm "
                 f"(ratio {_ratio:.2f}). Under-spaced: boot filling congestion, recirculation risk "
-                f"[CEMA 375 §6]"))
+                f"[CEMA 375 §6]", subsystem="bucket"))
         elif _ratio > 2.0:
             checks.append(warn(
                 f"Bucket spacing {_sp_mm:.0f}mm — CEMA optimal is {_opt_m*1000:.0f}mm "
                 f"(ratio {_ratio:.2f}). Over-spaced: inter-bucket material spill, reduced fill "
-                f"efficiency [CEMA 375 §6]"))
+                f"efficiency [CEMA 375 §6]", subsystem="bucket"))
         else:
             checks.append(ok(
                 f"Bucket spacing {_sp_mm:.0f}mm — within CEMA §6 optimal range "
-                f"(ratio {_ratio:.2f}, optimal {_opt_m*1000:.0f}mm) [CEMA 375 §6]"))
+                f"(ratio {_ratio:.2f}, optimal {_opt_m*1000:.0f}mm) [CEMA 375 §6]", subsystem="bucket"))
         # CR-dependent spacing: high centrifugal energy → wider spacing prevents inter-bucket transfer
         if not is_continuous and cr > 2.0 and _ratio < 1.5:
             checks.append(info(
                 f"CR={cr:.2f} > 2.0 — consider wider gap (+{_P_mm*0.3:.0f}mm) "
-                f"to reduce inter-bucket material transfer at high centrifugal discharge [CEMA 375 §6]"))
+                f"to reduce inter-bucket material transfer at high centrifugal discharge [CEMA 375 §6]", subsystem="bucket"))
     except Exception:
         pass
 
@@ -3186,18 +3194,18 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             if _sf >= _cf:
                 checks.append(fail(
                     f"Fill stability: HIGH RISK (starvation factor {_sf:.2f}) — {_fnote}. "
-                    f"Reduce gap or increase speed to reach optimal spacing [CEMA 375 §6]"))
+                    f"Reduce gap or increase speed to reach optimal spacing [CEMA 375 §6]", subsystem="bucket"))
             else:
                 checks.append(fail(
                     f"Fill stability: HIGH RISK (choking factor {_cf:.2f}) — {_fnote}. "
-                    f"Reduce bucket gap or check material flowability rating [CEMA 375 §6]"))
+                    f"Reduce bucket gap or check material flowability rating [CEMA 375 §6]", subsystem="bucket"))
         elif _stab == "MARGINAL":
             checks.append(warn(
                 f"Fill stability: MARGINAL (starve={_sf:.2f}, choke={_cf:.2f}) — "
-                f"{_fnote} [CEMA 375 §6]"))
+                f"{_fnote} [CEMA 375 §6]", subsystem="bucket"))
         else:
             checks.append(ok(
-                f"Fill stability: SAFE — {_fnote} [CEMA 375 §6]"))
+                f"Fill stability: SAFE — {_fnote} [CEMA 375 §6]", subsystem="bucket"))
 
     # 5e — Pickup / digging efficiency (v1.9.3, centrifugal only)
     if pickup_eff and pickup_eff.get("applicable"):
@@ -3207,14 +3215,14 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         if _res == "HIGH":
             checks.append(warn(
                 f"Digging efficiency {_pe*100:.0f}% — HIGH resistance. {_pnote} "
-                f"[CEMA 375 §6]"))
+                f"[CEMA 375 §6]", subsystem="bucket"))
         elif _res == "MODERATE":
             checks.append(info(
                 f"Digging efficiency {_pe*100:.0f}% — MODERATE resistance. {_pnote} "
-                f"[CEMA 375 §6]"))
+                f"[CEMA 375 §6]", subsystem="bucket"))
         else:
             checks.append(ok(
-                f"Digging efficiency {_pe*100:.0f}% — {_pnote} [CEMA 375 §6]"))
+                f"Digging efficiency {_pe*100:.0f}% — {_pnote} [CEMA 375 §6]", subsystem="bucket"))
 
     # 5f — Dynamic startup tension (v1.9.4)
     if startup_dyn:
@@ -3229,46 +3237,46 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                     f"{_dst.replace('_',' ')} start) EXCEEDS belt rated capacity "
                     f"{startup_dyn.get('belt_rated_N',0):.0f} N (margin {_margin:.2f}). "
                     f"Increase belt ply, use VFD ramped start, or extend startup time "
-                    f"[CEMA 375 §4]"))
+                    f"[CEMA 375 §4]", subsystem="belt"))
             elif _margin < 1.15:
                 checks.append(warn(
                     f"Startup peak tension {_t_peak:.0f} N ({_gov_m}-governed, "
                     f"{_dst.replace('_',' ')} start) — margin {_margin:.2f} against belt "
-                    f"rating is thin. Consider soft-start/VFD or next belt ply [CEMA 375 §4]"))
+                    f"rating is thin. Consider soft-start/VFD or next belt ply [CEMA 375 §4]", subsystem="belt"))
             else:
                 checks.append(ok(
                     f"Startup peak tension {_t_peak:.0f} N ({_gov_m}-governed, "
                     f"{_dst.replace('_',' ')} start) — margin {_margin:.2f} against belt "
-                    f"rating [CEMA 375 §4]"))
+                    f"rating [CEMA 375 §4]", subsystem="belt"))
         else:
             checks.append(info(
                 f"Startup peak tension {_t_peak:.0f} N ({_gov_m}-governed, "
-                f"{_dst.replace('_',' ')} start, chain elevator) [CEMA 375 §4]"))
+                f"{_dst.replace('_',' ')} start, chain elevator) [CEMA 375 §4]", subsystem="belt"))
 
     # 5g — Shock load / backstop advisory (v1.9.4)
     if shock_check:
         if shock_check.get("backstop_required") and not shock_check.get("adequate_for_normal_shock"):
             checks.append(warn(
-                f"{shock_check.get('recommendation','')} [CEMA 375 §4]"))
+                f"{shock_check.get('recommendation','')} [CEMA 375 §4]", subsystem="belt"))
         elif not shock_check.get("adequate_for_normal_shock"):
             checks.append(info(
-                f"{shock_check.get('recommendation','')} [CEMA 375 §4]"))
+                f"{shock_check.get('recommendation','')} [CEMA 375 §4]", subsystem="belt"))
         else:
             checks.append(ok(
                 f"Startup factor {shock_check.get('startup_factor',0):.1f} adequate for "
-                f"normal shock loads [CEMA 375 §4]"))
+                f"normal shock loads [CEMA 375 §4]", subsystem="belt"))
 
     # 6 — Headshaft load
     T_total = T1 + T2 + T3
     if T_total > 80000:
         checks.append(fail(
-            f"Headshaft load {T_total/1000:.1f} kN — verify belt/pulley ratings [CEMA 375 §4]"))
+            f"Headshaft load {T_total/1000:.1f} kN — verify belt/pulley ratings [CEMA 375 §4]", subsystem="shaft"))
     elif T_total > 50000:
         checks.append(warn(
-            f"Headshaft load {T_total/1000:.1f} kN — approaching heavy-duty belt [CEMA 375 §4]"))
+            f"Headshaft load {T_total/1000:.1f} kN — approaching heavy-duty belt [CEMA 375 §4]", subsystem="shaft"))
     else:
         checks.append(ok(
-            f"Headshaft load {T_total/1000:.1f} kN — within standard belt capacity [CEMA 375 §4]"))
+            f"Headshaft load {T_total/1000:.1f} kN — within standard belt capacity [CEMA 375 §4]", subsystem="shaft"))
 
     # 6b — Belt slip (Euler-Eytelwein) — skipped for chain elevators
     if euler_chk is not None and not is_chain:
@@ -3279,12 +3287,12 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         elif euler_chk.get("slip_safe") is True:
             checks.append(ok(
                 f"Belt slip check: T3={T3:.0f} N ≥ Euler min {t3_min:.0f} N "
-                f"(e^μθ={e_ratio:.3f}, μ={inp.mu}, wrap={inp.wrap_deg or 180:.0f}°) — no slip [CEMA 375 §4]"))
+                f"(e^μθ={e_ratio:.3f}, μ={inp.mu}, wrap={inp.wrap_deg or 180:.0f}°) — no slip [CEMA 375 §4]", subsystem="belt"))
         else:
             checks.append(fail(
                 f"BELT SLIP RISK: T3={T3:.0f} N < Euler min {t3_min:.0f} N "
                 f"(e^μθ={e_ratio:.3f}, μ={inp.mu}, wrap={inp.wrap_deg or 180:.0f}°). "
-                f"Increase take-up tension, add snub pulley, or upgrade lagging [CEMA 375 §4]"))
+                f"Increase take-up tension, add snub pulley, or upgrade lagging [CEMA 375 §4]", subsystem="belt"))
 
     # 6c — Tension profile vs belt rating (v1.9.2)
     # Verifies the ACTUAL peak tension from the position-resolved profile
@@ -3302,28 +3310,28 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 checks.append(fail(
                     f"Tension profile peak {_t_max:.0f} N ({_t_loc}) EXCEEDS belt "
                     f"rated capacity {_rated:.0f} N (margin {_margin:.2f}). "
-                    f"Increase belt ply or reduce loading [CEMA 375 §4]"))
+                    f"Increase belt ply or reduce loading [CEMA 375 §4]", subsystem="belt"))
             elif _margin < 1.25:
                 checks.append(warn(
                     f"Tension profile peak {_t_max:.0f} N ({_t_loc}) — margin "
                     f"{_margin:.2f} against belt rating {_rated:.0f} N is thin. "
-                    f"Consider next ply size for service-life margin [CEMA 375 §4]"))
+                    f"Consider next ply size for service-life margin [CEMA 375 §4]", subsystem="belt"))
             else:
                 checks.append(ok(
                     f"Tension profile peak {_t_max:.0f} N ({_t_loc}) — margin "
-                    f"{_margin:.2f} against belt rating {_rated:.0f} N [CEMA 375 §4]"))
+                    f"{_margin:.2f} against belt rating {_rated:.0f} N [CEMA 375 §4]", subsystem="belt"))
 
     # 7 — Shaft sizing
     checks.append(info(
         f"Shaft governed by {governed_by}: {d_mm:.1f} mm "
-        f"(stress {d_stress_mm:.1f} mm, deflection {d_deflect_mm:.1f} mm) [CEMA 375 §4]"))
+        f"(stress {d_stress_mm:.1f} mm, deflection {d_deflect_mm:.1f} mm) [CEMA 375 §4]", subsystem="shaft"))
 
     # 7a — Shaft material grade (v1.9.5)
     if shaft_material and shaft_tau_allow_MPa:
         checks.append(info(
             f"Shaft material: {shaft_material} (τ_allow={shaft_tau_allow_MPa:.0f} MPa, "
             f"keyed shaft basis per ASME B17.1). Higher grades (1045_CD, 4140_QT) "
-            f"permit a smaller diameter for the same load [CEMA 375 §4]"))
+            f"permit a smaller diameter for the same load [CEMA 375 §4]", subsystem="shaft"))
 
     # 7b — Pulley shell thickness (v1.9.0, override support v1.9.6)
     if pulley_shell:
@@ -3335,16 +3343,16 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 checks.append(ok(
                     f"Pulley shell {t_use:.1f}mm (specified) ≥ calculated minimum "
                     f"{t_gov:.1f}mm (governed by {gov_by_shell.replace('_',' ')}) "
-                    f"[CEMA Pulley Standard]"))
+                    f"[CEMA Pulley Standard]", subsystem="pulley"))
             else:
                 checks.append(fail(
                     f"Pulley shell {t_use:.1f}mm (specified) < calculated minimum "
                     f"{t_gov:.1f}mm (governed by {gov_by_shell.replace('_',' ')}). "
-                    f"Increase plate thickness to ≥ {t_gov:.1f}mm [CEMA Pulley Standard]"))
+                    f"Increase plate thickness to ≥ {t_gov:.1f}mm [CEMA Pulley Standard]", subsystem="pulley"))
         else:
             checks.append(info(
                 f"Pulley shell min t={t_gov:.1f}mm (governed by {gov_by_shell.replace('_',' ')}) "
-                f"[CEMA Pulley Standard]"))
+                f"[CEMA Pulley Standard]", subsystem="pulley"))
 
     # 7c — Head shaft critical speed (v1.9.0)
     if critical_speed:
@@ -3355,38 +3363,38 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             checks.append(fail(
                 f"Operating speed {n_op:.0f} rpm is {ratio*100:.0f}% of critical speed "
                 f"{n_crit:.0f} rpm — shaft whirl risk. Increase shaft diameter or "
-                f"reduce bearing span [preliminary Dunkerley estimate]"))
+                f"reduce bearing span [preliminary Dunkerley estimate]", subsystem="shaft"))
         elif ratio > 0.60:
             checks.append(warn(
                 f"Operating speed {n_op:.0f} rpm is {ratio*100:.0f}% of critical speed "
                 f"{n_crit:.0f} rpm — verify with full rotor-dynamics analysis "
-                f"[preliminary Dunkerley estimate]"))
+                f"[preliminary Dunkerley estimate]", subsystem="shaft"))
         else:
             checks.append(ok(
                 f"Operating speed {n_op:.0f} rpm is {ratio*100:.0f}% of critical speed "
-                f"{n_crit:.0f} rpm — adequate margin [preliminary Dunkerley estimate]"))
+                f"{n_crit:.0f} rpm — adequate margin [preliminary Dunkerley estimate]", subsystem="shaft"))
 
     # 8 — Bearing life
     if L10 < 20000:
-        checks.append(warn(f"Bearing L10={L10:.0f} h < 20,000 h minimum [CEMA 375 §4]"))
+        checks.append(warn(f"Bearing L10={L10:.0f} h < 20,000 h minimum [CEMA 375 §4]", subsystem="shaft"))
     elif L10 < 40000:
-        checks.append(info(f"Bearing L10={L10:.0f} h — acceptable [CEMA 375 §4]"))
+        checks.append(info(f"Bearing L10={L10:.0f} h — acceptable [CEMA 375 §4]", subsystem="shaft"))
     else:
-        checks.append(ok(f"Bearing L10={L10:.0f} h — excellent [CEMA 375 §4]"))
+        checks.append(ok(f"Bearing L10={L10:.0f} h — excellent [CEMA 375 §4]", subsystem="shaft"))
 
     # 9 — Drive efficiency
     if Ceff > 1.25:
-        checks.append(warn(f"Ceff={Ceff:.2f} — high drive losses [CEMA 375 §4]"))
+        checks.append(warn(f"Ceff={Ceff:.2f} — high drive losses [CEMA 375 §4]", subsystem="power"))
 
     # 10 — Abrasion
     abr = mat.get("abr_code", 3)
     if abr >= 6:
         checks.append(warn(
             f"Abrasion class {abr}/7 — AR400/AR500 buckets and casing liners "
-            f"strongly recommended [CEMA 550]"))
+            f"strongly recommended [CEMA 550]", subsystem="process"))
     elif abr >= 4:
         checks.append(info(
-            f"Abrasion class {abr}/7 — hardened bucket lip recommended [CEMA 550]"))
+            f"Abrasion class {abr}/7 — hardened bucket lip recommended [CEMA 550]", subsystem="process"))
 
     # 10b — Material temperature (v1.9.0)
     _mat_temp = float(getattr(inp, "material_temperature_c", 20) or 20)
@@ -3395,23 +3403,23 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
     if _mat_temp > _blim["max_c"]:
         checks.append(fail(
             f"Temperature {_mat_temp:.0f}°C exceeds {_belt_t} belt limit "
-            f"{_blim['max_c']:.0f}°C — heat damage. {_blim['note']} [CEMA 375 §3]"))
+            f"{_blim['max_c']:.0f}°C — heat damage. {_blim['note']} [CEMA 375 §3]", subsystem="belt"))
     elif _mat_temp > _blim["warn_c"]:
         checks.append(warn(
             f"Temperature {_mat_temp:.0f}°C above {_belt_t} belt warning "
-            f"threshold {_blim['warn_c']:.0f}°C. {_blim['note']} [CEMA 375 §3]"))
+            f"threshold {_blim['warn_c']:.0f}°C. {_blim['note']} [CEMA 375 §3]", subsystem="belt"))
     else:
         checks.append(ok(
             f"Temperature {_mat_temp:.0f}°C — within {_belt_t} belt limits "
-            f"({_blim['max_c']:.0f}°C max) [CEMA 375 §3]"))
+            f"({_blim['max_c']:.0f}°C max) [CEMA 375 §3]", subsystem="belt"))
     if _mat_temp > 80:
         checks.append(warn(
             f"Temperature {_mat_temp:.0f}°C — standard bearing grease limit 80°C. "
-            f"Specify high-temp grease (SKF LGWA 2) or oil-bath lubrication [ISO 281]"))
+            f"Specify high-temp grease (SKF LGWA 2) or oil-bath lubrication [ISO 281]", subsystem="belt"))
     if _mat_temp > 200:
         checks.append(fail(
             f"Temperature {_mat_temp:.0f}°C — seals and lagging unsuitable. "
-            f"Specify metallic or ceramic-faced components [CEMA 375 §3]"))
+            f"Specify metallic or ceramic-faced components [CEMA 375 §3]", subsystem="belt"))
 
     # 10c — Bucket material suitability (v1.9.0)
     _bkt_mat = getattr(inp, "bucket_material", "steel") or "steel"
@@ -3422,54 +3430,54 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
     if _mat_temp > _bm["temp_max_c"]:
         checks.append(fail(
             f"Bucket material {_bkt_mat} max temp {_bm['temp_max_c']:.0f}°C — "
-            f"inlet {_mat_temp:.0f}°C. Select steel or AR400 [CEMA 375 §6]"))
+            f"inlet {_mat_temp:.0f}°C. Select steel or AR400 [CEMA 375 §6]", subsystem="bucket"))
         _bkt_ok = False
     if _env == "corrosive" and _bm["corrosion"] == "none":
         checks.append(warn(
             f"Corrosive duty — bucket material {_bkt_mat} unprotected. "
-            f"Specify SS304 (mild) or SS316 (severe chemical) [CEMA 550]"))
+            f"Specify SS304 (mild) or SS316 (severe chemical) [CEMA 550]", subsystem="bucket"))
         _bkt_ok = False
     elif _env == "corrosive":
-        checks.append(ok(f"Bucket material {_bkt_mat} — corrosion suitable [CEMA 550]"))
+        checks.append(ok(f"Bucket material {_bkt_mat} — corrosion suitable [CEMA 550]", subsystem="bucket"))
     if _abr_v > _bm["abr_limit"]:
         checks.append(warn(
             f"Bucket {_bkt_mat} — abrasion class {_abr_v}/7 exceeds limit "
-            f"{_bm['abr_limit']}/7. Specify AR400 or AR500 [CEMA 375 §6]"))
+            f"{_bm['abr_limit']}/7. Specify AR400 or AR500 [CEMA 375 §6]", subsystem="bucket"))
         _bkt_ok = False
     if _bkt_mat == "HDPE" and _mat_temp > 50:
         checks.append(fail(
             f"HDPE buckets — temperature {_mat_temp:.0f}°C exceeds HDPE limit 50°C "
-            f"[CEMA 375 §6]"))
+            f"[CEMA 375 §6]", subsystem="bucket"))
         _bkt_ok = False
     if _bkt_ok:
         checks.append(ok(
             f"Bucket material {_bkt_mat} ({_bm['name']}) — suitable for this duty "
-            f"[CEMA 375 §6]"))
+            f"[CEMA 375 §6]", subsystem="bucket"))
 
     # 10d — Corrosive environment system flags
     if _env == "corrosive":
         checks.append(warn(
             f"Corrosive environment — verify: casing (CS+paint or SS), "
             f"fasteners (A4-SS stainless), belt cover (PVC/special rubber), "
-            f"shaft end seals [CEMA 550 §A-8]"))
+            f"shaft end seals [CEMA 550 §A-8]", subsystem="service"))
 
     # 11 — Hazard flags (v1.2.0)
     hazards = mat_behavior["hazards"]
     if hazards.get("atex_required", False):
         checks.append(warn(
             "Explosive/flammable material — ATEX/NEC Class II: "
-            "anti-static belt, earth bonding, explosion venting [CEMA 550 §B-10/B-11]"))
+            "anti-static belt, earth bonding, explosion venting [CEMA 550 §B-10/B-11]", subsystem="service"))
     if hazards.get("dust_control_required", False):
         checks.append(info(
             "Material aerates or is flammable — dust control and boot venting "
-            "required [CEMA 550 §B-1/B-11]"))
+            "required [CEMA 550 §B-1/B-11]", subsystem="service"))
     if hazards.get("stainless_recommended", False):
         checks.append(warn(
-            "Corrosive material — 316L stainless or coated casings/buckets [CEMA 550 §B-4]"))
+            "Corrosive material — 316L stainless or coated casings/buckets [CEMA 550 §B-4]", subsystem="service"))
     if hazards.get("hygroscopic", False):
         checks.append(info(
             "Hygroscopic material — seal casing openings; monitor moisture "
-            "content in storage [CEMA 550 §B-8]"))
+            "content in storage [CEMA 550 §B-8]", subsystem="service"))
 
     # 12 — Hub & keyway [ASME B17.1]
     if key_check:
@@ -3477,10 +3485,10 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             checks.append(ok(
                 f"Keyway: shear {key_check['tau_actual_MPa']} MPa, "
                 f"bearing {key_check['sigma_actual_MPa']} MPa — "
-                f"{key_check['b_key_mm']}x{key_check['h_key_mm']}mm key within limits [ASME B17.1]"))
+                f"{key_check['b_key_mm']}x{key_check['h_key_mm']}mm key within limits [ASME B17.1]", subsystem="shaft"))
         else:
             checks.append(fail(
-                f"Keyway FAIL — {key_check['recommendation']} [ASME B17.1]"))
+                f"Keyway FAIL — {key_check['recommendation']} [ASME B17.1]", subsystem="shaft"))
 
     # 12b — Welded hub connection (v1.9.8, alternative to keyway above)
     if weld_check:
@@ -3489,7 +3497,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             f"(governed by {weld_check['governed_by'].replace('_',' ')}, "
             f"τ={weld_check['tau_torsion_MPa']}MPa vs allow "
             f"{weld_check['weld_allow_MPa']}MPa). {weld_check['recommendation']} "
-            f"[AWS D1.1]"))
+            f"[AWS D1.1]", subsystem="shaft"))
 
     # 12c — Hollow shaft configuration (v1.9.8)
     if shaft_bore_ratio and shaft_bore_ratio > 0:
@@ -3497,7 +3505,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             f"Hollow shaft: bore ratio {shaft_bore_ratio:.2f} "
             f"(ID≈{shaft_d_inner_mm:.0f}mm), ~{shaft_mass_saving_pct:.0f}% cross-"
             f"sectional mass reduction vs equivalent solid shaft at same OD "
-            f"[OEM design choice — not a CEMA-mandated ratio]"))
+            f"[OEM design choice — not a CEMA-mandated ratio]", subsystem="shaft"))
 
     # 13 — Pulley lagging
     if lagging:
@@ -3506,17 +3514,17 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             checks.append(fail(
                 f"Lagging slip FAIL: belt ratio {lagging['belt_ratio_tight_slack']:.3f} "
                 f"> Euler {lagging['euler_ratio_lagged']:.3f} even with {lag}. "
-                f"Increase T3 or add snub pulley [CEMA 375 §4]"))
+                f"Increase T3 or add snub pulley [CEMA 375 §4]", subsystem="pulley"))
         elif lagging["upgraded"]:
             checks.append(warn(
                 f"Lagging auto-upgraded to ceramic (slip prevention). "
-                f"Verify {lag}, t={lagging['thickness_mm']}mm with supplier [CEMA 375 §4]"))
+                f"Verify {lag}, t={lagging['thickness_mm']}mm with supplier [CEMA 375 §4]", subsystem="pulley"))
         else:
             checks.append(info(
                 f"Lagging: {lag}, t={lagging['thickness_mm']}mm, "
                 f"μ={lagging['mu_operating']:.2f} — slip safe "
                 f"(ratio {lagging['belt_ratio_tight_slack']:.3f} < "
-                f"Euler {lagging['euler_ratio_lagged']:.3f}) [CEMA 375 §4]"))
+                f"Euler {lagging['euler_ratio_lagged']:.3f}) [CEMA 375 §4]", subsystem="pulley"))
 
     # 14 — Pulley end disc [CEMA Pulley Standard]
     if end_disc:
@@ -3529,12 +3537,12 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         if SF < 0.95:
             checks.append(fail(
                 f"End disc geometry error: SF={SF:.2f} < 1.0 at t={t}mm. "
-                f"Check hub OD vs pulley diameter inputs [CEMA Pulley Standard]"))
+                f"Check hub OD vs pulley diameter inputs [CEMA Pulley Standard]", subsystem="pulley"))
         else:
             checks.append(info(
                 f"End disc: min t={t}mm (governed by {end_disc['governed_by']}). "
                 f"Specify t={t_specified:.0f}mm in drawings (+20% margin). "
-                f"Full Roark or FEA required for fabrication [CEMA Pulley Standard]"))
+                f"Full Roark or FEA required for fabrication [CEMA Pulley Standard]", subsystem="pulley"))
 
     # 15 — Bucket bolt fatigue [CEMA 375 §7]
     if bolt_fatigue:
@@ -3543,16 +3551,16 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             life = bolt_fatigue.get("life_years") or 0
             checks.append(fail(
                 f"Bolt fatigue FAIL: Goodman {gr:.3f} > 1.0 "
-                f"(life {life:.0f} yr) — upgrade grade or increase diameter [CEMA 375 §7]"))
+                f"(life {life:.0f} yr) — upgrade grade or increase diameter [CEMA 375 §7]", subsystem="bucket"))
         elif gr > 0.7:
             checks.append(warn(
                 f"Bolt fatigue: Goodman {gr:.3f} — consider grade 10.9 "
-                f"({bolt_fatigue['n_bolts']}x M{bolt_fatigue['bolt_dia_mm']:.0f}) [CEMA 375 §7]"))
+                f"({bolt_fatigue['n_bolts']}x M{bolt_fatigue['bolt_dia_mm']:.0f}) [CEMA 375 §7]", subsystem="bucket"))
         else:
             checks.append(ok(
                 f"Bolt fatigue: Goodman {gr:.3f} — infinite life "
                 f"(grade {bolt_fatigue['bolt_grade']}, "
-                f"{bolt_fatigue['n_bolts']}x M{bolt_fatigue['bolt_dia_mm']:.0f}) [CEMA 375 §7]"))
+                f"{bolt_fatigue['n_bolts']}x M{bolt_fatigue['bolt_dia_mm']:.0f}) [CEMA 375 §7]", subsystem="bucket"))
 
     # 16 — Take-up
     if takeup_grav:
@@ -3560,7 +3568,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         tr = takeup_grav["travel_m"] * 1000
         checks.append(info(
             f"Gravity take-up: counterweight {W:.0f} kg (gross), "
-            f"travel {tr:.0f} mm required [CEMA 375 §4]"))
+            f"travel {tr:.0f} mm required [CEMA 375 §4]", subsystem="takeup"))
 
     # 16b — Screw take-up buckling. Previously this never produced a checks[]
     # entry at all — the buckling_safe flag existed only inside
@@ -3573,12 +3581,12 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             if takeup_screw.get("buckling_safe"):
                 checks.append(ok(
                     f"Screw take-up buckling: SF={sf:.2f} >= 3.0 "
-                    f"(core Ø{takeup_screw.get('d_core_use_mm','—')}mm) [CEMA 375 §4]"))
+                    f"(core Ø{takeup_screw.get('d_core_use_mm','—')}mm) [CEMA 375 §4]", subsystem="takeup"))
             else:
                 checks.append(fail(
                     f"Screw take-up buckling: SF={sf:.2f} < 3.0 "
                     f"(core Ø{takeup_screw.get('d_core_use_mm','—')}mm) — "
-                    f"increase takeup_screw_d_mm or add guide support [CEMA 375 §4]"))
+                    f"increase takeup_screw_d_mm or add guide support [CEMA 375 §4]", subsystem="takeup"))
 
     # 16c — Hydraulic take-up buckling. Same convention as 16b — only
     # checked when hydraulic is the primary selection.
@@ -3589,12 +3597,12 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 checks.append(ok(
                     f"Hydraulic take-up buckling: SF={sf:.2f} >= 3.0 "
                     f"(bore Ø{takeup_hydraulic.get('d_bore_use_mm','—')}mm "
-                    f"@ {takeup_hydraulic.get('operating_bar','—')}bar)"))
+                    f"@ {takeup_hydraulic.get('operating_bar','—')}bar)", subsystem="takeup"))
             else:
                 checks.append(fail(
                     f"Hydraulic take-up buckling: SF={sf:.2f} < 3.0 "
                     f"(bore Ø{takeup_hydraulic.get('d_bore_use_mm','—')}mm) — "
-                    f"increase takeup_hydraulic_bore_mm or operating pressure"))
+                    f"increase takeup_hydraulic_bore_mm or operating pressure", subsystem="takeup"))
 
     # 17 — Casing panel deflection
     if casing_panel:
@@ -3603,11 +3611,11 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         if casing_panel["status"] == "fail":
             checks.append(warn(
                 f"Casing panel: δ={da:.1f}mm > L/360={dl:.1f}mm — "
-                f"reduce stiffener spacing [CEMA 375 §7]"))
+                f"reduce stiffener spacing [CEMA 375 §7]", subsystem="casing"))
         else:
             checks.append(ok(
                 f"Casing panel OK: δ={da:.1f}mm < L/360={dl:.1f}mm "
-                f"at {casing_panel['a_mm']:.0f}mm pitch [CEMA 375 §7]"))
+                f"at {casing_panel['a_mm']:.0f}mm pitch [CEMA 375 §7]", subsystem="casing"))
 
     # 18-20 — Discharge chute (ChuteFlowEngine v1.4.0)
     if discharge_chute:
@@ -3625,33 +3633,33 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         if regime == "PLUGGING_RISK":
             checks.append(fail(
                 f"Discharge chute: PLUGGING RISK at {angle:.0f}° "
-                f"(wall-friction minimum = {min_a:.0f}°) [CEMA 375 §5]"))
+                f"(wall-friction minimum = {min_a:.0f}°) [CEMA 375 §5]", subsystem="discharge"))
         elif regime == "FUNNEL_FLOW":
             checks.append(warn(
                 f"Discharge chute: funnel flow at {angle:.0f}° — "
-                f"steepen to {mass_a:.0f}° for mass flow [CEMA 375 §5]"))
+                f"steepen to {mass_a:.0f}° for mass flow [CEMA 375 §5]", subsystem="discharge"))
         else:
             checks.append(ok(
                 f"Discharge chute: mass flow at {angle:.0f}° "
-                f"(min {min_a:.0f}°) [CEMA 375 §5]"))
+                f"(min {min_a:.0f}°) [CEMA 375 §5]", subsystem="discharge"))
 
         # 19 — Dust risk
         if dust in ("HIGH", "SEVERE"):
             checks.append(warn(
                 f"Chute dust risk {dust} — extraction or suppression system required "
-                f"[CEMA 550 §B]"))
+                f"[CEMA 550 §B]", subsystem="discharge"))
         else:
-            checks.append(info(f"Chute dust risk {dust}"))
+            checks.append(info(f"Chute dust risk {dust}", subsystem="discharge"))
 
         # 20 — Plugging & liner
         if plug in ("HIGH", "SEVERE"):
             checks.append(warn(
                 f"Chute plugging probability {plug} (index "
                 f"{maint.get('plugging_index','—'):.2f}) — "
-                f"vibrators / air cannons required; specify {liner} liner [CEMA 375 §5]"))
+                f"vibrators / air cannons required; specify {liner} liner [CEMA 375 §5]", subsystem="discharge"))
         else:
             checks.append(ok(
-                f"Chute plugging: {plug} risk — {liner} liner specified"))
+                f"Chute plugging: {plug} risk — {liner} liner specified", subsystem="discharge"))
 
     # 21 — Casing clearance — different logic for continuous vs centrifugal
     if casing_clearance:
@@ -3663,11 +3671,11 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 checks.append(fail(
                     f"HF casing: CR={cr_val:.3f} ≥ 1.0 — centrifugal discharge "
                     f"will occur. Reduce belt speed below "
-                    f"v = {9.81 * inp.D_mm / 2000.0:.2f} m/s [CEMA 375 §3.3]"))
+                    f"v = {9.81 * inp.D_mm / 2000.0:.2f} m/s [CEMA 375 §3.3]", subsystem="discharge"))
             else:
                 checks.append(ok(
                     f"HF casing: CR={cr_val:.3f} < 1.0 — continuous discharge "
-                    f"confirmed; no stream-strike risk [CEMA 375 §3.3]"))
+                    f"confirmed; no stream-strike risk [CEMA 375 §3.3]", subsystem="discharge"))
         else:
             # Centrifugal: check stream vs casing wall (existing logic)
             clears    = casing_clearance.get("clears", True)
@@ -3681,16 +3689,16 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 checks.append(fail(
                     f"Casing clearance: stream strikes casing wall{loc} "
                     f"(stream max x={max_x:.3f}m, wall at {wall_x:.3f}m) — "
-                    f"increase casing width or reduce belt speed [CEMA 375 §7]"))
+                    f"increase casing width or reduce belt speed [CEMA 375 §7]", subsystem="discharge"))
             elif clearance < 0.020:
                 checks.append(warn(
                     f"Casing clearance: only {clearance*1000:.0f}mm margin "
                     f"(stream max x={max_x:.3f}m, wall at {wall_x:.3f}m) — "
-                    f"borderline; verify at maximum speed [CEMA 375 §7]"))
+                    f"borderline; verify at maximum speed [CEMA 375 §7]", subsystem="discharge"))
             else:
                 checks.append(ok(
                     f"Casing clearance: {clearance*1000:.0f}mm — stream clears "
-                    f"casing wall by adequate margin [CEMA 375 §7]"))
+                    f"casing wall by adequate margin [CEMA 375 §7]", subsystem="discharge"))
 
 
     # 21b — Head section hood-strike (CR > 2.0 → stream may arc over head section)
@@ -3700,11 +3708,11 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             f"CR={cr:.3f} > 2.0 — discharge arc may loop back into head section (hood strike). "
             f"Stream centrifugal energy sufficient to clear the head pulley and impact the hood. "
             f"Reduce speed to v ≤ {_v_ideal_max:.2f} m/s (CR ≤ 1.8) or install curved hood. "
-            f"[CEMA 375 §3.3]"))
+            f"[CEMA 375 §3.3]", subsystem="discharge"))
     elif not is_continuous and not is_chain and cr > 1.8:
         checks.append(info(
             f"CR={cr:.3f} in range 1.8–2.0 — monitor discharge; install hood deflector "
-            f"if material scatter is observed at head section [CEMA 375 §3.3]"))
+            f"if material scatter is observed at head section [CEMA 375 §3.3]", subsystem="discharge"))
 
     # 21c — Throat-plate impact (centrifugal CR < 0.90)
     if not is_continuous and not is_chain:
@@ -3712,12 +3720,12 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             checks.append(fail(
                 f"CR={cr:.3f} — material cannot throw into chute. "
                 f"Stream impacts throat plate; backlegging certain. "
-                f"Raise v to ≥ {math.sqrt(0.90*9.81*(inp.D_mm/2000)):.2f} m/s [CEMA 375 §3.3]"))
+                f"Raise v to ≥ {math.sqrt(0.90*9.81*(inp.D_mm/2000)):.2f} m/s [CEMA 375 §3.3]", subsystem="discharge"))
         elif cr < 0.90:
             checks.append(warn(
                 f"CR={cr:.3f} — marginal throw; throat-plate impact risk. "
                 f"Target CR ≥ 1.0. Raise v to ≥ {math.sqrt(1.0*9.81*(inp.D_mm/2000)):.2f} m/s "
-                f"[CEMA 375 §3.3]"))
+                f"[CEMA 375 §3.3]", subsystem="discharge"))
 
     # 22 — Stream interception (does discharge stream enter the chute?)
     if stream_chute:
@@ -3729,7 +3737,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             ang_str   = f"Back plate ≥ {angle_rec:.0f}°" if angle_rec else ""
             checks.append(ok(
                 f"Stream interception: HF continuous discharge — chute positioned "
-                f"behind head pulley captures pour. {ang_str} [CEMA 375 §5]"))
+                f"behind head pulley captures pour. {ang_str} [CEMA 375 §5]", subsystem="discharge"))
         elif intercepted:
             ang = stream_chute.get("impact_angle_deg")
             vel = stream_chute.get("impact_velocity_mps")
@@ -3737,12 +3745,12 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             vel_str = f"{vel:.2f} m/s" if vel is not None else "—"
             checks.append(ok(
                 f"Stream interception: chute captures discharge "
-                f"(impact angle={ang_str}, impact velocity={vel_str}) [CEMA 375 §5]"))
+                f"(impact angle={ang_str}, impact velocity={vel_str}) [CEMA 375 §5]", subsystem="discharge"))
         else:
             note = stream_chute.get("note", "Stream does not reach chute inlet")
             checks.append(warn(
                 f"Stream interception: {note} — "
-                f"review chute position or increase belt speed [CEMA 375 §5]"))
+                f"review chute position or increase belt speed [CEMA 375 §5]", subsystem="discharge"))
 
     # 22b — Head:boot pulley diameter ratio (CEMA §3.2)
     _boot_D_mm_chk = (inp.D_mm if getattr(inp, "boot_pulley_same_as_head", False)
@@ -3751,14 +3759,14 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
     if _D_ratio_check > 2.5:
         checks.append(fail(
             f"Head:boot pulley ratio {_D_ratio_check:.2f} > 2.5 — severe belt flex fatigue. "
-            f"Increase boot pulley to \u2265 {inp.D_mm/2.5:.0f}mm [CEMA 375 \u00a73.2]"))
+            f"Increase boot pulley to \u2265 {inp.D_mm/2.5:.0f}mm [CEMA 375 \u00a73.2]", subsystem="boot_pulley"))
     elif _D_ratio_check > 2.0:
         checks.append(warn(
             f"Head:boot pulley ratio {_D_ratio_check:.2f} — CEMA recommends ≤ 2.0. "
-            f"Increase boot pulley to ≥ {inp.D_mm/2.0:.0f}mm [CEMA 375 §3.2]"))
+            f"Increase boot pulley to ≥ {inp.D_mm/2.0:.0f}mm [CEMA 375 §3.2]", subsystem="boot_pulley"))
     else:
         checks.append(ok(
-            f"Head:boot pulley ratio {_D_ratio_check:.2f} — within CEMA limit [CEMA 375 §3.2]"))
+            f"Head:boot pulley ratio {_D_ratio_check:.2f} — within CEMA limit [CEMA 375 §3.2]", subsystem="boot_pulley"))
 
     # 23 — Boot pulley CR check (v1.6.0)
     if boot_analysis:
@@ -3772,30 +3780,30 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             checks.append(warn(
                 f"Boot pulley CR={cr_boot:.3f} ≥ 1.0 — material may be centrifugally "
                 f"re-distributed in boot section. Consider larger boot pulley D or lower speed "
-                f"[CEMA 375 §4]"))
+                f"[CEMA 375 §4]", subsystem="boot_pulley"))
         elif same:
             checks.append(ok(
                 f"Boot = Head = {boot_D:.0f}mm — matched pulleys, balanced shaft loads "
-                f"[CEMA 375 §4]"))
+                f"[CEMA 375 §4]", subsystem="boot_pulley"))
         else:
             ratio = boot_D / max(head_D, 1)
             if ratio < 0.5:
                 checks.append(warn(
                     f"Boot pulley {boot_D:.0f}mm = {ratio:.2f}× head {head_D:.0f}mm — "
-                    f"very small boot increases belt scooping impact [CEMA 375 §4]"))
+                    f"very small boot increases belt scooping impact [CEMA 375 §4]", subsystem="boot_pulley"))
             else:
                 checks.append(info(
                     f"Boot {boot_D:.0f}mm vs Head {head_D:.0f}mm (ratio {ratio:.2f}) — "
-                    f"{boot_analysis.get('note','')[:60]} [CEMA 375 §4]"))
+                    f"{boot_analysis.get('note','')[:60]} [CEMA 375 §4]", subsystem="boot_pulley"))
 
         if L10_b > 0:
             if L10_b < 20000:
                 checks.append(warn(
                     f"Boot bearing L10={L10_b:,.0f}h < 20,000h — review boot shaft load "
-                    f"or upgrade bearing [CEMA 375 §4]"))
+                    f"or upgrade bearing [CEMA 375 §4]", subsystem="boot_pulley"))
             else:
                 checks.append(info(
-                    f"Boot bearing L10={L10_b:,.0f}h [CEMA 375 §4]"))
+                    f"Boot bearing L10={L10_b:,.0f}h [CEMA 375 §4]", subsystem="boot_pulley"))
 
     # ── v1.8.0 Chain elevator checks ─────────────────────────────────────────
     _chain_pull_N = chain_pull_N or 0.0
@@ -3811,15 +3819,15 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                     f"Chain SF = {_chain_SF_act:.2f} < required {_chain_sf_req:.1f} "
                     f"— chain pull {_chain_pull_N/1000:.1f}kN exceeds "
                     f"{_chain_sel['name']} working load / SF. "
-                    f"Upgrade to heavier chain series [CEMA 375 §4]."))
+                    f"Upgrade to heavier chain series [CEMA 375 §4].", subsystem="belt"))
             elif _chain_SF_act < _chain_sf_req * 1.10:
                 checks.append(warn(
                     f"Chain SF = {_chain_SF_act:.2f} — within 10% of minimum "
-                    f"{_chain_sf_req:.1f}. Monitor chain elongation [CEMA 375 §4]."))
+                    f"{_chain_sf_req:.1f}. Monitor chain elongation [CEMA 375 §4].", subsystem="belt"))
             else:
                 checks.append(ok(
                     f"Chain SF = {_chain_SF_act:.2f} ≥ {_chain_sf_req:.1f} "
-                    f"({_chain_sel['name']}, pull {_chain_pull_N/1000:.1f}kN) [CEMA 375 §4]"))
+                    f"({_chain_sel['name']}, pull {_chain_pull_N/1000:.1f}kN) [CEMA 375 §4]", subsystem="belt"))
 
         # Chain speed vs rated maximum
         if chain_v_ok is not None:
@@ -3827,11 +3835,11 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 checks.append(fail(
                     f"Belt speed {v:.2f} m/s exceeds {_chain_sel['name']} "
                     f"rated maximum {_chain_sel['v_max_ms']:.2f} m/s — "
-                    f"reduce RPM or use heavier chain series [CEMA 375 §4]."))
+                    f"reduce RPM or use heavier chain series [CEMA 375 §4].", subsystem="belt"))
             else:
                 checks.append(ok(
                     f"Chain speed {v:.2f} m/s ≤ rated {_chain_sel['v_max_ms']:.2f} m/s "
-                    f"[CEMA 375 §4]"))
+                    f"[CEMA 375 §4]", subsystem="belt"))
 
         # Sprocket tooth count
         if sprocket:
@@ -3839,11 +3847,11 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 checks.append(warn(
                     f"Sprocket teeth = {sprocket['n_teeth']} "
                     f"— recommend 10–20 teeth for smooth chain engagement. "
-                    f"PD = {sprocket['PD_mm']:.0f}mm [CEMA 375 §4]."))
+                    f"PD = {sprocket['PD_mm']:.0f}mm [CEMA 375 §4].", subsystem="belt"))
             else:
                 checks.append(ok(
                     f"Sprocket: {sprocket['n_teeth']} teeth, "
-                    f"PD = {sprocket['PD_mm']:.0f}mm ✓ [CEMA 375 §4]"))
+                    f"PD = {sprocket['PD_mm']:.0f}mm ✓ [CEMA 375 §4]", subsystem="belt"))
 
     return checks
 

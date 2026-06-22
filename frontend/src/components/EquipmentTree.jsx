@@ -14,12 +14,29 @@
 import { useState } from "react";
 
 // ── Keyword → tree-node mapping ─────────────────────────────────────────────
-function nodeStatus(checks, keywords) {
+// v1.9.9 — nodeStatus now filters by backend-assigned subsystem tag FIRST,
+// then (optionally) by keyword WITHIN that subsystem only. This eliminates
+// the cross-subsystem contamination bug: previously, keyword-only matching
+// searched every check's message regardless of subject — a casing-clearance
+// failure whose corrective text said "...reduce belt speed" got swept into
+// the Belt Speed leaf's status, and a boot-pulley CR warning ("CR=1.677")
+// got swept into the head-section Centrifugal Ratio leaf. Subsystem tags are
+// a closed, stable vocabulary assigned in the backend's _build_checks(),
+// not derived from free text, so they can't collide this way.
+//
+// keywords is now optional — omit it to match the whole subsystem (e.g. one
+// leaf per subsystem); provide it to pick out a specific check within a
+// subsystem that contains several distinct checks (e.g. "shaft" subsystem
+// has separate Head Shaft / Bearings / Keyway checks).
+function nodeStatus(checks, subsystem, keywords = null) {
   if (!checks?.length) return { status: "none", checks: [] };
-  const kw = keywords.map(k => k.toLowerCase());
-  const matched = checks.filter(c =>
-    kw.some(k => (c.msg ?? "").toLowerCase().includes(k))
-  );
+  const inSubsystem = checks.filter(c => (c.subsystem ?? "process") === subsystem);
+  const matched = keywords
+    ? inSubsystem.filter(c => {
+        const kw = keywords.map(k => k.toLowerCase());
+        return kw.some(k => (c.msg ?? "").toLowerCase().includes(k));
+      })
+    : inSubsystem;
   if (!matched.length) return { status: "none", checks: [] };
   if (matched.some(c => c.type === "fail")) return { status: "fail", checks: matched };
   if (matched.some(c => c.type === "warn")) return { status: "warn", checks: matched };
@@ -137,31 +154,47 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
   const r   = results || {};
   const inp = inputs  || {};
   const checks = r.checks || [];
+  const casingClearance = r.casing_clearance || null;
 
   // ── Live status per subsystem ─────────────────────────────────────────────
-  const s_capacity = nodeStatus(checks, ["capacity", "Capacity"]);
-  const s_speed    = nodeStatus(checks, ["speed", "Speed"]);
-  const s_cr       = nodeStatus(checks, ["CR=", "centrifugal", "scatter"]);
+  const s_capacity = nodeStatus(checks, "process", ["capacity"]);
+  const s_speed    = nodeStatus(checks, "process", ["speed"]);
+  const s_cr       = nodeStatus(checks, "process", ["cr=", "centrifugal", "scatter"]);
 
-  // FIX 6: added chain sf / chain speed / sprocket to slip keywords
-  const s_slip     = nodeStatus(checks, [
-    "slip", "Slip", "euler", "Euler",
+  // Chain checks (SF, speed, sprocket) and belt checks share the "belt"
+  // subsystem tag since they occupy the same tree position (Belt Selection
+  // becomes Chain Selection for chain elevators) — narrow by keyword here
+  // exactly as before, but now scoped within "belt" only, so it can never
+  // again pick up an unrelated discharge/boot-pulley check that happens to
+  // mention "speed" or similar words in its corrective-action text.
+  const s_slip     = nodeStatus(checks, "belt", [
+    "slip", "euler",
     "chain sf", "chain speed", "chain working", "sprocket",
   ]);
 
-  const s_shaft    = nodeStatus(checks, ["shaft", "Shaft", "governed by"]);
-  const s_key      = nodeStatus(checks, ["keyway", "Keyway", "key"]);
-  const s_bearing  = nodeStatus(checks, ["bearing", "Bearing", "L10"]);
-  const s_lagging  = nodeStatus(checks, ["lagging", "Lagging"]);
-  const s_end_disc = nodeStatus(checks, ["end disc", "End disc"]);
-  const s_motor    = nodeStatus(checks, ["motor", "Motor", "kW", "Ceff"]);
-  const s_belt     = nodeStatus(checks, ["belt", "Belt", "PLY", "headshaft"]);
-  const s_bolt     = nodeStatus(checks, ["bolt", "Bolt", "fatigue", "Goodman"]);
-  const s_takeup   = nodeStatus(checks, ["take-up", "Take-up", "takeup", "counterweight"]);
-  const s_casing   = nodeStatus(checks, ["casing", "Casing", "panel", "stiffener"]);
-  const s_chute    = nodeStatus(checks, ["chute", "Chute", "discharge", "plugging", "dust"]);
-  const s_atex     = nodeStatus(checks, ["ATEX", "atex", "explosive", "dust control", "stainless"]);
-  const s_abr      = nodeStatus(checks, ["abrasion", "AR400", "AR500", "liner"]);
+  const s_shaft    = nodeStatus(checks, "shaft", ["shaft", "governed by"]);
+  const s_key      = nodeStatus(checks, "shaft", ["keyway"]);
+  const s_bearing  = nodeStatus(checks, "shaft", ["bearing", "l10"]);
+  const s_lagging  = nodeStatus(checks, "pulley", ["lagging"]);
+  const s_end_disc = nodeStatus(checks, "pulley", ["end disc"]);
+  const s_motor    = nodeStatus(checks, "power");
+  const s_belt     = nodeStatus(checks, "belt");
+  const s_bolt     = nodeStatus(checks, "bucket", ["bolt", "fatigue", "goodman"]);
+  const s_takeup   = nodeStatus(checks, "takeup");
+  const s_casing   = nodeStatus(checks, "casing");
+  const s_chute    = nodeStatus(checks, "discharge", ["chute", "plugging", "dust", "mass flow", "funnel"]);
+  const s_atex     = nodeStatus(checks, "service", ["atex", "explosive", "dust control", "stainless"]);
+  const s_abr      = nodeStatus(checks, "process", ["abrasion", "ar400", "ar500", "liner"]);
+
+  // Casing clearance ("stream strikes casing") is read directly from
+  // r.casing_clearance for its own dedicated leaf (with strike coordinates),
+  // not via nodeStatus. s_chute's keyword filter deliberately excludes
+  // "casing clearance" so it doesn't double-count this — but the section
+  // header (st_chute below) still needs to reflect it, hence the explicit
+  // merge.
+  const s_casing_clearance_status = casingClearance
+    ? (casingClearance.clears ? "ok" : "fail")
+    : "none";
 
   // Aggregate section statuses
   const st_process = mergeStatus(s_capacity.status, s_speed.status, s_cr.status);
@@ -169,7 +202,7 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
   const st_drive   = s_motor.status;
   const st_belt    = mergeStatus(s_belt.status, s_slip.status, s_bolt.status);
   const st_takeup  = s_takeup.status;
-  const st_chute   = s_chute.status;
+  const st_chute   = mergeStatus(s_chute.status, s_casing_clearance_status);
   const st_casing  = mergeStatus(s_casing.status, s_abr.status);
   const st_mech    = mergeStatus(st_head, st_drive, st_belt, st_takeup, st_casing);
 
@@ -187,7 +220,6 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
   const fd       = r.feed_design      || null;
   const chain    = r.chain_selected   || {};
   const sprocket = r.sprocket         || {};
-  const casingClearance = r.casing_clearance || null;
 
   // FIX 1: depth field — new BUCKET_SERIES uses depth_mm; old used H
   const bkt_depth = bkt.depth_mm ?? bkt.H;
