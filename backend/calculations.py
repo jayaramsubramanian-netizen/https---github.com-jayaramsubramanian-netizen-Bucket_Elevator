@@ -2360,6 +2360,46 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     _H_equiv_boot = D_boot_m * Leq
     _same_dia     = abs(_boot_D_mm - inp.D_mm) < 1.0
 
+    # v1.9.9 — Boot shaft, shell, and end disc sizing. Previously the boot
+    # pulley diameter was a geometry input only (drives trajectory/CR math)
+    # with no structural sizing behind it at all — bearing L10 above was the
+    # only boot component genuinely sized. The boot pulley is NOT driven
+    # (it's a free-running take-up pulley, no motor torque crosses it), so:
+    #   - shaft sizing uses torque=0 (bending/deflection governs, not stress)
+    #   - no hub/key/weld check — a free shaft has no torque to key against;
+    #     it runs on a plain bore through bearings, same as any idler shaft
+    #   - shell thickness and end disc reuse the same generic CEMA functions
+    #     as the head pulley, with boot-specific diameter and load
+    _boot_span_m, _boot_A_m, _boot_B_m = _shaft_geometry(BW_mm)
+    _boot_M_Nm = _bending_moment(_R_boot_N, _boot_A_m, _boot_B_m)
+    _boot_gov = StructuralStressEngine.shaft_diameter_governing_hollow(
+        _boot_M_Nm, 0.0, _R_boot_N,
+        bore_ratio=0.0, overhang_A_m=_boot_A_m, span_B_m=_boot_B_m,
+        allowable=_tau_allow_Pa,
+    )
+    boot_shaft = {
+        "d_mm":         _boot_gov["d_governing_mm"],
+        "d_stress_mm":  _boot_gov["d_stress_mm"],
+        "d_deflect_mm": _boot_gov["d_deflect_mm"],
+        "governed_by":  _boot_gov["governed_by"],
+        "span_mm":      round(_boot_span_m * 1000.0, 0),
+        "note": "Free-running shaft (no drive torque) — bending/deflection governs, not torsion. No keyway required.",
+    }
+
+    boot_shell = StructuralStressEngine.pulley_shell_thickness(
+        diameter_m    = _boot_D_mm / 1000.0,
+        T_total_N     = _R_boot_N,
+        face_width_mm = BW_mm + 50.0,
+    )
+    boot_shell["t_use_mm"] = boot_shell["t_governing_mm"]
+
+    boot_end_disc = StructuralStressEngine.pulley_end_disc(
+        pulley_diameter_m = _boot_D_mm / 1000.0,
+        hub_od_m          = boot_shaft["d_mm"] / 1000.0 * 1.5,  # plain bore hub, no key-driven sizing
+        T_total_N         = _R_boot_N,
+        face_width_m      = BW_mm / 1000.0 + 0.050,
+    )
+
     boot_pulley_analysis = {
         "head_D_mm":      round(inp.D_mm, 0),
         "boot_D_mm":      round(_boot_D_mm, 0),
@@ -2370,6 +2410,9 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "L10_boot_h":     round(_L10_boot, 0),
         "H_equiv_m":      round(_H_equiv_boot, 3),
         "P_digging_kW":   round(pwr["P_digging"], 3),
+        "shaft":          boot_shaft,           # v1.9.9
+        "shell":          boot_shell,            # v1.9.9
+        "end_disc":       boot_end_disc,         # v1.9.9
         "note": (
             f"Head = Boot = {inp.D_mm:.0f}mm (matched diameters — balanced shaft loads)"
             if _same_dia else
