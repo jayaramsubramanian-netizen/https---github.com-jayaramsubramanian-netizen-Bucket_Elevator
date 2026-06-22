@@ -151,12 +151,15 @@ class BucketElevatorInput(BaseModel):
     # control over every dimension shown in the Equipment Tree.
 
     # Take-up selection
-    takeup_type: Literal["gravity", "screw", "auto"] = Field(
+    takeup_type: Literal["gravity", "screw", "hydraulic", "auto"] = Field(
         "gravity",
         description=(
             "Take-up system type. "
             "gravity: counterweight take-up (recommended for H > 15 m); "
             "screw: threaded screw take-up (short elevators, H ≤ 15 m); "
+            "hydraulic: cylinder take-up (automatic constant-tension control, "
+            "long elevators or variable load — vendor-engineered, not a CEMA "
+            "standard method; sized here using standard cylinder mechanics); "
             "auto: solver selects based on H_m threshold."
         ),
     )
@@ -175,6 +178,23 @@ class BucketElevatorInput(BaseModel):
             "Screw take-up unsupported shank length for buckling check [m]. "
             "0 = auto-derived from required travel (CEMA §4). "
             "Set explicitly when the physical installation length is known."
+        ),
+    )
+    takeup_hydraulic_bore_mm: float = Field(
+        0.0, ge=0.0, le=300.0,
+        description=(
+            "Hydraulic take-up cylinder bore diameter override [mm]. "
+            "0 = auto-calculate from required force and operating pressure. "
+            "Set to a standard commercial size (e.g. 32, 40, 50, 63, 80, 100, 125) "
+            "to specify and verify — solver reports pass/fail against calculated minimum."
+        ),
+    )
+    takeup_hydraulic_pressure_bar: float = Field(
+        100.0, ge=10.0, le=350.0,
+        description=(
+            "Hydraulic take-up system operating pressure [bar]. "
+            "100 bar is a common industrial default — set to match the actual "
+            "power unit/pump rating if known."
         ),
     )
 
@@ -328,10 +348,15 @@ class BucketElevatorInput(BaseModel):
     )
 
     # ── v1.8.0 — Feed design (2f) ─────────────────────────────────────────────
-    boot_outlet_height_mm: float = Field(
+    # v1.9.9: renamed from boot_outlet_height_mm — this field overrides
+    # inlet_height_mm (the boot INLET opening height) in feed_design(), not
+    # any outlet. The old name was backwards and caused real confusion (it
+    # sat directly under "Boot Inlet Opening" in the UI while claiming to
+    # control an "Outlet").
+    boot_inlet_height_override_mm: float = Field(
         0.0, ge=0.0, le=2000.0,
         description=(
-            "Boot outlet / inlet height override [mm]. "
+            "Boot inlet opening height override [mm]. "
             "0 = auto-calculate from bucket projection (centrifugal) "
             "or loading leg dimensions (continuous). "
             "Set to a preferred standard opening height."

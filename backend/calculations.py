@@ -1545,7 +1545,7 @@ def feed_design(
     elev_type:      str,
     boot_D_mm:      float,
     aor_deg:        float = 35.0,
-    boot_outlet_h:  float = 0.0,
+    inlet_height_override_mm: float = 0.0,
 ) -> dict:
     """
     CEMA 375 §4 — Boot Feed Design.
@@ -1604,7 +1604,9 @@ def feed_design(
     elev_type       "centrifugal" | "continuous"
     boot_D_mm       Boot pulley diameter [mm]
     aor_deg         Material angle of repose [°]
-    boot_outlet_h   Engineer override for outlet height [mm]; 0 = auto
+    inlet_height_override_mm  Engineer override for boot INLET opening
+                    height [mm]; 0 = auto. (v1.9.9: renamed from
+                    boot_outlet_h — this was never an outlet override.)
     """
     BW_m    = belt_width_mm / 1000.0
     Q_m3s   = Q_th / (rho * 3.6)          # volumetric flow [m³/s]
@@ -1664,7 +1666,7 @@ def feed_design(
             "inlet_width_mm":        round(BW_m * 1000,  0),
             "inlet_height_mm":       round(h_inlet_m * 1000, 0),
             "inlet_height_used_mm":  round(
-                boot_outlet_h if boot_outlet_h > 0 else h_inlet_m * 1000, 0
+                inlet_height_override_mm if inlet_height_override_mm > 0 else h_inlet_m * 1000, 0
             ),
             # Loading leg
             "loading_leg_height_mm": round(leg_height_m * 1000, 0),
@@ -1735,7 +1737,7 @@ def feed_design(
             "inlet_width_mm":        round(inlet_width_m * 1000, 0),
             "inlet_height_mm":       round(material_depth_m * 1000, 0),
             "inlet_height_used_mm":  round(
-                boot_outlet_h if boot_outlet_h > 0 else material_depth_m * 1000, 0
+                inlet_height_override_mm if inlet_height_override_mm > 0 else material_depth_m * 1000, 0
             ),
             # Digging zone
             "material_depth_mm":     round(material_depth_m * 1000, 0),
@@ -2124,9 +2126,12 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     # ── Take-up design ────────────────────────────────────────────────────────
     # v1.5.0: takeup_type, takeup_screw_d_mm, takeup_screw_len_m overrides.
     # "gravity" → counterweight design; "screw" → screw design; "auto" → H_m threshold.
+    # v1.9.9: "hydraulic" → cylinder take-up design.
     _takeup_type  = getattr(inp, "takeup_type",       "gravity") or "gravity"
     _screw_d_mm   = getattr(inp, "takeup_screw_d_mm", 0)  or 0
     _screw_len_m  = getattr(inp, "takeup_screw_len_m", 0) or 0
+    _hyd_bore_mm  = getattr(inp, "takeup_hydraulic_bore_mm", 0) or 0
+    _hyd_bar      = getattr(inp, "takeup_hydraulic_pressure_bar", 100.0) or 100.0
 
     # Auto-select: gravity for H ≥ 15m, screw otherwise
     if _takeup_type == "auto":
@@ -2143,9 +2148,20 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         screw_length_m = _screw_span_m,
         preferred_d_mm = float(_screw_d_mm),
     )
+
+    # Hydraulic take-up — always calculated, same "alternative" convention.
+    # Travel matches the same CEMA-derived requirement as gravity/screw.
+    takeup_hydraulic = StructuralStressEngine.hydraulic_takeup(
+        T_slack_N         = T3,
+        travel_m          = _screw_travel_m,
+        operating_bar     = float(_hyd_bar),
+        preferred_bore_mm = float(_hyd_bore_mm),
+    )
+
     # Tag which take-up is the primary selection
-    takeup_gravity["primary"] = _takeup_type == "gravity"
-    takeup_screw["primary"]   = _takeup_type == "screw"
+    takeup_gravity["primary"]   = _takeup_type == "gravity"
+    takeup_screw["primary"]     = _takeup_type == "screw"
+    takeup_hydraulic["primary"] = _takeup_type == "hydraulic"
 
     # ── Casing structural ─────────────────────────────────────────────────────
     # v1.5.0: casing_t_override_mm — engineer can specify preferred plate thickness.
@@ -2186,10 +2202,28 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
 
     # ── Belt & motor ──────────────────────────────────────────────────────────
     motor_kw = select_motor(P_total, inp.sf)
-    belt_ply = math.ceil(F_eff / (BW_mm / 25.4 * 4450 * 0.5))
+
+    # v1.9.9 — belt_ply now sized off T_max_N (the actual peak tension from
+    # the position-resolved tension profile, which includes the empty-leg
+    # self-weight contribution) rather than F_eff (the lumped effective
+    # tension at the head, which is what the belt must overcome to do work,
+    # but is NOT the largest tension the belt physically carries anywhere
+    # in the loop). Sizing off F_eff could under-rate the belt — exactly the
+    # gap the rating_margin check below was added to catch after the fact.
+    # Chain elevators have no tension_profile (chain working-load SF is the
+    # governing check instead), so they keep the F_eff-based estimate.
+    _ply_basis_N = (
+        tension_profile.get("T_max_N", F_eff)
+        if (not is_chain and tension_profile) else F_eff
+    )
+    belt_ply = math.ceil(_ply_basis_N / (BW_mm / 25.4 * 4450 * 0.5))
 
     # v1.9.2 — Belt rated tension, used to verify the tension PROFILE's actual
     # peak (not just the lumped F_eff at the head) against belt capacity.
+    # v1.9.9: with belt_ply now sized off T_max_N directly, rating_margin
+    # should always come out >= 1.0 (modulo ceil() rounding) — kept as a
+    # check rather than removed, since it's still the right verification
+    # that the ply selection actually covers the peak.
     if not is_chain and tension_profile:
         _belt_rated_N = (BW_mm / 25.4) * 4450.0 * belt_ply * 0.5
         _t_max_N      = tension_profile.get("T_max_N", 0)
@@ -2400,6 +2434,12 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         face_width_m      = BW_mm / 1000.0 + 0.050,
     )
 
+    # v1.9.9 — Boot lagging is deliberately separate logic from head lagging,
+    # not a reuse — see boot_pulley_lagging() docstring for why (no drive
+    # torque means no slip-prevention requirement; the real boot question is
+    # whether lagging helps at all vs. a bare self-cleaning wing pulley).
+    boot_lagging = StructuralStressEngine.boot_pulley_lagging(mat)
+
     boot_pulley_analysis = {
         "head_D_mm":      round(inp.D_mm, 0),
         "boot_D_mm":      round(_boot_D_mm, 0),
@@ -2413,6 +2453,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "shaft":          boot_shaft,           # v1.9.9
         "shell":          boot_shell,            # v1.9.9
         "end_disc":       boot_end_disc,         # v1.9.9
+        "lagging":        boot_lagging,          # v1.9.9
         "note": (
             f"Head = Boot = {inp.D_mm:.0f}mm (matched diameters — balanced shaft loads)"
             if _same_dia else
@@ -2425,7 +2466,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     }
 
     # ── Feed design (2f) ──────────────────────────────────────────────────────
-    _boot_outlet_h = float(getattr(inp, "boot_outlet_height_mm", 0) or 0)
+    _inlet_h_override = float(getattr(inp, "boot_inlet_height_override_mm", 0) or 0)
     feed_result = feed_design(
         Q_th          = Q,
         rho           = rho,
@@ -2435,7 +2476,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         elev_type     = "continuous" if is_continuous else "centrifugal",
         boot_D_mm     = float(_boot_D_mm),
         aor_deg       = float(mat.get("angle_repose", 35.0) or 35.0),
-        boot_outlet_h = _boot_outlet_h,
+        inlet_height_override_mm = _inlet_h_override,
     )
 
     # ── Pickup / digging efficiency (v1.9.3) ──────────────────────────────────
@@ -2590,6 +2631,8 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         shaft_material   = _shaft_mat_id,
         shaft_tau_allow_MPa = round(_tau_allow_Pa / 1e6, 1),
         bucket_thickness = bucket_thickness_calc,
+        takeup_screw     = takeup_screw,        # v1.9.9
+        takeup_hydraulic = takeup_hydraulic,    # v1.9.9
     )
 
     # ── Design recommendations ────────────────────────────────────────────────
@@ -2628,6 +2671,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "bolt_fatigue":     bolt_fatigue,
         "takeup_gravity":   takeup_gravity,
         "takeup_screw":     takeup_screw,
+        "takeup_hydraulic": takeup_hydraulic,   # v1.9.9
         "discharge_chute":  discharge_chute,
         "casing_t_mm":      round(casing_t_m * 1000, 1),
         "casing_panel":     casing_panel,
@@ -2775,6 +2819,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "bolt_fatigue":      bolt_fatigue,
         "takeup_gravity":    takeup_gravity,
         "takeup_screw":      takeup_screw,
+        "takeup_hydraulic":  takeup_hydraulic,    # v1.9.9
         "casing_t_mm":       round(casing_t_m * 1000.0, 1),
         "casing_panel":      casing_panel,
         "casing_stiffener":  casing_stiffener,
@@ -2799,6 +2844,9 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
                 "bucket":bucket, "mat":mat,
                 "euler_check":euler_chk, "bolt_fatigue":bolt_fatigue,
                 "takeup_screw":takeup_screw,
+                "takeup_hydraulic":takeup_hydraulic,   # v1.9.9 — was missing,
+                # making the hydraulic buckling RCA rule unreachable with
+                # real data (fell through to _s()'s hardcoded defaults).
                 "casing_clearance":casing_clearance,
                 "casing_panel":casing_panel,
                 "discharge_chute":discharge_chute,
@@ -2893,6 +2941,8 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   shaft_material:   "str | None" = None,
                   shaft_tau_allow_MPa: "float | None" = None,
                   bucket_thickness: "dict | None" = None,
+                  takeup_screw:     "dict | None" = None,
+                  takeup_hydraulic: "dict | None" = None,
                   **kwargs,                         # absorb future additions
                   ) -> list:
     checks = []
@@ -3511,6 +3561,40 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         checks.append(info(
             f"Gravity take-up: counterweight {W:.0f} kg (gross), "
             f"travel {tr:.0f} mm required [CEMA 375 §4]"))
+
+    # 16b — Screw take-up buckling. Previously this never produced a checks[]
+    # entry at all — the buckling_safe flag existed only inside
+    # takeup_screw, invisible to checks/RCA. Only checked when screw is the
+    # PRIMARY selection — an alternative's buckling status shouldn't fail a
+    # design that isn't actually using it.
+    if takeup_screw and takeup_screw.get("primary"):
+        sf = takeup_screw.get("SF_buckling")
+        if sf is not None:
+            if takeup_screw.get("buckling_safe"):
+                checks.append(ok(
+                    f"Screw take-up buckling: SF={sf:.2f} >= 3.0 "
+                    f"(core Ø{takeup_screw.get('d_core_use_mm','—')}mm) [CEMA 375 §4]"))
+            else:
+                checks.append(fail(
+                    f"Screw take-up buckling: SF={sf:.2f} < 3.0 "
+                    f"(core Ø{takeup_screw.get('d_core_use_mm','—')}mm) — "
+                    f"increase takeup_screw_d_mm or add guide support [CEMA 375 §4]"))
+
+    # 16c — Hydraulic take-up buckling. Same convention as 16b — only
+    # checked when hydraulic is the primary selection.
+    if takeup_hydraulic and takeup_hydraulic.get("primary"):
+        sf = takeup_hydraulic.get("SF_buckling")
+        if sf is not None:
+            if takeup_hydraulic.get("buckling_safe"):
+                checks.append(ok(
+                    f"Hydraulic take-up buckling: SF={sf:.2f} >= 3.0 "
+                    f"(bore Ø{takeup_hydraulic.get('d_bore_use_mm','—')}mm "
+                    f"@ {takeup_hydraulic.get('operating_bar','—')}bar)"))
+            else:
+                checks.append(fail(
+                    f"Hydraulic take-up buckling: SF={sf:.2f} < 3.0 "
+                    f"(bore Ø{takeup_hydraulic.get('d_bore_use_mm','—')}mm) — "
+                    f"increase takeup_hydraulic_bore_mm or operating pressure"))
 
     # 17 — Casing panel deflection
     if casing_panel:

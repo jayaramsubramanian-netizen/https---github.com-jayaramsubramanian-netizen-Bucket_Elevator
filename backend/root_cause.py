@@ -46,6 +46,7 @@ _E   = 200e9       # Pa, steel Young's modulus
 _STD_SHAFT_MM  = [20,25,30,35,40,45,50,55,60,65,70,75,80,90,100,110,120]
 # Standard screw core diameters (mm)
 _STD_SCREW_MM  = [20,25,32,40,50,63,80,100]
+_STD_HYD_MM    = [25,32,40,50,63,80,100,125]
 # Standard plate thicknesses (mm)
 _STD_PLATE_MM  = [3,4,5,6,8,10,12,16,20]
 # Standard belt widths (mm)
@@ -249,6 +250,7 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
     euler_chk = r.get("euler_check") or {}
     bf      = r.get("bolt_fatigue") or {}
     ts      = r.get("takeup_screw") or {}
+    th      = r.get("takeup_hydraulic") or {}
     cc      = r.get("casing_clearance") or {}
     cp      = r.get("casing_panel") or {}
     dc      = r.get("discharge_chute") or {}
@@ -773,6 +775,48 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                 f"The screw core diameter {d_min:.0f}mm is insufficient for the "
                 f"Euler column load {F_screw:.0f}N over span {span_m:.2f}m. "
                 f"Set takeup_screw_d_mm = {d_sf3_std}mm in Design Overrides."))
+
+        # ─── 13b. Hydraulic take-up buckling ─────────────────────────────────
+        # Mirrors rule 13 (screw) — same Euler column-buckling physics, but
+        # solved for cylinder BORE rather than core diameter, since the rod
+        # diameter is derived as 0.5×bore (hydraulic_takeup()'s ram-cylinder
+        # convention) rather than being the diameter under load directly.
+        elif "hydraulic" in ml and ("buckling" in ml or "fail" in ml):
+            SF_cur     = _s(th.get("SF_buckling"), 1.0)
+            bore_min   = _s(th.get("d_bore_min_mm"), 40)
+            F_cyl      = _s(th.get("F_cylinder_N"), T3 * 2 / 0.95)
+            stroke_m   = _s(th.get("stroke_mm"), 500) / 1000.0
+
+            # Bore for SF = 3.0, with rod_d = 0.5 × bore (see hydraulic_takeup()):
+            # F_euler = π²EI_rod/L² ≥ 3 × F_cyl
+            # I_rod = π/64 × (0.5×bore)^4 = π×bore^4 / 1024
+            # F_euler = π³E×bore^4 / (1024 × L²)
+            # bore = (3 × F_cyl × 1024 × L² / (π³ × E))^0.25
+            bore_sf3 = (3.0 * F_cyl * 1024.0 * stroke_m ** 2 / (_PI ** 3 * _E)) ** 0.25 * 1000  # mm
+            bore_sf3_std = _next_std(bore_sf3, _STD_HYD_MM)
+
+            drivers = [
+                _driver("takeup_hydraulic_bore_mm", "Cylinder bore diameter", bore_min, "mm",
+                    f"Required bore ≥ {bore_sf3:.0f}mm for SF_buckling ≥ 3.0 at stroke {stroke_m:.2f}m", 1),
+                _driver("takeup_hydraulic_pressure_bar", "Operating pressure", _s(th.get("operating_bar"), 100), "bar",
+                    "Higher pressure reduces required bore for the same force → smaller, "
+                    "stiffer rod at the same buckling margin", 2),
+            ]
+            corrections = [
+                _correction("takeup_hydraulic_bore_mm", "Specify cylinder bore diameter",
+                    bore_min, float(bore_sf3_std), "mm",
+                    f"SF_buckling ≥ 3.0 requires bore ≥ {bore_sf3:.0f}mm. "
+                    f"Next standard hydraulic cylinder bore {bore_sf3_std}mm.",
+                    1),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"SF_buckling = {SF_cur:.2f} < 3.0 (bore = {bore_min:.0f}mm, stroke = {stroke_m:.2f}m)",
+                drivers, corrections,
+                f"Hydraulic take-up buckling SF = {SF_cur:.2f} is below the required 3.0. "
+                f"The cylinder bore {bore_min:.0f}mm gives a rod too slender for the "
+                f"Euler column load {F_cyl:.0f}N over stroke {stroke_m:.2f}m. "
+                f"Set takeup_hydraulic_bore_mm = {bore_sf3_std}mm in Design Overrides, "
+                f"or use a guided/telescopic cylinder to reduce effective rod length."))
 
         # ─── 14. Casing panel deflection ─────────────────────────────────────
         elif "casing panel" in ml or "panel" in ml and "δ" in ml:

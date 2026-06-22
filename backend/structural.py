@@ -1216,6 +1216,80 @@ class StructuralStressEngine:
             ),
         }
 
+    @staticmethod
+    def boot_pulley_lagging(material: dict) -> dict:
+        """
+        Boot (tail) pulley lagging selection — deliberately separate from
+        pulley_lagging() above, NOT a reuse with different inputs.
+
+        Head pulley lagging exists to prevent belt SLIP at the drive pulley
+        under torque: it's selected via an Euler ratio check (T_tight/T_slack
+        vs e^(μθ)), uses high-hardness patterned rubber or ceramic, and gets
+        thicker/harder as abrasiveness and tension increase.
+
+        The boot pulley carries NO drive torque — it's a free-running pulley,
+        so there is no slip-to-prevent and no Euler check applies. Industry
+        practice for boot/tail pulleys instead centers on two different
+        questions entirely:
+          1. Does lagging help here at all, or does a self-cleaning bare/
+             slatted/wing pulley serve better? (Debris buildup at the boot
+             matters more than friction, since nothing needs to grip.)
+          2. If lagged, use plain (ungrooved) rubber at lower hardness
+             (35-45 Shore A) for tracking assistance only — never the head's
+             ceramic/diamond/herringbone slip-driven matrix, since there's
+             no torque to grip against.
+
+        Selection logic:
+          High abrasiveness (abr >= 6) OR fine powder (flowability >= 4):
+            material packs into any lagging grooves and accelerates wear
+            faster than lagging protects the shell → bare/self-cleaning
+            wing pulley recommended, no lagging.
+          Otherwise:
+            plain rubber lagging, low hardness, for belt tracking only.
+
+        Parameters
+        ----------
+        material   dict from MATERIALS database
+
+        Returns
+        -------
+        {
+            "lagging_type":         str    "plain_rubber" | "none_self_cleaning"
+            "thickness_mm":         float  0 if no lagging
+            "shore_hardness_A":     str    e.g. "35-45" or "—"
+            "recommendation":       str
+        }
+        """
+        abr         = material.get("abr_code",     3)
+        flowability = material.get("flowability",  2)
+
+        fine_or_abrasive = (abr >= 6) or (flowability >= 4 and abr <= 5)
+
+        if fine_or_abrasive:
+            return {
+                "lagging_type":     "none_self_cleaning",
+                "thickness_mm":     0.0,
+                "shore_hardness_A": "—",
+                "recommendation": (
+                    "Bare or self-cleaning wing/slatted boot pulley recommended. "
+                    "Material is fine or abrasive enough that debris packed into "
+                    "any lagging would wear faster than the lagging protects the "
+                    "shell — no slip-prevention benefit applies since the boot "
+                    "pulley carries no drive torque."
+                ),
+            }
+
+        return {
+            "lagging_type":     "plain_rubber",
+            "thickness_mm":     8.0,
+            "shore_hardness_A": "35-45",
+            "recommendation": (
+                "Plain (ungrooved) rubber lagging, Shore 35-45A, for belt "
+                "tracking assistance only — no slip check applies, since the "
+                "boot pulley is free-running with no drive torque."
+            ),
+        }
+
     # ── 9. Pulley End Disc ────────────────────────────────────────────────────
 
     @staticmethod
@@ -1594,6 +1668,125 @@ class StructuralStressEngine:
             "override_adequate": override_adequate,
             "buckling_safe":     buckling_ok,
             "recommendation":    rec,
+        }
+
+    @staticmethod
+    def hydraulic_takeup(
+        T_slack_N:        float,
+        travel_m:         float = 0.500,
+        operating_bar:    float = 100.0,
+        preferred_bore_mm: float = 0.0,
+    ) -> dict:
+        """
+        Hydraulic take-up cylinder sizing — bore diameter and stroke.
+
+        Unlike gravity (counterweight) and screw (mechanical) take-ups,
+        CEMA 375 does not define a hydraulic take-up sizing method — hydraulic
+        take-ups are a vendor-engineered alternative, typically specified for
+        applications needing automatic constant-tension control (long
+        elevators, variable load, or where floor space prevents a gravity
+        take-up's vertical travel well). Sizing here follows standard
+        hydraulic cylinder mechanics: bore from required force at a chosen
+        operating pressure, with a rod-buckling check identical in spirit to
+        the screw take-up's Euler check.
+
+        Cylinder force:
+          F_cylinder = 2 × T_slack_N / eta_cyl   (two strands carry the
+                       take-up carriage, same convention as gravity/screw)
+
+        Bore diameter from pressure:
+          A_required = F_cylinder / P_operating
+          d_bore     = sqrt(4 × A_required / π)
+
+        Rod buckling (Euler, pinned-pinned, same form as screw take-up):
+          F_euler    = π² × E_steel × I_rod / L_stroke²
+          SF_buckling = F_euler / F_cylinder   (require ≥ 3.0, same margin
+                        as screw take-up, since both are slender compression
+                        members under the same CEMA-implied safety practice)
+
+        Parameters
+        ----------
+        T_slack_N          Required slack-side tension from Euler check [N]
+        travel_m            Required stroke / travel [m]
+        operating_bar       Hydraulic system operating pressure [bar].
+                            100 bar (~1450 psi) is a common mobile/industrial
+                            default; verify against the actual power unit.
+        preferred_bore_mm   User-specified cylinder bore [mm]. 0 = auto.
+
+        Returns
+        -------
+        {
+            "F_cylinder_N":       float
+            "operating_bar":      float
+            "d_bore_min_mm":      float   minimum bore from pressure criterion
+            "d_bore_use_mm":      float   bore actually used (override or calc)
+            "d_bore_recommend_mm":int     next standard commercial bore size
+            "stroke_mm":          float
+            "rod_d_mm":           float   estimated rod diameter (0.5 × bore,
+                                          typical ram-style cylinder ratio)
+            "F_euler_N":          float
+            "SF_buckling":        float
+            "override_applied":   bool
+            "override_adequate":  bool
+            "buckling_safe":      bool
+            "recommendation":     str
+        }
+        """
+        E = _shaft_E()
+        eta_cyl = 0.95   # hydraulic seal/friction efficiency, typical
+
+        F_cylinder = 2.0 * T_slack_N / eta_cyl
+        P_pa = operating_bar * 1e5   # bar -> Pa
+
+        A_required = F_cylinder / max(P_pa, 1.0)
+        d_bore_min = math.sqrt(4.0 * A_required / math.pi)   # m
+
+        d_bore_use = (max(d_bore_min, preferred_bore_mm / 1000.0)
+                      if preferred_bore_mm > 0 else d_bore_min)
+        override_applied = preferred_bore_mm > 0
+        override_adequate = (preferred_bore_mm / 1000.0) >= d_bore_min if override_applied else True
+
+        # Rod buckling — typical ram-style take-up cylinder rod is ~0.5x bore
+        rod_d_m = 0.5 * d_bore_use
+        I_rod   = math.pi * rod_d_m ** 4 / 64.0
+        F_euler = (math.pi ** 2 * E * I_rod) / max(travel_m, 0.1) ** 2
+        SF_buckling = F_euler / max(F_cylinder, 1.0)
+        buckling_ok = SF_buckling >= 3.0
+
+        # Recommended commercial bore: next standard hydraulic cylinder bore
+        _stds = [25, 32, 40, 50, 63, 80, 100, 125]
+        d_recommend_mm = next((s for s in _stds if s >= d_bore_min * 1000), 125)
+
+        if buckling_ok:
+            rec = f"PASS — buckling SF={SF_buckling:.1f} >= 3.0 at {operating_bar:.0f} bar"
+        elif override_applied:
+            rec = (
+                f"FAIL — specified bore Ø{preferred_bore_mm:.0f}mm gives "
+                f"buckling SF={SF_buckling:.1f} < 3.0. "
+                f"Increase to >= Ø{d_recommend_mm}mm or use a guided/telescopic "
+                f"cylinder to reduce effective rod length."
+            )
+        else:
+            rec = (
+                f"FAIL — buckling SF={SF_buckling:.1f} < 3.0 "
+                f"(auto min Ø{d_bore_min*1000:.0f}mm at {operating_bar:.0f} bar). "
+                f"Increase operating pressure, bore, or use a guided cylinder."
+            )
+
+        return {
+            "F_cylinder_N":        round(F_cylinder, 0),
+            "operating_bar":       operating_bar,
+            "d_bore_min_mm":       round(d_bore_min * 1000, 1),
+            "d_bore_use_mm":       round(d_bore_use * 1000, 1),
+            "d_bore_recommend_mm": d_recommend_mm,
+            "stroke_mm":           round(travel_m * 1000, 0),
+            "rod_d_mm":            round(rod_d_m * 1000, 1),
+            "F_euler_N":           round(F_euler, 0),
+            "SF_buckling":         round(SF_buckling, 2),
+            "override_applied":    override_applied,
+            "override_adequate":   override_adequate,
+            "buckling_safe":       buckling_ok,
+            "recommendation":      rec,
         }
 
     # ── 12. Casing Panel Deflection and Stiffeners ────────────────────────────

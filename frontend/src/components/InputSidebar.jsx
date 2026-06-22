@@ -46,7 +46,7 @@ const DEFAULT_INPUTS = {
   takeup_screw_d_mm: 0, takeup_screw_len_m: 0,
   custom_rho: 0, custom_aor: 0, custom_abr: 0, custom_flowability: 0,
   custom_moisture: -1, custom_cohesion: -1, motor_kw_override: 0,
-  chain_sf: 6.0, chain_sprocket_teeth: 0, boot_outlet_height_mm: 0,
+  chain_sf: 6.0, chain_sprocket_teeth: 0, boot_inlet_height_override_mm: 0,
 };
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -1309,13 +1309,14 @@ function BucketEdit({ inp, setField, results }) {
 }
 
 function TakeupEdit({ inp, setField, results }) {
-  const ts  = results?.takeup_screw  || {};
-  const tg  = results?.takeup_gravity || {};
+  const ts  = results?.takeup_screw     || {};
+  const tg  = results?.takeup_gravity   || {};
+  const th  = results?.takeup_hydraulic || {};
   return (
     <>
       <SectionHead label="Take-Up Type" />
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        {["gravity","screw","auto"].map(v => (
+        {["gravity","screw","hydraulic","auto"].map(v => (
           <button key={v} onClick={() => setField("takeup_type", v)} style={{
             flex: 1, padding: "8px 4px", borderRadius: 5, cursor: "pointer",
             fontFamily: "inherit", fontSize: 12, fontWeight: 600,
@@ -1368,6 +1369,62 @@ function TakeupEdit({ inp, setField, results }) {
           (SF_buckling = {ts.SF_buckling?.toFixed(2) ?? "—"})
         </div>
       )}
+
+      {/* Hydraulic summary — v1.9.9. Not a CEMA-defined method; vendor cylinder
+          mechanics (force from pressure, Euler buckling check on the rod). */}
+      {th.F_cylinder_N != null && (
+        <div style={{
+          background: T.panel2, borderRadius: 5, padding: "10px 12px",
+          marginBottom: 12, border: `1px solid ${T.border}`, fontSize: 12,
+        }}>
+          <div style={{ color: T.text3, marginBottom: 4, fontWeight: 600 }}>
+            Hydraulic Take-Up (calculated)
+          </div>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {[
+              ["Cylinder Force", `${(th.F_cylinder_N/1000).toFixed(1)} kN`],
+              ["Bore",           `Ø${th.d_bore_use_mm ?? "—"} mm`],
+              ["Stroke",         `${th.stroke_mm ?? "—"} mm`],
+              ["SF Buckling",    th.SF_buckling != null ? th.SF_buckling.toFixed(2) : "—"],
+            ].map(([l,v]) => (
+              <div key={l}>
+                <div style={{ fontSize: 10, color: T.text3 }}>{l}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: T.text,
+                  fontFamily: "JetBrains Mono,monospace" }}>{v}</div>
+              </div>
+            ))}
+          </div>
+          {th.buckling_safe === false && (
+            <div style={{ fontSize: 10.5, color: T.danger, marginTop: 6 }}>
+              ✗ {th.recommendation}
+            </div>
+          )}
+        </div>
+      )}
+
+      <SectionHead label="Hydraulic Take-Up Overrides" />
+      <Row2>
+        <F label="Cylinder Bore" name="takeup_hydraulic_bore_mm"
+          value={inp.takeup_hydraulic_bore_mm ?? 0} onChange={setField}
+          unit="mm" min={0} max={300} step={5}
+          note="0 = auto-select" />
+        <F label="Operating Pressure" name="takeup_hydraulic_pressure_bar"
+          value={inp.takeup_hydraulic_pressure_bar ?? 100} onChange={setField}
+          unit="bar" min={10} max={350} step={10}
+          note="Match power unit rating" />
+      </Row2>
+      {th.d_bore_recommend_mm > 0 && (
+        <div style={{ fontSize: 11, color: th.buckling_safe ? T.success : T.danger,
+          marginTop: -6, marginBottom: 10 }}>
+          {th.buckling_safe ? "✓" : "✗"} Recommended: Ø{th.d_bore_recommend_mm} mm bore
+          (SF_buckling = {th.SF_buckling?.toFixed(2) ?? "—"})
+        </div>
+      )}
+      <div style={{ fontSize: 10, color: T.text3, marginTop: -4, marginBottom: 8 }}>
+        Hydraulic take-up sizing follows standard cylinder mechanics
+        (force ÷ pressure, Euler rod buckling) — not a CEMA-defined method.
+        Verify against the actual power unit and cylinder vendor spec.
+      </div>
     </>
   );
 }
@@ -1694,8 +1751,8 @@ function FeedEdit({ inp, setField, results }) {
         ["Height", `${fd.inlet_height_mm} mm`, true],
         ["Area",   `${(fd.A_inlet_m2 * 1e6).toFixed(0)} mm²`, false],
       ]} />
-      <F label="Outlet Height Override" name="boot_outlet_height_mm"
-        value={inp.boot_outlet_height_mm ?? 0} onChange={setField}
+      <F label="Inlet Height Override" name="boot_inlet_height_override_mm"
+        value={inp.boot_inlet_height_override_mm ?? 0} onChange={setField}
         unit="mm" min={0} max={2000} step={25}
         note={`0 = auto (${fd.inlet_height_mm}mm calculated). Set to preferred standard opening.`} />
 

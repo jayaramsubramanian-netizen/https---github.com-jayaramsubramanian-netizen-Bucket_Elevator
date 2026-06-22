@@ -180,6 +180,7 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
   const lag      = r.lagging          || {};
   const tg       = r.takeup_gravity   || {};
   const ts       = r.takeup_screw     || {};
+  const th       = r.takeup_hydraulic || {};
   const dc       = r.discharge_chute  || {};
   const dcperf   = dc.performance     || {};
   const dcmnt    = dc.maintenance     || {};
@@ -387,6 +388,12 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
               ? `d_core ${f(screw_d, 1)}mm  SF ${f(ts.SF_buckling, 2)}`
               : "—"}
             status={ts.primary ? (ts.buckling_safe === false ? "fail" : "ok") : (ts.buckling_safe === false ? "warn" : "none")}
+            onClick={() => onNodeClick?.({ section: "takeup" })} depth={3} />
+          <Leaf label={`Hydraulic Alternative${th.primary ? "  (active)" : ""}`}
+            sub={th.d_bore_use_mm
+              ? `bore Ø${f(th.d_bore_use_mm, 0)}mm  SF ${f(th.SF_buckling, 2)}`
+              : "—"}
+            status={th.primary ? (th.buckling_safe === false ? "fail" : "ok") : (th.buckling_safe === false ? "warn" : "none")}
             onClick={() => onNodeClick?.({ section: "takeup" })} depth={3} />
         </Section>
 
