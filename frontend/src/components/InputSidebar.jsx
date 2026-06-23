@@ -1891,7 +1891,13 @@ function PowerEdit({ inp, setField, results }) {
   const r        = results || {};
   const torqueNm = r.T_Nm ?? 0;
   const motorKw  = r.motor_kw ?? r.motor_kW ?? 0;
-  const reqRatio = inp.n_rpm > 0 ? Math.round(1450 / Math.max(inp.n_rpm, 1)) : 0;
+  // Reads backend's gearbox_ratio (computed from the actual motor_nominal_rpm,
+  // not a hardcoded 1450) with the same fallback convention used elsewhere
+  // (ComponentPanel.jsx, generate_report.py) for the rare case the field is
+  // momentarily absent.
+  const motorSyncRpm = r.motor_nominal_rpm ?? 1450;
+  const reqRatio = r.gearbox_ratio ??
+    (inp.n_rpm > 0 ? Math.round(motorSyncRpm / Math.max(inp.n_rpm, 1)) : 0);
 
   return (
     <>
