@@ -46,7 +46,7 @@ const DEFAULT_INPUTS = {
   takeup_screw_d_mm: 0, takeup_screw_len_m: 0,
   custom_rho: 0, custom_aor: 0, custom_abr: 0, custom_flowability: 0,
   custom_moisture: -1, custom_cohesion: -1, motor_kw_override: 0,
-  chain_sf: 6.0, chain_sprocket_teeth: 0, boot_inlet_height_override_mm: 0,
+  chain_sf: 6.0, chain_sprocket_teeth: 0, chain_boot_sprocket_teeth: 0, boot_inlet_height_override_mm: 0,
 };
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -820,9 +820,10 @@ const CHAIN_OPTIONS = [
 ];
 
 function ChainEdit({ inp, setField, results }) {
-  const r  = results || {};
-  const cs = r.chain_selected ?? null;
-  const sp = r.sprocket ?? null;
+  const r   = results || {};
+  const cs  = r.chain_selected ?? null;
+  const sp  = r.sprocket ?? null;
+  const bsp = r.boot_sprocket ?? null;
 
   const inputStyle = {
     background: T.panel2, border: `1px solid ${T.border}`, borderRadius: 5,
@@ -902,6 +903,37 @@ function ChainEdit({ inp, setField, results }) {
           {!sp.smooth && (
             <div style={{ fontSize: 10, color: T.warning, marginTop: 4 }}>
               ⚠ {sp.note}
+            </div>
+          )}
+        </div>
+      )}
+
+      <SectionHead label="Boot Sprocket" />
+      <F label="Boot Sprocket Teeth Override" name="chain_boot_sprocket_teeth"
+        value={inp.chain_boot_sprocket_teeth ?? 0} onChange={setField}
+        min={0} max={32} step={1}
+        note="0 = auto from boot pulley diameter. Same physical relationship as the head sprocket — the boot/tail wheel engages the chain too, not a smooth-faced pulley." />
+      {bsp && (
+        <div style={{
+          background: T.panel2, border: `1px solid ${bsp.smooth ? T.border : T.warning}`,
+          borderRadius: 5, padding: "8px 12px", marginBottom: 10, fontSize: 11,
+        }}>
+          <div style={{ display: "flex", gap: 16 }}>
+            {[
+              ["PD",     `${bsp.PD_mm} mm`],
+              ["Teeth",  `${bsp.n_teeth}`],
+              ["Smooth", bsp.smooth ? "✓ Yes" : "⚠ No"],
+            ].map(([l, v]) => (
+              <div key={l}>
+                <div style={{ fontSize: 9, color: T.text3 }}>{l}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: T.text,
+                  fontFamily: "JetBrains Mono,monospace" }}>{v}</div>
+              </div>
+            ))}
+          </div>
+          {!bsp.smooth && (
+            <div style={{ fontSize: 10, color: T.warning, marginTop: 4 }}>
+              ⚠ {bsp.note}
             </div>
           )}
         </div>
@@ -1362,11 +1394,27 @@ function TakeupEdit({ inp, setField, results }) {
           unit="m" min={0} max={5} step={0.1}
           note="0 = auto" />
       </Row2>
+      {/* FIX #4/#7: previously hardcoded color:T.success and a permanent "✓"
+          regardless of whether an override was given and rejected. The
+          backend already computes override_applied/override_adequate
+          (confirmed live: takeup_screw_d_mm=8 -> clamped to 25mm,
+          override_adequate:false) but nothing read it -- a user could type
+          an unsafe value and see a clean green "Recommended" line with zero
+          indication their input was silently discarded. */}
       {ts.d_core_recommend_mm > 0 && (
-        <div style={{ fontSize: 11, color: T.success, marginTop: -6,
-          marginBottom: 10 }}>
-          ✓ Recommended: {ts.d_core_recommend_mm} mm core
+        <div style={{
+          fontSize: 11,
+          color: ts.override_adequate === false ? T.warning : T.success,
+          marginTop: -6, marginBottom: ts.override_applied && ts.override_adequate === false ? 2 : 10,
+        }}>
+          {ts.override_adequate === false ? "⚠" : "✓"} Recommended: {ts.d_core_recommend_mm} mm core
           (SF_buckling = {ts.SF_buckling?.toFixed(2) ?? "—"})
+        </div>
+      )}
+      {ts.override_applied && ts.override_adequate === false && (
+        <div style={{ fontSize: 10.5, color: T.warning, marginBottom: 10 }}>
+          Your specified core diameter was below the calculated minimum —
+          using {ts.d_core_recommend_mm}mm instead.
         </div>
       )}
 
@@ -1413,11 +1461,27 @@ function TakeupEdit({ inp, setField, results }) {
           unit="bar" min={10} max={350} step={10}
           note="Match power unit rating" />
       </Row2>
+      {/* FIX #4/#7: buckling_safe alone doesn't catch an override rejection --
+          it's computed AFTER clamping to the safe minimum, so it's normally
+          true regardless of whether the user's original typed value was
+          adequate (confirmed live: takeup_hydraulic_bore_mm=10 -> clamped to
+          57.9mm, buckling_safe:true, override_adequate:false). Added the
+          same explicit override_adequate warning as the screw block above. */}
       {th.d_bore_recommend_mm > 0 && (
-        <div style={{ fontSize: 11, color: th.buckling_safe ? T.success : T.danger,
-          marginTop: -6, marginBottom: 10 }}>
-          {th.buckling_safe ? "✓" : "✗"} Recommended: Ø{th.d_bore_recommend_mm} mm bore
+        <div style={{
+          fontSize: 11,
+          color: th.override_adequate === false ? T.warning : (th.buckling_safe ? T.success : T.danger),
+          marginTop: -6,
+          marginBottom: th.override_applied && th.override_adequate === false ? 2 : 10,
+        }}>
+          {th.override_adequate === false ? "⚠" : (th.buckling_safe ? "✓" : "✗")} Recommended: Ø{th.d_bore_recommend_mm} mm bore
           (SF_buckling = {th.SF_buckling?.toFixed(2) ?? "—"})
+        </div>
+      )}
+      {th.override_applied && th.override_adequate === false && (
+        <div style={{ fontSize: 10.5, color: T.warning, marginBottom: 10 }}>
+          Your specified bore diameter was below the calculated minimum —
+          using {th.d_bore_recommend_mm}mm instead.
         </div>
       )}
       <div style={{ fontSize: 10, color: T.text3, marginTop: -4, marginBottom: 8 }}>
@@ -1434,13 +1498,26 @@ function TakeupEdit({ inp, setField, results }) {
 // tree label mentioning "shaft" — moved to its own tree row so the controls
 // are actually discoverable.
 function ShaftEdit({ inp, setField, results }) {
+  // FIX #8: previously this block used a hardcoded border:T.border and
+  // color:T.text with zero conditional logic -- confirmed live that an
+  // unsafe override (shaft_d_override_mm=20mm vs calculated min 98.6mm)
+  // produces a real [shaft/fail] keyway check and a [shaft/warn] critical-
+  // speed check, but this panel (where the user just typed the value)
+  // showed nothing. Mirrors the pattern CasingEdit already uses correctly
+  // for its own override-consequence feedback.
+  const _shaftChecks = (results?.checks || []).filter(c => c.subsystem === "shaft");
+  const _shaftFail = _shaftChecks.some(c => c.type === "fail");
+  const _shaftWarn = _shaftChecks.some(c => c.type === "warn");
+  const _shaftBorder = _shaftFail ? T.danger : _shaftWarn ? T.warning : T.border;
+  const _shaftColor  = _shaftFail ? T.danger : _shaftWarn ? T.warning : T.text;
+
   return (
     <>
       <SectionHead label="Shaft Sizing" />
       {results?.d_mm != null && (
         <div style={{
           background: T.panel2, borderRadius: 5, padding: "10px 12px",
-          marginBottom: 12, border: `1px solid ${T.border}`, fontSize: 12,
+          marginBottom: 12, border: `1px solid ${_shaftBorder}`, fontSize: 12,
         }}>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             {[
@@ -1456,6 +1533,11 @@ function ShaftEdit({ inp, setField, results }) {
               </div>
             ))}
           </div>
+          {(_shaftFail || _shaftWarn) && (
+            <div style={{ fontSize: 10.5, color: _shaftColor, marginTop: 6 }}>
+              {_shaftFail ? "⚠" : "ℹ"} {_shaftChecks.find(c => c.type === (_shaftFail ? "fail" : "warn"))?.msg}
+            </div>
+          )}
         </div>
       )}
 

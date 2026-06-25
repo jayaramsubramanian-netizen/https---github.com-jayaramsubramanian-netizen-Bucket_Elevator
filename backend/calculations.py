@@ -931,7 +931,12 @@ def select_bucket_auto(Q_th: float, rho: float, v_ms: float,
         spacing = (b["P"] + bucket_gap) / 1000.0
         if calc_capacity(v_ms, spacing, b["V"], 75.0, rho) >= Q_th:
             return b
-    return candidates[-1]   # largest available
+    # FIX (minor, found alongside the CR-target speed work): this fallback
+    # comment says "largest available" but previously returned
+    # candidates[-1] against the ORIGINAL unsorted list, not the sorted-by-
+    # volume one used in the loop above -- not actually guaranteed to be
+    # the largest. Sorting explicitly here, not relying on incidental order.
+    return sorted(candidates, key=lambda x: x["V"])[-1]
 
 
 def select_belt_width(bucket_w_mm: float) -> int:
@@ -1648,7 +1653,7 @@ def feed_design(
         warnings = []
         if v_belt_mps > 1.3:
             warnings.append(
-                f"Belt speed {v_belt_mps:.2f} m/s is high for a loading leg — "
+                f"Speed {v_belt_mps:.2f} m/s is high for a loading leg — "
                 f"material transit time through leg is short. "
                 f"Verify spout can deliver material fast enough."
             )
@@ -1715,7 +1720,7 @@ def feed_design(
         warnings = []
         if v_belt_mps > 2.0:
             warnings.append(
-                f"Belt speed {v_belt_mps:.2f} m/s is high for a digging elevator — "
+                f"Speed {v_belt_mps:.2f} m/s is high for a digging elevator — "
                 f"material scatter in boot may reduce fill efficiency. "
                 f"Consider increasing bucket gap or reducing speed."
             )
@@ -1810,9 +1815,39 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
 
     # ── Material behaviour corrections (v1.2.0 integration) ──────────────────
     #    elevator_type for fill: "continuous" for HF-style, "centrifugal" for CC
+    # FIX (#18, redesigned per Jay's direction): previously hardcoded to
+    # "centrifugal" whenever auto_bucket=True (bucket_id forced to None ->
+    # is_hf always False), completely bypassing bucket_recommendation()'s
+    # material-driven preference -- this is why wheat (GRAIN, which prefers
+    # continuous/HF) always auto-selected a centrifugal bucket. Now reads
+    # the material's own pref_discharge_type column (the same strong-default
+    # data already built for the optimizer) when in auto mode; manual
+    # selection (auto_bucket=False) still derives elev_type from whatever
+    # bucket the engineer actually picked, unchanged.
     bucket_id = inp.bucket_id if not inp.auto_bucket else None
-    is_hf = (bucket_id in ("HF", "HF-L", "MF", "MF-L", "PF", "SC", "SC-L")) if bucket_id else False
-    elev_type = "continuous" if is_hf else "centrifugal"
+    if inp.auto_bucket:
+        elev_type = mat.get("pref_discharge_type", "centrifugal")
+    else:
+        # FIX (found via Jay's spacing-advisory report): this previously
+        # checked `bucket_id in ("HF","HF-L","MF","MF-L","PF","SC","SC-L")`
+        # -- comparing the FULL catalog ID string (e.g. "HF_16x8") against
+        # bare style codes it can never equal. is_hf was FALSE for every
+        # manually-selected HF/MF/SC bucket, regardless of its real style,
+        # so elev_type silently fell back to "centrifugal" for all of them.
+        # Confirmed live: this is exactly why the Dynamic Fill Advisory for
+        # a manually-selected HF_16x8 (genuinely continuous, confirmed via
+        # its own catalog discharge_type field) used the CENTRIFUGAL
+        # formula (1.8x projection -> 365mm) instead of the correct
+        # CONTINUOUS one (1.0x depth -> 295mm) -- pushing Jay toward a
+        # spacing target appropriate for the wrong discharge mechanism
+        # entirely, which is what caused the capacity-halving/CR-spiking
+        # loop he reported (chasing an optimum computed for a different
+        # kind of bucket than the one actually selected). Now reads the
+        # bucket's own authoritative discharge_type field directly, the
+        # same field select_bucket_auto()/run_optimizer() already treat as
+        # the source of truth elsewhere in this codebase.
+        _manual_bkt = _BUCKET_BY_ID.get(bucket_id) or {}
+        elev_type = _manual_bkt.get("discharge_type", "centrifugal")
     try:
         mat_behavior = MaterialBehaviorEngine.apply_to_solver(mat, elev_type)
     except Exception as _mbe:
@@ -1830,6 +1865,119 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
             "flowability_class":         3,
             "_error":                    str(_mbe),
         }
+
+    # ── Auto speed selection — CR-target-driven (new) ─────────────────────────
+    # Jay's diagnosis: bucket (and therefore belt width, which is already
+    # correctly DERIVED from bucket width a few lines below) was being
+    # selected against whatever speed happened to fall out of D_mm/n_rpm --
+    # two independent fixed inputs -- with CR and critical speed checked only
+    # AFTER the fact, never driving the selection itself. CR = v²/(g·r) is
+    # invertible: given a target CR (the material's own pref_cr_min/max
+    # midpoint -- same column used by the optimizer) and the pulley radius
+    # (D_mm, unchanged), solve directly for the speed/RPM that hits it, THEN
+    # select the bucket and let belt width continue to follow as it already
+    # does. Scoped to auto_bucket=True only -- a manual bucket_id + n_rpm
+    # selection is left exactly as specified; this never touches D_mm itself.
+    _auto_rpm_note = None
+    if inp.auto_bucket:
+        _cr_lo = mat.get("pref_cr_min", 1.20)
+        _cr_hi = mat.get("pref_cr_max", 1.50)
+        _cr_target = (_cr_lo + _cr_hi) / 2.0
+        _r_m = inp.D_mm / 2000.0
+        _v_target = math.sqrt(max(_cr_target, 0.01) * 9.81 * _r_m)
+
+        # Capacity feasibility floor: CR is a STRONG DEFAULT, not absolute --
+        # found via broad testing (40-material sweep) that a few very
+        # low-density materials (activated carbon, mica) could end up with
+        # capacity genuinely unreachable even at the largest available
+        # bucket once speed is pulled down toward a low continuous-discharge
+        # CR target. calc_capacity() is exactly linear in v (Q = (v/spacing)
+        # x V x fill x rho x 3.6), so the minimum v needed for the largest
+        # candidate bucket to hit Q_req is solvable directly rather than
+        # guessed at. Never lowers speed below the CR target -- only raises
+        # it, and only when capacity would otherwise fail outright.
+        _cand_bg = [
+            b for b in BUCKET_SERIES
+            if b.get("discharge_type", "centrifugal") == elev_type
+            and b.get("style") not in ("SC",)
+        ] or BUCKET_SERIES
+        _largest_b = max(_cand_bg, key=lambda b: b["V"])
+        _spacing_largest = (_largest_b["P"] + inp.bucket_gap) / 1000.0
+        _cap_at_v1 = calc_capacity(1.0, _spacing_largest, _largest_b["V"], 75.0, rho)
+        # Small safety margin (0.5%) so rounding n_rpm to 1 decimal place
+        # below can't shave the result back under Q_req at the breakeven point.
+        _v_min_for_capacity = (inp.Q_req * 1.005 / _cap_at_v1) if _cap_at_v1 > 0 else 0.0
+        _capacity_limited = _v_min_for_capacity > _v_target
+        if _capacity_limited:
+            _v_target = _v_min_for_capacity
+
+        # Discharge-type CR hard ceiling -- a TRUE wall, not a strong default.
+        # Found via the full 400-material sweep: the capacity floor above can
+        # push speed past the point where a CONTINUOUS bucket physically stops
+        # discharging as designed (CR must stay < 1.0 -- this isn't a
+        # preference, it's the mechanism; confirmed live with bran: capacity
+        # floor pushed CR to 1.148 on an MF bucket, which immediately fired
+        # the existing "centrifugal discharge occurring in HF elevator" fail
+        # check -- "capacity achieved" was actually a broken design). Same
+        # hard bounds already established in run_optimizer()'s CR scoring
+        # (continuous valid [0.20,1.0), centrifugal valid [0.70,3.00]) --
+        # reused here, not reinvented. Unlike the capacity floor, this is
+        # never crossed even if capacity falls short as a result.
+        _cr_hard_ceiling = 0.99 if elev_type == "continuous" else 3.00
+        _v_hard_ceiling = math.sqrt(_cr_hard_ceiling * 9.81 * _r_m)
+        _discharge_limited = _v_target > _v_hard_ceiling
+        if _discharge_limited:
+            _v_target = _v_hard_ceiling
+
+        _n_rpm_uncapped = _v_target * 60.0 / (math.pi * inp.D_mm / 1000.0)
+        # Clamp to the same valid range models.py already enforces on n_rpm
+        # (ge=10, le=300) -- an extreme D_mm/density combo could otherwise
+        # imply an unreachable RPM.
+        _n_rpm_target = max(10.0, min(300.0, _n_rpm_uncapped))
+        # Found via broad testing (40-material sweep): for materials light
+        # enough (e.g. expanded perlite, ~48 kg/m3) that the capacity floor
+        # itself would need >300rpm, the clamp means capacity is STILL not
+        # actually reached even after "raising" speed -- the message below
+        # must say so honestly rather than claiming a speed that wasn't
+        # actually applied "reaches" the target.
+        _clamp_prevented_capacity = _capacity_limited and _n_rpm_uncapped > 300.0
+        if _discharge_limited and _capacity_limited:
+            _auto_rpm_note = (
+                f"Auto speed: capped at {_n_rpm_target:.0f} rpm — CR={_cr_hard_ceiling:.2f} "
+                f"is the physical limit for {elev_type} discharge (not just a "
+                f"preference: beyond this, material no longer discharges as "
+                f"designed). At this speed the largest available {elev_type} "
+                f"bucket ({_largest_b['id']}) cannot reach {inp.Q_req:.0f} t/h at "
+                f"D={inp.D_mm:.0f}mm. Consider a centrifugal-style bucket instead, "
+                f"a larger pulley diameter, or set bucket + speed manually."
+            )
+        elif _clamp_prevented_capacity:
+            _auto_rpm_note = (
+                f"Auto speed: capped at {_n_rpm_target:.0f} rpm (model maximum) -- "
+                f"even at this speed, the largest available {elev_type} bucket "
+                f"({_largest_b['id']}) cannot reach {inp.Q_req:.0f} t/h at "
+                f"D={inp.D_mm:.0f}mm with this material's density. A standard "
+                f"bucket elevator may not be the right equipment for this "
+                f"combination at this diameter -- consider a larger pulley "
+                f"diameter, a custom bucket, or a different conveying method."
+            )
+        elif _capacity_limited:
+            _auto_rpm_note = (
+                f"Auto speed: {_n_rpm_target:.0f} rpm — raised above the CR target "
+                f"({_cr_target:.2f}) because the largest available {elev_type} "
+                f"bucket ({_largest_b['id']}) needs at least this speed to reach "
+                f"{inp.Q_req:.0f} t/h at D={inp.D_mm:.0f}mm. Capacity took priority "
+                f"over the CR target here. Switch auto_bucket off to set bucket + "
+                f"speed manually."
+            )
+        else:
+            _auto_rpm_note = (
+                f"Auto speed: {_n_rpm_target:.0f} rpm targets CR={_cr_target:.2f} "
+                f"(material preference {_cr_lo:.2f}-{_cr_hi:.2f} for "
+                f"{elev_type} discharge) at D={inp.D_mm:.0f}mm. "
+                f"Switch auto_bucket off to set bucket + speed manually."
+            )
+        inp = inp.model_copy(update={"n_rpm": round(_n_rpm_target, 1)})
 
     # ── Belt speed ─────────────────────────────────────────────────────────────
     v = belt_speed(inp.D_mm, inp.n_rpm)
@@ -1867,7 +2015,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     _leq_hf_default = 4.5   # midpoint of CEMA 375 continuous range
     D_boot_m = _boot_D_mm / 1000.0
     Leq  = (inp.Leq if inp.Leq > 0
-            else mat.get("Leq_default", _leq_hf_default if is_hf else LEQ_DEFAULT))
+            else mat.get("Leq_default", _leq_hf_default if elev_type == "continuous" else LEQ_DEFAULT))
     Ceff = inp.Ceff if inp.Ceff > 0 else mat.get("Ceff_default", CEFF_BELT)
     pwr  = calc_power_cema375(Q, inp.H_m, D_boot_m, Leq, Ceff)
     P_total = pwr["P_total"]
@@ -1946,6 +2094,23 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
             _n_est   = max(6, round(math.pi / math.asin(_sin_arg)))
             sprocket = sprocket_geometry(_pitch, _n_est)
 
+        # ── Boot (tail) sprocket geometry (v2.x) ───────────────────────────────
+        # Mirrors the head sprocket block above exactly. Previously the boot/
+        # tail wheel had no sprocket-teeth relationship at all for chain mode
+        # -- it was parameterised purely through the generic boot_pulley_D_mm
+        # "pulley diameter" override, even though it's physically a sprocket
+        # too on a real chain elevator (see findings log #22).
+        _boot_D_for_sprocket = (inp.D_mm if getattr(inp, "boot_pulley_same_as_head", False)
+                                 else inp.boot_pulley_D_mm)
+        chain_boot_n_teeth = int(getattr(inp, "chain_boot_sprocket_teeth", 0) or 0)
+        if chain_boot_n_teeth > 0:
+            boot_sprocket = sprocket_geometry(chain_selected["pitch_mm"], chain_boot_n_teeth)
+        else:
+            _pitch_b   = chain_selected["pitch_mm"]
+            _sin_arg_b = min(0.9999, _pitch_b / max(_boot_D_for_sprocket, _pitch_b))
+            _n_est_b   = max(6, round(math.pi / math.asin(_sin_arg_b)))
+            boot_sprocket = sprocket_geometry(_pitch_b, _n_est_b)
+
         chain_pull_N = F_eff
         chain_SF_act = chain_selected["WL_kg"] * 9.81 * chain_n_str / max(chain_pull_N, 1.0)
         chain_v_ok   = v <= chain_selected["v_max_ms"]
@@ -1982,6 +2147,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         chain_pull_N   = None
         chain_v_ok     = None
         sprocket       = None
+        boot_sprocket  = None
 
         # 3.9 — Wrap angle recommendation
         wrap_rec = _required_wrap_angle(F_eff, T3, inp.mu)
@@ -2062,16 +2228,26 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         weld_check = None
 
     # ── Pulley lagging selection ───────────────────────────────────────────────
+    # FIX (#11): previously called unconditionally regardless of conveyor_type.
+    # A chain elevator's head wheel is a toothed sprocket with positive
+    # mechanical engagement -- there is no friction lagging and no slip-via-
+    # friction failure mode, so this entire calculation (and the resulting
+    # "Lagging: ... slip safe" check) was physically meaningless for chain
+    # mode. Mirrors the belt_ply/belt_PIW = None pattern already used in the
+    # is_chain branch above.
     environment = getattr(inp, "environment", "dry")
     belt_type   = getattr(inp, "belt_type",   "EP")
-    lagging = StructuralStressEngine.pulley_lagging(
-        material       = mat,
-        T_effective_N  = F_eff,
-        T_slack_N      = T3,
-        wrap_angle_deg = _wrap_eff,
-        environment    = environment,
-        belt_type      = belt_type,
-    )
+    if not is_chain:
+        lagging = StructuralStressEngine.pulley_lagging(
+            material       = mat,
+            T_effective_N  = F_eff,
+            T_slack_N      = T3,
+            wrap_angle_deg = _wrap_eff,
+            environment    = environment,
+            belt_type      = belt_type,
+        )
+    else:
+        lagging = None
 
     # ── Pulley end disc ───────────────────────────────────────────────────────
     end_disc = StructuralStressEngine.pulley_end_disc(
@@ -2438,7 +2614,10 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     # not a reuse — see boot_pulley_lagging() docstring for why (no drive
     # torque means no slip-prevention requirement; the real boot question is
     # whether lagging helps at all vs. a bare self-cleaning wing pulley).
-    boot_lagging = StructuralStressEngine.boot_pulley_lagging(mat)
+    # FIX (#11): also guarded for chain mode -- a chain boot is a sprocket,
+    # not a free-running belt pulley, so neither the "wing pulley vs lagged"
+    # tracking question nor plain-rubber lagging applies.
+    boot_lagging = StructuralStressEngine.boot_pulley_lagging(mat) if not is_chain else None
 
     boot_pulley_analysis = {
         "head_D_mm":      round(inp.D_mm, 0),
@@ -2598,6 +2777,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     checks = _build_checks(
         inp, mat, mat_behavior, bucket, Q, v, cr, T1, T2, T3, F_eff,
         R_head, d_mm, d_stress_mm, d_deflect_mm, governed_by, L10, Ceff,
+        auto_rpm_note    = _auto_rpm_note,
         euler_chk        = euler_chk,
         key_check        = key,
         weld_check       = weld_check,
@@ -2606,6 +2786,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         shaft_mass_saving_pct = gov.get("mass_saving_pct", 0.0),
         lagging          = lagging,
         end_disc         = end_disc,
+        boot_end_disc    = boot_end_disc,
         bolt_fatigue     = bolt_fatigue,
         takeup_grav      = takeup_gravity,
         casing_panel     = casing_panel,
@@ -2621,6 +2802,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         chain_SF_actual  = chain_SF_act,
         chain_v_ok       = chain_v_ok,
         sprocket         = sprocket,
+        boot_sprocket    = boot_sprocket,
         pulley_shell     = pulley_shell,
         critical_speed   = critical_speed,
         fill_eff         = fill_eff,
@@ -2689,6 +2871,22 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "L10":              round(L10, 0),
         "mat":              mat,
         "spacing":          round(spacing, 4),
+        # FIX (found alongside #10): these were also missing, so bom.py's
+        # belt_len_m/n_buckets always fell back to the rough H_m*2.15
+        # approximation instead of the proper geometric calculation
+        # (belt_length_and_bucket_count()) that's already computed and
+        # exposed at the top level -- just never reached this subset dict.
+        "belt_length_total_m": belt_qty["belt_length_total_m"],
+        "n_buckets":            belt_qty["n_buckets"],
+        "spacing_actual_m":     belt_qty["spacing_actual_m"],
+        # FIX (#10): these were missing entirely, so generate_bom()'s
+        # r.get("is_chain") always defaulted to False regardless of the
+        # actual conveyor_type -- the chain-awareness fix in bom.py had
+        # nothing to read.
+        "is_chain":         is_chain,
+        "chain_selected":   chain_selected,
+        "sprocket":         sprocket,
+        "boot_sprocket":    boot_sprocket,
     }
     _inp_for_tier2 = {
         "Q_req":            inp.Q_req,
@@ -2703,6 +2901,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "belt_type":        getattr(inp, "belt_type", "EP"),
         "environment":      getattr(inp, "environment", "dry"),
         "wind_pressure_pa": getattr(inp, "wind_pressure_pa", 800),
+        "chain_n_strands":  getattr(inp, "chain_n_strands", 1),
     }
     try:
         bom_result = generate_bom(_r_for_tier2, _inp_for_tier2)
@@ -2898,6 +3097,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "chain_SF_actual": chain_SF_act,
         "chain_v_ok":      chain_v_ok,
         "sprocket":        sprocket,
+        "boot_sprocket":   boot_sprocket,
     }
 
 
@@ -2908,6 +3108,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
 def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   T1, T2, T3, F_eff, R_head,
                   d_mm, d_stress_mm, d_deflect_mm, governed_by, L10, Ceff,
+                  auto_rpm_note:    "str | None" = None,
                   euler_chk:        "dict | None" = None,
                   key_check:        "dict | None" = None,
                   weld_check:       "dict | None" = None,
@@ -2916,6 +3117,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   shaft_mass_saving_pct: "float | None" = None,
                   lagging:          "dict | None" = None,
                   end_disc:         "dict | None" = None,
+                  boot_end_disc:    "dict | None" = None,
                   bolt_fatigue:     "dict | None" = None,
                   takeup_grav:      "dict | None" = None,
                   casing_panel:     "dict | None" = None,
@@ -2931,6 +3133,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   chain_SF_actual:  "float | None" = None,
                   chain_v_ok:       "bool | None"  = None,
                   sprocket:         "dict | None" = None,
+                  boot_sprocket:    "dict | None" = None,
                   pulley_shell:     "dict | None" = None,
                   critical_speed:   "dict | None" = None,
                   fill_eff:         "dict | None" = None,
@@ -2967,6 +3170,12 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         checks.append(fail(f"Capacity {Q:.1f} t/h < required {inp.Q_req} t/h [CEMA 375 §4]", subsystem="process"))
     else:
         checks.append(ok(f"Capacity OK: {Q:.1f} t/h ≥ {inp.Q_req} t/h [CEMA 375 §4]", subsystem="process"))
+
+    # 1b — Auto speed selection note (new -- CR-target-driven, only present
+    # when auto_bucket=True; explains the auto-derived RPM rather than
+    # silently overriding whatever was in the n_rpm field).
+    if auto_rpm_note:
+        checks.append(info(auto_rpm_note, subsystem="process"))
 
     # 2 — Belt speed vs bucket limits
     if v < v_min:
@@ -3104,9 +3313,23 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             checks.append(ok(
                 f"Bucket style {_cur_style or '—'} — good match for "
                 f"'{mat.get('name','?')}' [CEMA 375 §6]", subsystem="bucket"))
-        # Surface supplementary notes as info checks
+        # Surface supplementary notes as info checks -- EXCEPT the SC/chain-
+        # only compatibility note, which is a genuine hard incompatibility
+        # (FIX #19): previously folded into this generic info-only loop, so
+        # selecting an SC-style bucket on a belt-mode elevator returned a
+        # full "valid" result with the issue buried as an info note, same
+        # severity as a design tip. Elevated to fail, driven by the actual
+        # selected style + conveyor_type rather than string-matching the
+        # note text (robust to the note wording changing later).
         for _note in (_brec.get("notes") or []):
+            if "CHAIN ONLY" in _note:
+                continue   # handled structurally below instead
             checks.append(info(f"Bucket note: {_note} [CEMA 375 §6]", subsystem="bucket"))
+        if _cur_style == "SC" and not is_chain:
+            checks.append(fail(
+                f"Bucket style SC is CHAIN ONLY — not compatible with belt mount "
+                f"(conveyor_type='belt'). Switch conveyor_type to 'chain' or select "
+                f"a different bucket style [CEMA 375 §6]", subsystem="bucket"))
     except Exception:
         pass   # never block calculation if recommendation engine fails
 
@@ -3397,29 +3620,43 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             f"Abrasion class {abr}/7 — hardened bucket lip recommended [CEMA 550]", subsystem="process"))
 
     # 10b — Material temperature (v1.9.0)
+    # FIX (#13): the EP/ST belt-limit block is belt-specific (a chain
+    # elevator has no belt at all) -- guarded for is_chain. The bearing-
+    # grease and high-temperature-seal concerns are genuinely conveyor-type-
+    # agnostic (bearings and seals exist on both belt and chain elevators),
+    # kept for both but retagged subsystem="shaft" (was "belt") since that's
+    # what they're actually about, and "lagging" dropped from the chain-mode
+    # high-temp message since a chain elevator has none.
     _mat_temp = float(getattr(inp, "material_temperature_c", 20) or 20)
-    _belt_t   = getattr(inp, "belt_type", "EP") or "EP"
-    _blim     = BELT_TEMP_LIMITS.get(_belt_t, BELT_TEMP_LIMITS["EP"])
-    if _mat_temp > _blim["max_c"]:
-        checks.append(fail(
-            f"Temperature {_mat_temp:.0f}°C exceeds {_belt_t} belt limit "
-            f"{_blim['max_c']:.0f}°C — heat damage. {_blim['note']} [CEMA 375 §3]", subsystem="belt"))
-    elif _mat_temp > _blim["warn_c"]:
-        checks.append(warn(
-            f"Temperature {_mat_temp:.0f}°C above {_belt_t} belt warning "
-            f"threshold {_blim['warn_c']:.0f}°C. {_blim['note']} [CEMA 375 §3]", subsystem="belt"))
-    else:
-        checks.append(ok(
-            f"Temperature {_mat_temp:.0f}°C — within {_belt_t} belt limits "
-            f"({_blim['max_c']:.0f}°C max) [CEMA 375 §3]", subsystem="belt"))
+    if not is_chain:
+        _belt_t   = getattr(inp, "belt_type", "EP") or "EP"
+        _blim     = BELT_TEMP_LIMITS.get(_belt_t, BELT_TEMP_LIMITS["EP"])
+        if _mat_temp > _blim["max_c"]:
+            checks.append(fail(
+                f"Temperature {_mat_temp:.0f}°C exceeds {_belt_t} belt limit "
+                f"{_blim['max_c']:.0f}°C — heat damage. {_blim['note']} [CEMA 375 §3]", subsystem="belt"))
+        elif _mat_temp > _blim["warn_c"]:
+            checks.append(warn(
+                f"Temperature {_mat_temp:.0f}°C above {_belt_t} belt warning "
+                f"threshold {_blim['warn_c']:.0f}°C. {_blim['note']} [CEMA 375 §3]", subsystem="belt"))
+        else:
+            checks.append(ok(
+                f"Temperature {_mat_temp:.0f}°C — within {_belt_t} belt limits "
+                f"({_blim['max_c']:.0f}°C max) [CEMA 375 §3]", subsystem="belt"))
     if _mat_temp > 80:
         checks.append(warn(
             f"Temperature {_mat_temp:.0f}°C — standard bearing grease limit 80°C. "
-            f"Specify high-temp grease (SKF LGWA 2) or oil-bath lubrication [ISO 281]", subsystem="belt"))
+            f"Specify high-temp grease (SKF LGWA 2) or oil-bath lubrication [ISO 281]", subsystem="shaft"))
     if _mat_temp > 200:
-        checks.append(fail(
-            f"Temperature {_mat_temp:.0f}°C — seals and lagging unsuitable. "
-            f"Specify metallic or ceramic-faced components [CEMA 375 §3]", subsystem="belt"))
+        if is_chain:
+            checks.append(fail(
+                f"Temperature {_mat_temp:.0f}°C — standard seals unsuitable. "
+                f"Specify high-temperature seals and verify chain lubricant rating "
+                f"[CEMA 375 §3]", subsystem="shaft"))
+        else:
+            checks.append(fail(
+                f"Temperature {_mat_temp:.0f}°C — seals and lagging unsuitable. "
+                f"Specify metallic or ceramic-faced components [CEMA 375 §3]", subsystem="shaft"))
 
     # 10c — Bucket material suitability (v1.9.0)
     _bkt_mat = getattr(inp, "bucket_material", "steel") or "steel"
@@ -3531,10 +3768,16 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         SF = end_disc["safety_factor"]
         t  = end_disc["t_governing_mm"]
         t_specified = round(t * 1.20, 0)   # 20% design margin on structural minimum
+        if end_disc.get("hub_fits_in_shell") is False:
+            checks.append(fail(
+                f"Head end disc GEOMETRY INVALID: required hub diameter exceeds the "
+                f"pulley shell diameter (arm={end_disc.get('arm_m', 0)*1000:.0f}mm) — "
+                f"hub will not physically fit inside this pulley. Increase D_mm or "
+                f"reduce load [CEMA Pulley Standard]", subsystem="pulley"))
         # SF ≈ 1.0 is the correct result for calculated minimum thickness.
         # The check always reports the minimum and the recommended specified thickness.
         # Only fail if geometry produces SF < 0.95 (numerical or input error).
-        if SF < 0.95:
+        elif SF < 0.95:
             checks.append(fail(
                 f"End disc geometry error: SF={SF:.2f} < 1.0 at t={t}mm. "
                 f"Check hub OD vs pulley diameter inputs [CEMA Pulley Standard]", subsystem="pulley"))
@@ -3543,6 +3786,30 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 f"End disc: min t={t}mm (governed by {end_disc['governed_by']}). "
                 f"Specify t={t_specified:.0f}mm in drawings (+20% margin). "
                 f"Full Roark or FEA required for fabrication [CEMA Pulley Standard]", subsystem="pulley"))
+
+    # 14b — Boot pulley end disc (v2.x — was computed but never checked; the
+    # crash this fixes (negative arm -> sqrt domain error) was found via this
+    # exact gap, see findings log #21)
+    if boot_end_disc:
+        SF_b = boot_end_disc["safety_factor"]
+        t_b  = boot_end_disc["t_governing_mm"]
+        t_b_specified = round(t_b * 1.20, 0)
+        if boot_end_disc.get("hub_fits_in_shell") is False:
+            checks.append(fail(
+                f"Boot end disc GEOMETRY INVALID: required hub diameter exceeds the "
+                f"boot pulley shell diameter (arm={boot_end_disc.get('arm_m', 0)*1000:.0f}mm) "
+                f"— hub will not physically fit inside this pulley. Increase boot_D_mm or "
+                f"reduce load [CEMA Pulley Standard]", subsystem="boot_pulley"))
+        elif SF_b < 0.95:
+            checks.append(fail(
+                f"Boot end disc geometry error: SF={SF_b:.2f} < 1.0 at t={t_b}mm. "
+                f"Check boot hub OD vs boot pulley diameter inputs [CEMA Pulley Standard]",
+                subsystem="boot_pulley"))
+        else:
+            checks.append(info(
+                f"Boot end disc: min t={t_b}mm (governed by {boot_end_disc['governed_by']}). "
+                f"Specify t={t_b_specified:.0f}mm in drawings (+20% margin) "
+                f"[CEMA Pulley Standard]", subsystem="boot_pulley"))
 
     # 15 — Bucket bolt fatigue [CEMA 375 §7]
     if bolt_fatigue:
@@ -3833,7 +4100,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         if chain_v_ok is not None:
             if not chain_v_ok:
                 checks.append(fail(
-                    f"Belt speed {v:.2f} m/s exceeds {_chain_sel['name']} "
+                    f"Chain speed {v:.2f} m/s exceeds {_chain_sel['name']} "
                     f"rated maximum {_chain_sel['v_max_ms']:.2f} m/s — "
                     f"reduce RPM or use heavier chain series [CEMA 375 §4].", subsystem="belt"))
             else:
@@ -3852,6 +4119,49 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 checks.append(ok(
                     f"Sprocket: {sprocket['n_teeth']} teeth, "
                     f"PD = {sprocket['PD_mm']:.0f}mm ✓ [CEMA 375 §4]", subsystem="belt"))
+            # v2.x — D_mm-vs-sprocket-PD consistency (only meaningful when the
+            # engineer explicitly chose a tooth count; when teeth=0 the solver
+            # derives teeth FROM D_mm, so they agree by construction). Added
+            # alongside the boot sprocket relationship per findings log #22 —
+            # explicit teeth let you explore a specific standard sprocket, but
+            # everything else in the solver (speed, capacity) still uses D_mm,
+            # so a mismatch here means the displayed sprocket PD doesn't match
+            # what the rest of the calculation actually assumes.
+            if int(getattr(inp, "chain_sprocket_teeth", 0) or 0) > 0:
+                _pd_diff_pct = abs(sprocket["PD_mm"] - inp.D_mm) / max(inp.D_mm, 1.0) * 100
+                if _pd_diff_pct > 10.0:
+                    checks.append(warn(
+                        f"Head sprocket PD={sprocket['PD_mm']:.0f}mm (from "
+                        f"{sprocket['n_teeth']} teeth) differs from specified D_mm="
+                        f"{inp.D_mm:.0f}mm by {_pd_diff_pct:.0f}% — speed/capacity are "
+                        f"still computed from D_mm. Adjust D_mm to match the chosen "
+                        f"sprocket, or clear teeth count to auto-derive [CEMA 375 §4]",
+                        subsystem="belt"))
+
+        # Boot (tail) sprocket tooth count (v2.x — see findings log #22; boot
+        # is physically a sprocket too on a chain elevator, previously had no
+        # tooth-count relationship at all, only a generic diameter override)
+        if boot_sprocket:
+            _boot_D_ref = (inp.D_mm if getattr(inp, "boot_pulley_same_as_head", False)
+                            else inp.boot_pulley_D_mm)
+            if not boot_sprocket["smooth"]:
+                checks.append(warn(
+                    f"Boot sprocket teeth = {boot_sprocket['n_teeth']} "
+                    f"— recommend 10–20 teeth for smooth chain engagement. "
+                    f"PD = {boot_sprocket['PD_mm']:.0f}mm [CEMA 375 §4].", subsystem="boot_pulley"))
+            else:
+                checks.append(ok(
+                    f"Boot sprocket: {boot_sprocket['n_teeth']} teeth, "
+                    f"PD = {boot_sprocket['PD_mm']:.0f}mm ✓ [CEMA 375 §4]", subsystem="boot_pulley"))
+            if int(getattr(inp, "chain_boot_sprocket_teeth", 0) or 0) > 0:
+                _pd_diff_pct_b = abs(boot_sprocket["PD_mm"] - _boot_D_ref) / max(_boot_D_ref, 1.0) * 100
+                if _pd_diff_pct_b > 10.0:
+                    checks.append(warn(
+                        f"Boot sprocket PD={boot_sprocket['PD_mm']:.0f}mm (from "
+                        f"{boot_sprocket['n_teeth']} teeth) differs from specified boot "
+                        f"diameter={_boot_D_ref:.0f}mm by {_pd_diff_pct_b:.0f}% — adjust "
+                        f"boot_pulley_D_mm to match the chosen sprocket, or clear teeth "
+                        f"count to auto-derive [CEMA 375 §4]", subsystem="boot_pulley"))
 
     return checks
 

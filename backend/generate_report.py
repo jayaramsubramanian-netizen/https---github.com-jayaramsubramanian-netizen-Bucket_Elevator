@@ -940,17 +940,23 @@ def _build_sf_rows(r, inp):
                  sf_str(Q, Q_req),
                  "ok" if cap_ok else "fail"))
 
-    # 2 Belt speed
+    # 2 Belt speed (chain mode has its own proper "Chain speed v <= rated"
+    # row further below in this same function -- this generic row is
+    # skipped for chain mode rather than duplicating it. FIX (#14): it
+    # previously always ran unconditionally, comparing against the bucket's
+    # generic v_min/v_max and always labelling itself "Belt speed" even on
+    # a chain elevator, duplicating/contradicting the dedicated chain row.)
     v    = float(r.get("v") or r.get("v_ms") or 0)
     bkt  = r.get("bucket") or {}
-    vmin = float(bkt.get("v_min") or 0.5)
-    vmax = float(bkt.get("v_max") or 9.9)
-    spd_ok = vmin <= v <= vmax
-    rows.append(("Belt speed",
-                 f"{v:.2f} m/s",
-                 f"{vmin:.2f} – {vmax:.2f} m/s",
-                 sf_str(v, vmin),
-                 "ok" if spd_ok else ("warn" if v < vmin else "fail")))
+    if not is_chain:
+        vmin = float(bkt.get("v_min") or 0.5)
+        vmax = float(bkt.get("v_max") or 9.9)
+        spd_ok = vmin <= v <= vmax
+        rows.append(("Belt speed",
+                     f"{v:.2f} m/s",
+                     f"{vmin:.2f} – {vmax:.2f} m/s",
+                     sf_str(v, vmin),
+                     "ok" if spd_ok else ("warn" if v < vmin else "fail")))
 
     # 3 Centrifugal ratio — logic differs for continuous vs centrifugal
     cr = float(r.get("cr") or r.get("centrifugal_ratio") or 0)
@@ -1291,7 +1297,8 @@ def build_report(results: dict, inputs: dict,
     disc_angle = rv("theta_rel","release_angle_deg", dp=1)
     story += four_col_table([
         ("Achieved capacity",  f"{rv('Q','Q_th',dp=1)} t/h"),
-        ("Belt speed",         f"{rv('v','v_ms',dp=2)} m/s"),
+        ("Chain speed" if is_chain_r else "Belt speed",
+                               f"{rv('v','v_ms',dp=2)} m/s"),
         ("Bucket spacing",     f"{rv('spacing',dp=3)} m"),
         ("Centrifugal ratio",  rv("cr","centrifugal_ratio",dp=3)),
     ], [
@@ -1835,7 +1842,8 @@ def build_variant_report(candidates: list, inputs: dict,
         vrow("Bucket series", "—",    lambda c: c.get("bucket_id","—")),
         vrow("RPM",           "rpm",  lambda c: c.get("rpm","—")),
         vrow("Fill factor",   "%",    lambda c: c.get("fill","—")),
-        vrow("Belt speed",    "m/s",  lambda c: c.get("speed","—")),
+        vrow("Chain speed" if inp.get("conveyor_type") == "chain" else "Belt speed",
+                               "m/s",  lambda c: c.get("speed","—")),
         vrow("Capacity",      "t/h",  lambda c: c.get("capacity","—")),
         vrow("Total power",   "kW",   lambda c: c.get("power","—")),
         vrow("Motor",         "kW",   lambda c: c.get("motor_kw","—")),

@@ -326,7 +326,16 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                 f"({v_min_bkt:.2f}–{v_max_bkt:.2f} m/s)."))
 
         # ─── 2. Belt speed below v_min ────────────────────────────────────────
-        elif ("speed" in ml or "v_min" in ml or "back-legging" in ml) and "below" in ml:
+        # FIX: previously matched on bare "below" + ("speed" or "v_min" or
+        # "back-legging") anywhere in ANY check message -- confirmed live
+        # this false-matched the discharge-section CR check's own corrective
+        # instruction ("Reduce belt speed below v = 2.45 m/s", a ceiling to
+        # aim FOR, not a report that current speed is below the floor),
+        # causing this branch to fire and assert "v=1.70 < v_min=0.50" when
+        # v was actually 3.4x ABOVE v_min. Now requires the exact phrase from
+        # the genuine back-legging check (calculations.py ~L3173/3180/3186)
+        # that this branch is actually designed to react to.
+        elif "below cema min" in ml:
             n_need = _rpm_from_v(v_min_bkt * 1.05, D_mm)  # 5% margin above v_min
             n_std  = math.ceil(n_need / 5) * 5
             drivers = [
@@ -349,7 +358,11 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                 f"before reaching the discharge point. Raise n_rpm to {n_std} rpm."))
 
         # ─── 3. Belt speed above v_max ────────────────────────────────────────
-        elif ("speed" in ml or "v_max" in ml or "scatter" in ml) and ("exceed" in ml or "above" in ml):
+        # FIX: hardened the same way as branch 2 -- requires the exact
+        # phrase from the genuine check (calculations.py ~L3191) instead of
+        # a loose keyword union that could similarly false-match other
+        # checks' corrective wording.
+        elif "exceeds cema max" in ml:
             n_need = _rpm_from_v(v_max_bkt * 0.95, D_mm)  # 5% margin below v_max
             n_std  = math.floor(n_need / 5) * 5
             drivers = [
@@ -369,8 +382,54 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                 f"for {bkt_id} series. Material scatter risk increases significantly above v_max. "
                 f"Reduce n_rpm to {n_std} rpm."))
 
+        # ─── 3b. CR ≥ 1.0 on a continuous (HF/MF/SC) bucket ──────────────────
+        # NEW: this genuine fail (calculations.py ~L3204, "CR=X >= 1.0 --
+        # centrifugal discharge occurring in HF elevator") previously had no
+        # dedicated branch at all -- it only ever produced a finding by
+        # accident, via branch 4's bug below (which asserted the OPPOSITE
+        # relationship, "CR < 1.0", and recommended RAISING speed when this
+        # check actually needs speed LOWERED). Now handled correctly and
+        # directly, targeting the same CR=0.5 HF midpoint used by the
+        # auto-bucket CR-target redesign (see calculations.py is_chain/
+        # auto_bucket section) for consistency.
+        elif "centrifugal discharge occurring in hf elevator" in ml:
+            cr_target = 0.5
+            v_need = _v_for_cr(cr_target, D_mm)
+            n_need = _rpm_from_v(v_need, D_mm)
+            n_std  = math.floor(n_need / 5) * 5
+            drivers = [
+                _driver("n_rpm", "Shaft speed", n_rpm, "rpm",
+                    f"CR = v²/(g·r) = {cr:.3f}; need < 1.0 for continuous (HF) discharge", 1),
+                _driver("D_mm", "Head pulley dia", D_mm, "mm",
+                    "Larger D_mm reduces CR at same v — alternative to lowering speed", 2),
+            ]
+            corrections = [
+                _correction("n_rpm", _dir_label("shaft speed to CR=0.50", n_rpm, float(n_std)),
+                    n_rpm, n_std, "rpm",
+                    f"v = {v_need:.2f} m/s → CR = {cr_target:.2f} (HF optimal range 0.3-0.7)",
+                    1),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"CR = {cr:.3f} ≥ 1.0 (centrifugal discharge in HF elevator)",
+                drivers, corrections,
+                f"CR = v²/(g·r) = {cr:.3f}. HF/continuous discharge requires CR < 1.0 -- "
+                f"material is being thrown rather than poured, defeating the design intent. "
+                f"At D_mm = {D_mm:.0f}mm, target speed is {v_need:.2f} m/s "
+                f"(n = {n_std} rpm) for CR = {cr_target:.2f}."))
+
         # ─── 4. CR < 1 (gravity/mixed discharge) ─────────────────────────────
-        elif ("cr=" in ml or "cr =" in ml) and "< 1" in ml:
+        # FIX: previously matched on bare "< 1" anywhere in the message --
+        # confirmed live this false-matched a CR=1.181 >= 1.0 FAIL check
+        # ("HF design requires CR < 1.0 (reduce belt speed or increase
+        # pulley D)") because "< 1" appears in that check's EXPLANATORY
+        # clause describing the requirement, not in a statement that the
+        # current CR is actually below 1. Confirmed live: this rendered
+        # "CR = 1.181 < 1.0" -- a literally false headline, since 1.181 is
+        # not less than 1.0 -- and recommended RAISING rpm when the real
+        # check wanted rpm LOWERED to bring CR back under 1.0. Now requires
+        # the exact phrase from the genuine low-CR check (calculations.py
+        # ~L3222) this branch is actually designed for.
+        elif "gravity/mixed discharge" in ml:
             cr_target = 1.25
             v_need = _v_for_cr(cr_target, D_mm)
             n_need = _rpm_from_v(v_need, D_mm)
@@ -395,7 +454,11 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                 f"{v_need:.2f} m/s (n = {n_std} rpm) for CR = {cr_target:.2f}."))
 
         # ─── 5. CR > 2.5 (excessive scatter) ────────────────────────────────
-        elif ("cr=" in ml or "cr =" in ml) and ("> 2.5" in ml or "excessive" in ml or "scatter" in ml):
+        # FIX: hardened the same way -- requires the exact phrase from the
+        # genuine check (calculations.py ~L3228) instead of a loose keyword
+        # union ("scatter" alone could otherwise match other checks' use of
+        # the same word in a different context).
+        elif "excessive scatter risk" in ml:
             cr_target = 1.80
             v_need = _v_for_cr(cr_target, D_mm)
             n_need = _rpm_from_v(v_need, D_mm)

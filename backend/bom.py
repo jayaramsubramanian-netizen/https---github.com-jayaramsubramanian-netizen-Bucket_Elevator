@@ -155,6 +155,17 @@ def generate_bom(results: dict, inputs: dict) -> dict:
     pulley_shell_r = r.get("pulley_shell") or {}
     bucket_thickness_r = r.get("bucket_thickness")   # None if no override
 
+    # FIX (#10): chain-mode awareness -- previously this entire module had
+    # none at all, so a chain elevator's BOM fabricated a belt + rubber
+    # lagging line item while omitting the actual chain/sprocket hardware
+    # that needs to be procured. chain_selected/sprocket/boot_sprocket all
+    # already exist in results (same data the chain UI panels use).
+    is_chain        = bool(r.get("is_chain", False))
+    chain_sel       = r.get("chain_selected") or {}
+    sprocket_r      = r.get("sprocket") or {}
+    boot_sprocket_r = r.get("boot_sprocket") or {}
+    chain_n_strands = int(inp.get("chain_n_strands") or 1)
+
     # ── Key dimensions from results ────────────────────────────────────────────
     d_m        = float(r.get("d_mm") or 60)   / 1000.0  # shaft OD [m]
     D_m        = float(inp.get("D_mm") or 500)/ 1000.0  # head pulley OD [m]
@@ -194,7 +205,16 @@ def generate_bom(results: dict, inputs: dict) -> dict:
     # belt_length_and_bucket_count() (proper geometry: straight runs + pulley
     # half-wraps + splice allowance) instead of the old H_m*2.15 flat
     # approximation, which ignored actual pulley diameters entirely.
-    belt_ply       = r.get("belt_ply") or "4 PLY"
+    # FIX (formatting bug Jay flagged): belt_ply was inconsistently typed --
+    # the real backend value (calculations.py L2377: belt_ply = math.ceil(...))
+    # is a bare ply-count integer, but the fallback was the pre-formatted
+    # string "4 PLY". `r.get("belt_ply") or "4 PLY"` only ever applied the
+    # string formatting in the fallback case, so a real computed value (e.g.
+    # 1) rendered as the bare number -- "Elevator belt — 1" instead of
+    # "Elevator belt — 1 PLY". Now always produces a clean "N PLY" string
+    # regardless of which branch supplied the number.
+    _belt_ply_n = r.get("belt_ply")
+    belt_ply       = f"{int(_belt_ply_n)} PLY" if _belt_ply_n else "4 PLY"
     belt_len_m     = float(r.get("belt_length_total_m") or (H_m * 2.15))
     n_buckets      = int(r.get("n_buckets") or max(1, int(H_m * 2.15 / 0.25)))
     spacing_m      = float(r.get("spacing_actual_m") or r.get("spacing") or 0.25)
@@ -320,15 +340,18 @@ def generate_bom(results: dict, inputs: dict) -> dict:
         "PULLEY",
         f"Specify {ed_t_m*1000:.0f}mm (+20% over {ed.get('t_governing_mm','—')}mm calc minimum)")
 
-    lag_mass = (math.pi * D_m * (BW_m + 0.050) * lag_t_m * RHO_RUBBER)
-    add(f"Head pulley lagging — {lag_type}",
-        1, "EA",
-        "NR/SBR rubber" if "rubber" in lag_type else "Ceramic",
-        "CEMA 375 §4",
-        f"t={lag_t_m*1000:.0f}mm  OD={D_m*1000+2*lag_t_m*1000:.0f}mm",
-        lag_mass,
-        "PULLEY",
-        f"μ operating = {lag.get('mu_operating','—')}")
+    # FIX (#11/#10): a chain elevator's head wheel is a toothed sprocket --
+    # no friction lagging exists to procure.
+    if not is_chain:
+        lag_mass = (math.pi * D_m * (BW_m + 0.050) * lag_t_m * RHO_RUBBER)
+        add(f"Head pulley lagging — {lag_type}",
+            1, "EA",
+            "NR/SBR rubber" if "rubber" in lag_type else "Ceramic",
+            "CEMA 375 §4",
+            f"t={lag_t_m*1000:.0f}mm  OD={D_m*1000+2*lag_t_m*1000:.0f}mm",
+            lag_mass,
+            "PULLEY",
+            f"μ operating = {lag.get('mu_operating','—')}")
 
     # Boot pulley (assume similar to head, 72% dia)
     D_boot_m   = float(inp.get("boot_pulley_D_mm") or D_m * 720) / 1000.0
@@ -345,15 +368,50 @@ def generate_bom(results: dict, inputs: dict) -> dict:
     # ══════════════════════════════════════════════════════════════════════════
     # BELT & BUCKETS
     # ══════════════════════════════════════════════════════════════════════════
-    belt_kgm = 8.0   # kg/m typical EP belt (matches BELT_WEIGHT_DEFAULT)
-    add(f"Elevator belt — {belt_ply}",
-        1, "SET",
-        f"EP {belt_ply} rubber conveyor belt",
-        "IS 1891 / DIN 22102",
-        f"BW={BW_m*1000:.0f}mm  L={belt_len_m:.0f}m  mass≈{belt_len_m*belt_kgm:.0f}kg",
-        belt_len_m * belt_kgm,
-        "BELT",
-        "Include 2 splices; splice type per belt manufacturer recommendation")
+    # FIX (#10): a chain elevator has no belt at all -- previously this item
+    # was added unconditionally (with belt_ply falling back to "4 PLY" even
+    # though calculations.py sets it to None for chain mode), and the actual
+    # chain + head/boot sprockets were never listed anywhere in the BOM.
+    if not is_chain:
+        belt_kgm = 8.0   # kg/m typical EP belt (matches BELT_WEIGHT_DEFAULT)
+        add(f"Elevator belt — {belt_ply}",
+            1, "SET",
+            f"EP {belt_ply} rubber conveyor belt",
+            "IS 1891 / DIN 22102",
+            f"BW={BW_m*1000:.0f}mm  L={belt_len_m:.0f}m  mass≈{belt_len_m*belt_kgm:.0f}kg",
+            belt_len_m * belt_kgm,
+            "BELT",
+            "Include 2 splices; splice type per belt manufacturer recommendation")
+    else:
+        chain_wt_kgm = float(chain_sel.get("wt_kg_m") or 4.5)   # per strand
+        chain_mass   = belt_len_m * chain_wt_kgm * chain_n_strands
+        add(f"Chain — {chain_sel.get('name', chain_sel.get('id','—'))}",
+            chain_n_strands, "SET" if chain_n_strands > 1 else "EA",
+            f"{chain_sel.get('id','—')} engineering-class chain",
+            "ANSI/CEMA 550-2020",
+            f"pitch={chain_sel.get('pitch_mm','—')}mm  L={belt_len_m:.0f}m  "
+            f"{chain_n_strands}-strand  mass≈{chain_mass:.0f}kg",
+            chain_mass / max(chain_n_strands, 1),
+            "BELT",
+            "Include 1 master/connector link per strand; verify elongation allowance")
+        add(f"Head sprocket — {sprocket_r.get('n_teeth','—')}T",
+            1, "EA",
+            "S355JR, hardened teeth",
+            "ANSI/CEMA 550-2020",
+            f"PD={sprocket_r.get('PD_mm','—')}mm  {sprocket_r.get('n_teeth','—')} teeth, "
+            f"pitch={chain_sel.get('pitch_mm','—')}mm",
+            _steel_disc_kg((float(sprocket_r.get('PD_mm') or D_m*1000))/1000.0, d_m, 0.025),
+            "PULLEY",
+            "Matches head shaft bore — see Shaft section")
+        add(f"Boot sprocket — {boot_sprocket_r.get('n_teeth','—')}T",
+            1, "EA",
+            "S355JR, hardened teeth",
+            "ANSI/CEMA 550-2020",
+            f"PD={boot_sprocket_r.get('PD_mm','—')}mm  {boot_sprocket_r.get('n_teeth','—')} teeth, "
+            f"pitch={chain_sel.get('pitch_mm','—')}mm",
+            _steel_disc_kg((float(boot_sprocket_r.get('PD_mm') or D_m*720))/1000.0, d_m * 0.8, 0.020),
+            "PULLEY",
+            "Matches boot shaft bore — see Shaft section")
 
     bucket_note = f"Spacing = {spacing_m*1000:.0f}mm c/c  ×{n_buckets} off"
     if bucket_thickness_r:

@@ -559,6 +559,86 @@ MATERIALS = [
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# OPTIMIZER BOUNDARY CONDITIONS — per-material recommended defaults
+# ─────────────────────────────────────────────────────────────────────────────
+# Added per Jay's direction (2026-06): explicit columns on each material entry
+# rather than a separate category table or rule lookup — the optimizer (and any
+# other consumer) reads these directly as a STRONG DEFAULT boundary condition for
+# discharge type and centrifugal ratio, rather than re-deriving them from raw
+# properties on every call, and Jay can hand-tune any individual material's
+# values afterward by editing its dict directly.
+#
+# Mirrors the decision tree in calculations.py::bucket_recommendation() (left
+# unchanged there — still used for the live advisory check + reasoning text).
+# This is a deliberate, self-contained duplicate of just the categorical
+# decision (not the explanatory text) to avoid a circular import, since
+# calculations.py already imports MATERIALS from this file. The underlying
+# classification is material knowledge either way, so it belongs here too.
+#
+# CR target ranges are NOT new numbers — they match the already-validated
+# values used in calculations.py run_optimizer(): continuous target 0.30–0.70
+# (hard physical bound 0.20–1.0), centrifugal target 1.20–1.50 (hard bound
+# 0.70–3.00). Promoted from inline optimizer logic to inspectable, per-material
+# columns rather than invented fresh.
+#
+#     pref_discharge_type   "continuous" | "centrifugal" — strong default, not a wall
+#     pref_bucket_style     recommended CEMA bucket style code (HF/MF/SC/C/AC/AA)
+#     pref_cr_min/_max      ideal CR target sub-range for that discharge type
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_CR_RANGE_CONTINUOUS  = (0.30, 0.70)
+_CR_RANGE_CENTRIFUGAL = (1.20, 1.50)
+
+
+def _compute_pref_boundary(m: dict) -> dict:
+    """Self-contained decision tree mirroring bucket_recommendation()'s logic —
+    duplicated deliberately (not imported) to avoid a circular import with
+    calculations.py, which already imports MATERIALS from here. Keep in sync
+    with bucket_recommendation() if that decision tree changes."""
+    abr      = int(m.get("abr_code", 3) or 3)
+    cohesion = float(m.get("cohesion", 0) or 0)
+    moisture = float(m.get("moisture_pct", 0) or 0)
+    flow     = int(m.get("flowability", 2) or 2)
+    rho      = float(m.get("rho_loose", 0) or 0)
+    cat      = (m.get("category") or "").upper()
+
+    is_fragile       = cat in ("GRAIN", "FOOD") or flow <= 1
+    is_sticky        = cohesion > 0.35 or moisture > 15
+    is_heavy         = rho > 1500
+    is_very_abrasive = abr >= 5
+    is_mineral_heavy = is_very_abrasive and cat in ("MIN", "CEM", "CONST", "COAL", "GLASS")
+    is_super_duty    = is_heavy and is_very_abrasive
+
+    if is_fragile:
+        style = "HF"
+    elif is_super_duty and cat in ("MIN", "CEM", "CONST", "COAL"):
+        style = "SC"
+    elif cat in ("GRAIN", "FOOD", "FERT") and not is_sticky:
+        style = "MF"
+    elif is_sticky:
+        style = "C"
+    elif is_mineral_heavy:
+        style = "AC"
+    else:
+        style = "AA"
+
+    discharge = "continuous" if style in ("HF", "MF", "SC") else "centrifugal"
+    cr_lo, cr_hi = (_CR_RANGE_CONTINUOUS if discharge == "continuous"
+                     else _CR_RANGE_CENTRIFUGAL)
+
+    return {
+        "pref_discharge_type": discharge,
+        "pref_bucket_style":   style,
+        "pref_cr_min":         cr_lo,
+        "pref_cr_max":         cr_hi,
+    }
+
+
+for _mat_entry in MATERIALS:
+    _mat_entry.update(_compute_pref_boundary(_mat_entry))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # LOOKUP HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 

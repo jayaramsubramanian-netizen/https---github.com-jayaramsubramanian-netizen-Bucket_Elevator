@@ -54,6 +54,10 @@ try:
 except ImportError:
     from calculations import solve_elevator, run_optimizer, MATERIALS, BUCKET_SERIES, MOTOR_SIZES
 try:
+    from .vectrix_optimizer_v2 import run_nsga2_optimizer
+except ImportError:
+    from vectrix_optimizer_v2 import run_nsga2_optimizer
+try:
     from .generate_report import build_report, build_variant_report
 except ImportError:
     from generate_report import build_report, build_variant_report
@@ -558,6 +562,33 @@ def optimize(req: OptimizerRequest):
     )
 
 
+@v1.post("/bucket-elevator/optimize/v2", response_model=CalcResponse)
+def optimize_v2(req: OptimizerRequest):
+    """
+    NSGA-II multi-objective constrained optimizer (added 2026-06, per design
+    discussion logged in vectrix_findings_log.md rounds 2b/3). Evaluates every
+    candidate through the real solve_elevator() -- not duplicated physics --
+    and returns a genuine Pareto-efficient front across
+    (motor_kw, R_headshaft_N, L10_h, cr_deviation) rather than one weighted
+    score. req.objective is accepted but unused (kept for schema compat with
+    the v1 OptimizerRequest shape; there is no single objective in a Pareto
+    front by design).
+
+    Left alongside the existing /optimize endpoint rather than replacing it,
+    pending review -- see vectrix_optimizer_v2.py module docstring for the
+    full design rationale and known limitations.
+    """
+    meta = _solver_meta()
+    try:
+        result = run_nsga2_optimizer(req.base_input.model_dump())
+    except ValueError as e:
+        _err("OPTIMIZER_V2_BAD_INPUT", str(e))
+    except Exception as e:
+        _err("OPTIMIZER_V2_ERROR", str(e))
+
+    return CalcResponse(meta=meta, data=result)
+
+
 # ── Reports ───────────────────────────────────────────────────────────────────
 
 class SignOffPerson(BaseModel):
@@ -1038,3 +1069,9 @@ def _compat_calculate(
 def _compat_optimize(req: OptimizerRequest):
     """Compat shim — returns {candidates, count}, not CalcResponse envelope."""
     return optimize(req).data
+
+
+@app.post("/api/bucket-elevator/optimize/v2", include_in_schema=False)
+def _compat_optimize_v2(req: OptimizerRequest):
+    """Compat shim — returns {pareto_front, ...}, not CalcResponse envelope."""
+    return optimize_v2(req).data

@@ -338,6 +338,19 @@ class BucketElevatorInput(BaseModel):
         ),
     )
 
+    chain_boot_sprocket_teeth: int = Field(
+        0, ge=0, le=32,
+        description=(
+            "Boot (tail) sprocket tooth count override. "
+            "0 = auto (solver picks n_teeth that gives closest standard PD to "
+            "boot_pulley_D_mm, or to D_mm if boot_pulley_same_as_head is set). "
+            "Set to specify a standard sprocket. "
+            "Added 2026-06 — previously only the head sprocket had a tooth-count "
+            "relationship to its pulley diameter; the boot/tail wheel on a chain "
+            "elevator is physically a sprocket too, not a smooth-faced pulley."
+        ),
+    )
+
     chain_sf: float = Field(
         6.0, ge=3.0, le=12.0,
         description=(

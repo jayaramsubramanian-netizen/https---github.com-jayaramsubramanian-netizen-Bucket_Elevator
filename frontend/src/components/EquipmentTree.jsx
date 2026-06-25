@@ -172,19 +172,32 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
     "chain sf", "chain speed", "chain working", "sprocket",
   ]);
 
-  const s_shaft    = nodeStatus(checks, "shaft", ["shaft", "governed by"]);
+  const s_shaft    = nodeStatus(checks, "shaft", ["shaft", "governed by", "critical speed"]);
   const s_key      = nodeStatus(checks, "shaft", ["keyway"]);
   const s_bearing  = nodeStatus(checks, "shaft", ["bearing", "l10"]);
   const s_lagging  = nodeStatus(checks, "pulley", ["lagging"]);
   const s_end_disc = nodeStatus(checks, "pulley", ["end disc"]);
   const s_motor    = nodeStatus(checks, "power");
   const s_belt     = nodeStatus(checks, "belt");
+  // FIX #6: dedicated status for the Tension Profile leaf, reading the
+  // backend's own check type instead of recomputing thresholds locally.
+  const s_tension_profile = nodeStatus(checks, "belt", ["tension profile peak"]);
   const s_bolt     = nodeStatus(checks, "bucket", ["bolt", "fatigue", "goodman"]);
+  // FIX #2: digging efficiency / bucket spacing were previously orphaned --
+  // tagged subsystem="bucket" but never matched by s_bolt's narrow keyword
+  // filter, so a real warn (e.g. "Digging efficiency 70% — HIGH resistance")
+  // never coloured any leaf or section anywhere in this tree.
+  const s_digging  = nodeStatus(checks, "bucket", ["digging efficiency", "spacing"]);
   const s_takeup   = nodeStatus(checks, "takeup");
   const s_casing   = nodeStatus(checks, "casing");
   const s_chute    = nodeStatus(checks, "discharge", ["chute", "plugging", "dust", "mass flow", "funnel"]);
   const s_atex     = nodeStatus(checks, "service", ["atex", "explosive", "dust control", "stainless"]);
   const s_abr      = nodeStatus(checks, "process", ["abrasion", "ar400", "ar500", "liner"]);
+  // FIX #2: the entire boot_pulley subsystem (head:boot ratio, boot pulley
+  // CR, boot bearing L10, boot end disc, boot sprocket) had zero
+  // nodeStatus() references anywhere in this file -- none of it could ever
+  // colour any leaf or section, even a genuine boot-pulley fail/warn.
+  const s_boot     = nodeStatus(checks, "boot_pulley");
 
   // Casing clearance ("stream strikes casing") is read directly from
   // r.casing_clearance for its own dedicated leaf (with strike coordinates),
@@ -204,7 +217,6 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
   const st_takeup  = s_takeup.status;
   const st_chute   = mergeStatus(s_chute.status, s_casing_clearance_status);
   const st_casing  = mergeStatus(s_casing.status, s_abr.status);
-  const st_mech    = mergeStatus(st_head, st_drive, st_belt, st_takeup, st_casing);
 
   // ── Value shortcuts ────────────────────────────────────────────────────────
   const bkt      = r.bucket           || {};
@@ -220,6 +232,7 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
   const fd       = r.feed_design      || null;
   const chain    = r.chain_selected   || {};
   const sprocket = r.sprocket         || {};
+  const bootSprocket = r.boot_sprocket || {};
 
   // FIX 1: depth field — new BUCKET_SERIES uses depth_mm; old used H
   const bkt_depth = bkt.depth_mm ?? bkt.H;
@@ -227,9 +240,22 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
   const screw_d   = ts.d_core_recommend_mm ?? ts.d_core_min_mm;
 
   // FIX 3 / FIX 8: feed design section status from real data
-  const st_feed = fd
-    ? (fd.warnings?.length ? "warn" : "ok")
-    : "none";
+  // FIX #2: also folds in s_boot (boot_pulley subsystem) since the Boot
+  // Pulley leaf lives in this section and previously had no status path
+  // to the section header at all.
+  const st_feed = mergeStatus(
+    fd ? (fd.warnings?.length ? "warn" : "ok") : "none",
+    s_boot.status
+  );
+
+  // FIX #1: st_mech previously omitted st_chute (Discharge Section) and
+  // st_feed (Feed Design) even though both are nested children of
+  // "Mechanical Design" -- a real fail inside either (e.g. a casing-
+  // clearance stream strike, tagged discharge/fail) could show as "warn" or
+  // even "ok" on the parent header, understating severity when collapsed.
+  // Moved here (was defined earlier, before st_feed existed) so both are
+  // available for the rollup.
+  const st_mech = mergeStatus(st_head, st_drive, st_belt, st_takeup, st_casing, st_chute, st_feed);
 
   // Chain SF status
   const chain_sf_status =
@@ -340,11 +366,15 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
                   ? `${chain.name}  pitch ${f(chain.pitch_mm, 0)}mm  ${chain.n_strands ?? "—"} strand`
                   : "—"}
                 status={chain_sf_status} onClick={() => onNodeClick?.({ section: "chain" })} depth={3} />
+              {/* FIX #3: was onNodeClick?.("mechanical") -- a bare string,
+                  not {section:"..."} like every sibling leaf. "mechanical"
+                  isn't a key in InputSidebar's modals lookup, so this opened
+                  nothing despite having an onClick handler. */}
               <Leaf label="Chain Working Load"
                 sub={r.chain_SF_actual != null
                   ? `SF=${f(r.chain_SF_actual, 2)}  Pull=${f((r.chain_pull_N ?? 0) / 1000, 1)}kN`
                   : "—"}
-                status={chain_sf_status} onClick={() => onNodeClick?.("mechanical")} depth={3} />
+                status={chain_sf_status} onClick={() => onNodeClick?.({ section: "chain" })} depth={3} />
               <Leaf label="Chain Speed"
                 sub={`${f(r.v ?? r.v_ms, 2)} m/s  max ${f(chain.v_max_ms, 2)} m/s`}
                 status={r.chain_v_ok === false ? "fail" : r.chain_v_ok ? "ok" : "none"}
@@ -355,6 +385,12 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
                   : "—"}
                 status={sprocket.smooth === false ? "warn" : sprocket.smooth ? "ok" : "none"}
                 onClick={() => onNodeClick?.({ section: "chain" })} depth={3} />
+              <Leaf label="Boot Sprocket"
+                sub={bootSprocket.n_teeth
+                  ? `${bootSprocket.n_teeth}T  PD=${f(bootSprocket.PD_mm, 0)}mm`
+                  : "—"}
+                status={bootSprocket.smooth === false ? "warn" : bootSprocket.smooth ? "ok" : "none"}
+                onClick={() => onNodeClick?.({ section: "chain" })} depth={3} />
             </>
           ) : (
             /* Belt elevator — show belt class and Euler slip */
@@ -362,15 +398,17 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
               <Leaf label="Belt"
                 sub={`${r.belt_class ?? (r.belt_ply ? r.belt_ply + " PLY" : "—")}  ${r.belt_w ?? r.belt_width_mm ?? "—"}mm`}
                 status={s_belt.status} onClick={() => onNodeClick?.({ section: "belt", chartTab: "profile" })} depth={3} />
+              {/* FIX #6: previously recomputed status from rating_margin
+                  using thresholds (>=1.0 ok / >=0.9 warn) that didn't match
+                  the backend's own (<1.0 fail / <1.25 warn / else ok) --
+                  confirmed live mismatch: margin=1.08 showed green here
+                  while the backend tagged the same check "warn" (thin
+                  margin). Now reads the backend's own check type directly. */}
               <Leaf label="Tension Profile"
                 sub={r.tension_profile?.rating_margin != null
                   ? `margin ${f(r.tension_profile.rating_margin, 3)}  peak ${f((r.tension_profile.T_max_N ?? 0)/1000, 1)}kN`
                   : "—"}
-                status={
-                  r.tension_profile?.rating_margin == null ? "none"
-                  : r.tension_profile.rating_margin >= 1.0 ? "ok"
-                  : r.tension_profile.rating_margin >= 0.9 ? "warn" : "fail"
-                }
+                status={s_tension_profile.status}
                 onClick={() => onNodeClick?.({ section: "belt", chartTab: "profile" })} depth={3} />
               {/* FIX 4: belt slip branch — only shown for belt mode */}
               <Leaf label="Belt Slip"
@@ -384,18 +422,20 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
         </Section>
 
         {/* Bucket Selection */}
-        <Section id="bucket_sel" label="Bucket Selection" status={s_bolt.status !== "none" ? s_bolt.status : "none"}>
+        <Section id="bucket_sel" label="Bucket Selection" status={mergeStatus(s_bolt.status, s_digging.status)}>
           <Leaf label="Bucket Series"
             sub={bkt.id
               ? `${bkt.id}  ${bkt.W ?? bkt.width_mm ?? "—"}×${bkt_depth ?? "—"}mm  ${bkt.V ?? bkt.volume_L ?? "—"}L`
               : "—"}
             status="none" depth={3} onClick={() => onNodeClick?.({ section: "bucket" })} />
-          {/* item 6: bucket count + spacing — derived but important to see at a glance */}
+          {/* item 6: bucket count + spacing — derived but important to see at a glance.
+              FIX #2: status was hardcoded "none" -- now reflects s_digging
+              (digging efficiency / spacing checks, previously orphaned). */}
           <Leaf label="Bucket Count & Spacing"
             sub={r.n_buckets != null
               ? `${r.n_buckets} buckets  ·  ${f((r.spacing_actual_m ?? r.spacing ?? 0) * 1000, 0)}mm spacing`
               : "—"}
-            status="none" depth={3} onClick={() => onNodeClick?.({ section: "bucket" })} />
+            status={s_digging.status} depth={3} onClick={() => onNodeClick?.({ section: "bucket" })} />
           <Leaf label="Bolt Fatigue"
             sub={r.bolt_fatigue?.goodman_ratio != null
               ? `Goodman ${f(r.bolt_fatigue.goodman_ratio, 3)}`
@@ -446,24 +486,31 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
               ? `${dcmnt.liner_material}  ${dcmnt.liner_thickness_mm ?? "—"}mm`
               : "—"}
             status="none" depth={3} onClick={() => onNodeClick?.({ section: "discharge" })} />
-          {/* item 8: casing clearance failure ("stream strikes casing") had
-              no visible fix path. Casing width is derived from belt width,
-              so route to the belt width override control. */}
+          {/* FIX #5: comment above already said "route to the belt width
+              override control" -- but onClick routed to {section:"casing"},
+              which doesn't contain belt_width_override_mm at all (it lives
+              in BeltEdit / {section:"belt"} per InputSidebar's own header
+              doc). Now actually routes where the comment always said it
+              should. */}
           {casingClearance && (
             <Leaf label="Casing Clearance"
               sub={casingClearance.clears
                 ? `Stream clears wall by ${f((casingClearance.clearance_m ?? 0) * 1000, 0)}mm`
                 : `Strikes wall at x=${f((casingClearance.strike_x_m ?? 0) * 1000, 0)}mm  (wall at ${f((casingClearance.casing_wall_x_m ?? 0) * 1000, 0)}mm)`}
               status={casingClearance.clears ? "ok" : "fail"}
-              onClick={() => onNodeClick?.({ section: "casing" })} depth={3} />
+              onClick={() => onNodeClick?.({ section: "belt" })} depth={3} />
           )}
         </Section>
 
         {/* Feed Design */}
         <Section id="feed_sec" label="Feed Design" status={st_feed}>
+          {/* FIX #2: status was hardcoded "none" -- boot_pulley subsystem
+              checks (head:boot ratio, boot CR, boot bearing L10, boot end
+              disc, boot sprocket) previously had no leaf anywhere in this
+              tree that could show them. */}
           <Leaf label="Boot Pulley"
             sub={`Ø${inp.boot_pulley_D_mm ?? inp.D_mm ?? "—"}mm  Take-up point`}
-            status="none" depth={3} onClick={() => onNodeClick?.({ section: "feed" })} />
+            status={s_boot.status} depth={3} onClick={() => onNodeClick?.({ section: "feed" })} />
           <Leaf label="Boot Surge Volume"
             sub={fd
               ? `${fd.V_surge_litres ?? "—"}L  (${fd.t_surge_s ?? 3}s buffer)`
@@ -495,11 +542,13 @@ export default function EquipmentTree({ results, inputs, onNodeClick }) {
               : "—"}
             status={st_casing} onClick={() => onNodeClick?.({ section: "casing" })} depth={3} />
           {/* item 11: casing width/clearance was nowhere in the tree, even
-              though the "stream strikes casing" failure references it directly. */}
+              though the "stream strikes casing" failure references it directly.
+              FIX #5: routes to belt (where belt_width_override_mm actually
+              lives), same correction as Casing Clearance above. */}
           <Leaf label="Casing Width"
             sub={`Belt ${r.belt_w ?? "—"}mm  ·  head-section wall at ${casingClearance ? f((casingClearance.casing_wall_x_m ?? 0) * 1000, 0) : "—"}mm from CL`}
             status={casingClearance ? (casingClearance.clears ? "ok" : "fail") : "none"}
-            onClick={() => onNodeClick?.({ section: "casing" })} depth={3} />
+            onClick={() => onNodeClick?.({ section: "belt" })} depth={3} />
         </Section>
 
       </Section>

@@ -219,7 +219,20 @@ export default function OptimizerPanel({ inputs, onApply }) {
                 {results.candidates.map((c, i) => {
                   const isPinned = selected.has(i);
                   const isBest = i === 0;
-                  const crBad = c.cr < 1.0 || c.cr > 2.5;
+                  // FIX #9: previously `c.cr < 1.0 || c.cr > 2.5` -- a
+                  // hardcoded threshold invented in the frontend that
+                  // actively contradicted the backend's own optimizer logic
+                  // (different CR rules for continuous vs centrifugal
+                  // discharge -- confirmed live: HF/continuous candidates
+                  // with cr=0.699 and cr_discharge_penalty=0.0, i.e. the
+                  // backend's own PERFECTLY OPTIMAL score, were painted red
+                  // by this check). Now reads cr_discharge_penalty directly
+                  // -- the same 0(optimal)-1(worst) value the optimizer
+                  // already ranks candidates on -- graduated across its own
+                  // scale rather than a single invented cutoff.
+                  const crPenalty = c.cr_discharge_penalty ?? 0;
+                  const crColor = crPenalty >= 0.67 ? C.red
+                    : crPenalty >= 0.33 ? C.amber : C.teal;
                   return (
                     <tr
                       key={i}
@@ -258,7 +271,7 @@ export default function OptimizerPanel({ inputs, onApply }) {
                       <td className="mono">{c.T1_kN}</td>
                       <td
                         className="mono"
-                        style={{ color: crBad ? C.red : C.teal }}
+                        style={{ color: crColor }}
                       >
                         {c.cr}
                       </td>

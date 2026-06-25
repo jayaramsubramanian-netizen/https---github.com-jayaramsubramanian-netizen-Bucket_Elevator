@@ -9,3 +9,6 @@ uvicorn[standard]>=0.29.0
 pydantic>=2.11.0
 python-multipart>=0.0.9
 reportlab>=3.8.0
+
+# Added 2026-06 for the NSGA-II multi-objective optimizer (vectrix_optimizer_v2.py)
+pymoo>=0.6.1

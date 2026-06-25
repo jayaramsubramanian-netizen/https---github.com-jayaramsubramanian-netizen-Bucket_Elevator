@@ -1345,7 +1345,18 @@ class StructuralStressEngine:
         t_mem     = F_disc / (circ_hub * allowable_stress_pa)
 
         # Criterion 2: bending (cantilever from hub to shell rim)
-        arm     = R_shell - R_hub
+        # FIX (2026-06): under extreme load, the required hub diameter (driven
+        # by shaft/torque sizing) can exceed the pulley shell diameter itself --
+        # a physically degenerate "hub doesn't fit inside the wheel" geometry.
+        # arm = R_shell - R_hub then goes negative and math.sqrt() raised an
+        # uncaught ValueError ("math domain error"), crashing the whole solver
+        # instead of reporting a real design problem (found via NSGA-II
+        # optimizer stress-testing -- findings log #21). Clamp to a small
+        # positive floor so this always returns a result, and flag the real
+        # condition explicitly so the caller can raise a proper FAIL check.
+        arm_raw  = R_shell - R_hub
+        hub_fits = arm_raw > 0.0
+        arm      = max(arm_raw, 0.001)   # 1mm floor -- avoids sqrt(negative)/sqrt(0)
         t_bend  = math.sqrt(
             6.0 * F_disc * arm / (math.pi * hub_od_m * allowable_stress_pa)
         )
@@ -1388,10 +1399,16 @@ class StructuralStressEngine:
             "allowable_MPa":     round(allowable_stress_pa / 1e6, 0),
             "safety_factor":     round(SF, 2),
             "F_per_disc_N":      round(F_disc, 0),
-            "arm_m":             round(arm, 4),
+            "arm_m":             round(arm_raw, 4),   # true value -- may be negative, see hub_fits_in_shell
+            "hub_fits_in_shell": hub_fits,
             "note": (
                 "Simplified cantilever model — conservative preliminary sizing. "
                 "Full Roark annular plate analysis or FEA required for fabrication."
+                if hub_fits else
+                "GEOMETRY INVALID: required hub diameter exceeds the pulley shell "
+                "diameter -- the hub will not physically fit inside this pulley. "
+                "Increase pulley diameter or reduce load. Thickness values below "
+                "are NOT meaningful (computed against a clamped/fabricated arm)."
             ),
         }
 
