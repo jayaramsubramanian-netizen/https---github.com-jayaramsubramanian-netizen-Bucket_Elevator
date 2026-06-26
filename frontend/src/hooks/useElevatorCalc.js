@@ -574,13 +574,20 @@ export function useElevatorCalc() {
     setInputs((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  const applyOptimizer = useCallback(({ rpm, bucket_id, fill }) => {
+  const applyOptimizer = useCallback(({ rpm, bucket_id, fill, D_mm, boot_pulley_D_mm, chain_n_strands }) => {
     setInputs((prev) => ({
       ...prev,
       n_rpm:       rpm,
       bucket_id,
       auto_bucket: false,
       fill_pct:    fill,
+      // v2 (NSGA-II) optimizer also searches pulley diameters and chain
+      // strand count -- only present when applying a v2 result; v1
+      // candidates don't carry these, so fall back to whatever was already
+      // in the design rather than clobbering it with undefined.
+      ...(D_mm != null ? { D_mm } : {}),
+      ...(boot_pulley_D_mm != null ? { boot_pulley_D_mm } : {}),
+      ...(chain_n_strands != null ? { chain_n_strands } : {}),
     }));
   }, []);
 

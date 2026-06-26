@@ -241,12 +241,46 @@ function Modal({ title, cema, onClose, children }) {
 }
 
 // ─── Summary badge helpers ────────────────────────────────────────────────────
-function checkBadge(results, keywords) {
+// (checkBadge() — the old whole-array keyword-match version — removed here;
+// fully superseded by subsystemBadge() below, no remaining callers after the
+// Mechanical Design rollup fix.)
+
+// FIX (Jay's screenshot: "Mechanical Design" showed PASS while its own
+// child "Feed Design" showed WARN): every badge below this point was built
+// with checkBadge() above -- a bare keyword match across the WHOLE checks[]
+// array, with NO subsystem filter at all. This is exactly the architecture
+// EquipmentTree.jsx's nodeStatus() replaced precisely because of this
+// failure mode (see that file's own history this session). It was never
+// ported here. Confirmed empirically (not assumed) that several of the old
+// keyword lists cross real subsystem boundaries -- e.g. "material" matches
+// checks tagged process/shaft/bucket/service/boot_pulley all at once, "boot"
+// matches service/boot_pulley/bucket, "capacity" matches process/belt/shaft/
+// bucket. subsystemBadge() filters by subsystem FIRST, optional keyword
+// second -- same pattern, same order of operations, as EquipmentTree.jsx's
+// nodeStatus(), just adapted to return the {label,color} shape this file's
+// badge/SectionRow components expect instead of a bare status string.
+function subsystemBadge(results, subsystems, keywords = null) {
+  // No calculation has run yet -- genuinely nothing to report, stays blank.
   if (!results?.checks?.length) return null;
-  const kw = keywords.map(k => k.toLowerCase());
-  const matched = results.checks.filter(c =>
-    kw.some(k => (c.msg ?? "").toLowerCase().includes(k)));
-  if (!matched.length) return null;
+  const subs = Array.isArray(subsystems) ? subsystems : [subsystems];
+  const inSubsystem = results.checks.filter(c => subs.includes(c.subsystem ?? "process"));
+  const kw = keywords ? keywords.map(k => k.toLowerCase()) : null;
+  const matched = kw
+    ? inSubsystem.filter(c => kw.some(k => (c.msg ?? "").toLowerCase().includes(k)))
+    : inSubsystem;
+  // FIX: found via a 15-scenario old-vs-new comparison sweep -- most
+  // materials genuinely have ZERO subsystem="service" checks at all (ATEX/
+  // hygroscopic checks are conditional on material properties, unlike
+  // takeup/casing/discharge etc. which always emit at least one baseline
+  // check). The old checkBadge() always matched SOMETHING via its loose
+  // keyword list (lagging/slip almost always exist somewhere), so it always
+  // resolved to at least PASS; this function returning null here instead
+  // left "Service Conditions" with no badge at all for most materials --
+  // blank, not wrong, but reads as "not evaluated" rather than "evaluated,
+  // nothing flagged". The calculation DID run (checks[] is non-empty) and
+  // genuinely found nothing in this subsystem worth flagging -- that's a
+  // real PASS, not an absence of information.
+  if (!matched.length) return { label: "PASS", color: T.success };
   if (matched.some(c => c.type === "fail")) return { label: "FAIL", color: T.danger };
   if (matched.some(c => c.type === "warn")) return { label: "WARN", color: T.warning };
   return { label: "PASS", color: T.success };
@@ -2095,16 +2129,43 @@ export default function InputSidebar({ inputs, setField, results, openSectionRef
 
   // ── Status badges ────────────────────────────────────────────────────────
   const badges = {
-    process:   checkBadge(r, ["capacity","fill","material"]),
-    pulleys:   checkBadge(r, ["shaft","bearing","L10","headshaft","boot"]),
-    belt:      checkBadge(r, ["belt slip","euler","headshaft load"]),
-    bucket:    checkBadge(r, ["bucket","cr=","scatter","back-legging"]),
-    takeup:    checkBadge(r, ["take-up","screw","buckling","counterweight"]),
-    shaft:     checkBadge(r, ["shaft material","shaft governed","critical speed","keyway","welded hub","hollow shaft"]),
-    discharge: checkBadge(r, ["casing clearance","stream","chute"]),
-    casing:    checkBadge(r, ["panel","casing panel","δ="]),
-    service:   checkBadge(r, ["lagging","slip","atex","hygroscopic"]),
-    power:     checkBadge(r, ["motor","power","ceff","kW"]),
+    // FIX: rewired to subsystemBadge() -- see its definition above for why.
+    // Keywords kept where they add real specificity within a subsystem
+    // (e.g. distinguishing "Shaft Design" from "Head & Tail Pulley", which
+    // legitimately overlap on the shaft subsystem by design -- both
+    // showing the same warn/fail when a shaft problem exists is intended,
+    // not a duplicate-bug); dropped where the keyword was actually the
+    // SOURCE of cross-contamination (e.g. process no longer matches on
+    // bare "material", which pulled in shaft/bucket/service checks too).
+    process:   subsystemBadge(r, "process"),
+    pulleys:   subsystemBadge(r, ["shaft", "pulley", "boot_pulley"]),
+    belt:      subsystemBadge(r, "belt"),
+    bucket:    subsystemBadge(r, "bucket"),
+    takeup:    subsystemBadge(r, "takeup"),
+    shaft:     subsystemBadge(r, "shaft", ["shaft material", "shaft governed", "critical speed", "keyway", "welded hub", "hollow shaft"]),
+    discharge: subsystemBadge(r, "discharge"),
+    casing:    subsystemBadge(r, "casing"),
+    // "Environment & Friction" kept scoped to subsystem=service only
+    // (ATEX/dust/hygroscopic/temperature) -- lagging and belt/pulley slip
+    // are deliberately NOT folded in here even though the old keyword list
+    // included them; they're already correctly represented in the Belt
+    // Selection and Head & Tail Pulley badges respectively, and including
+    // them here too would just be duplication across two different rows,
+    // not a fix. Flagging this as a judgment call, not asserting it as the
+    // only correct reading of "Environment & Friction"'s scope.
+    service:   subsystemBadge(r, "service"),
+    power:     subsystemBadge(r, "power"),
+    // NEW: previously computed inline at the SectionRow itself (Feed
+    // Design) or not at all in a form the rollup could see (Chain
+    // Configuration) -- named here specifically so the Mechanical Design
+    // rollup below can actually include them, which is the root cause of
+    // Jay's report (Mechanical Design showed PASS while its own child Feed
+    // Design showed WARN -- the rollup's hand-written list of 6 badges
+    // never included a 7th, feed, at all).
+    feed:      r.feed_design
+                 ? (r.feed_design.warnings?.length ? { label: "WARN", color: T.warning } : { label: "PASS", color: T.success })
+                 : { label: "PENDING", color: T.text3 },
+    chain:     subsystemBadge(r, "belt", ["chain sf", "chain speed", "sprocket"]),
   };
 
   // ── Section summaries (compact, one-line) ───────────────────────────────
@@ -2163,11 +2224,26 @@ export default function InputSidebar({ inputs, setField, results, openSectionRef
       </AccordionGroup>
 
       {/* ── 2. Mechanical Design (group) ────────────────────────────────── */}
+      {/* FIX: rollup previously hand-listed exactly 6 badges and forgot a
+          7th (feed) entirely, plus checked badges.belt unconditionally even
+          in chain mode (where the rendered row below actually shows a
+          different, chain-specific badge) -- confirmed live: Feed Design
+          showing WARN never affected this header, which kept showing PASS.
+          Built from the SAME badges object the rows below actually render,
+          so a future addition can't silently drop out of the rollup the
+          way feed did -- this list mirrors the rows exactly rather than
+          being a separately-maintained, easy-to-forget copy. */}
       <AccordionGroup label="Mechanical Design" cema="CEMA 375"
-        badge={[badges.pulleys,badges.belt,badges.bucket,badges.takeup,
-                badges.discharge,badges.casing].find(b=>b?.label==="FAIL")
-              ?? [badges.pulleys,badges.belt,badges.bucket,badges.takeup,
-                  badges.discharge,badges.casing].find(b=>b?.label==="WARN")}
+        badge={(() => {
+          const children = [
+            badges.pulleys,
+            (inp.conveyor_type ?? "belt") === "belt" ? badges.belt : badges.chain,
+            badges.bucket, badges.takeup, badges.shaft, badges.discharge,
+            badges.feed, badges.casing,
+          ];
+          return children.find(b => b?.label === "FAIL")
+              ?? children.find(b => b?.label === "WARN");
+        })()}
         defaultOpen>
 
         <SectionRow label="Head & Tail Pulley" depth={1}
@@ -2179,7 +2255,7 @@ export default function InputSidebar({ inputs, setField, results, openSectionRef
             onEdit={() => open("belt")} />
         ) : (
           <SectionRow label="Chain Configuration ⛓" depth={1}
-            badge={checkBadge(r, ["chain sf","chain speed","sprocket"])}
+            badge={badges.chain}
             summary={r.chain_selected
               ? `${r.chain_selected.name} · SF=${r.chain_SF_actual?.toFixed(2) ?? "—"} · ${inp.chain_n_strands ?? 1} strand`
               : "auto · configure below"}
@@ -2199,9 +2275,7 @@ export default function InputSidebar({ inputs, setField, results, openSectionRef
           onEdit={() => open("discharge")} />
         <SectionRow label="Feed Design" depth={1}
           summary={summaries.feed}
-          badge={r.feed_design
-            ? (r.feed_design.warnings?.length ? { label: "WARN", color: T.warning } : { label: "OK", color: T.success })
-            : { label: "PENDING", color: T.text3 }}
+          badge={badges.feed}
           onEdit={() => open("feed")} />
         <SectionRow label="Casing Design" depth={1}
           badge={badges.casing} summary={summaries.casing}

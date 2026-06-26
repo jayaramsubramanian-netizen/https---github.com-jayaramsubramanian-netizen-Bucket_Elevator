@@ -28,6 +28,14 @@ export const calculateElevator = (inputs) =>
 export const optimizeElevator = (base_input, objective) =>
   req("POST", "/api/bucket-elevator/optimize", { base_input, objective });
 
+// v2 — NSGA-II multi-objective optimizer (round 3+). Returns a genuine
+// Pareto front (pareto_front[], material_preference, elapsed_s) instead of
+// a single weighted-score ranked list. objective is accepted by the
+// request schema for compat but unused server-side -- there is no single
+// objective in a Pareto front by design.
+export const optimizeElevatorV2 = (base_input) =>
+  req("POST", "/api/bucket-elevator/optimize/v2", { base_input, objective: "balanced" });
+
 // ─── Designs ─────────────────────────────────────────────────────
 export const saveDesign = (record) => req("POST", "/api/designs/save", record);
 export const listDesigns = (module, project) => {

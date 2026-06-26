@@ -41,11 +41,14 @@ Single source of truth: every candidate is evaluated through the REAL
 solve_elevator() (confirmed ~1.2ms/call — see findings log), not duplicated
 physics. Constraints are read directly from solve_elevator()'s own checks[]
 array (any fail-type check ⇒ infeasible) wherever that coverage already
-exists, plus two additions that are NOT currently caught by any existing
+exists, plus three additions that are NOT currently caught by any existing
 check (see findings log #19, #22):
   - bucket style / conveyor type compatibility (e.g. "SC is CHAIN ONLY")
   - an absolute bearing-life floor (20,000h — matches the existing warn()
     threshold in calculations.py, just promoted to a hard optimizer floor)
+  - boot pulley diameter <= head pulley diameter (real constraint, not just
+    a flagged note -- added per Jay's explicit direction that boot > head
+    isn't practical design, once D_mm/boot_D_mm became search variables)
 
 Objectives (all minimised; L10 is negated to express "maximise life"):
   F0  motor_kw          — energy / operating cost proxy
@@ -106,7 +109,7 @@ class ElevatorOptProblem(ElementwiseProblem):
             "D_mm":      Real(bounds=D_MM_BOUNDS),
             "boot_D_mm": Real(bounds=BOOT_D_MM_BOUNDS),
         }
-        super().__init__(vars=variables, n_obj=4, n_ieq_constr=3)
+        super().__init__(vars=variables, n_obj=4, n_ieq_constr=4)
         self.base_input = base_input
         self.mat = mat
 
@@ -125,6 +128,17 @@ class ElevatorOptProblem(ElementwiseProblem):
             # base_input happened to have this set, defeating the search.
             boot_pulley_same_as_head=False,
         )
+        # FIX (Jay's direction: "add constraint, not practical design"): the
+        # search previously had nothing tying boot diameter to head diameter,
+        # so some Pareto points showed boot_D_mm > D_mm -- mathematically
+        # valid given the objectives/constraints at the time, but not how a
+        # real elevator is built (boot/tail pulley is normally the same size
+        # or smaller than the head pulley). Added as a real inequality
+        # constraint (continuous violation magnitude, not just binary --
+        # gives the search a graded signal to climb down, same pattern as
+        # l10_violation below), not merely a bound tweak, since the bound on
+        # boot_D_mm needs to stay wide for cases where D_mm itself is small.
+        boot_diameter_violation = max(0.0, float(X["boot_D_mm"]) - float(X["D_mm"]))
         try:
             inp = BucketElevatorInput(**payload)
             with warnings.catch_warnings():
@@ -132,7 +146,7 @@ class ElevatorOptProblem(ElementwiseProblem):
                 r = solve_elevator(inp)
         except Exception:
             out["F"] = [_CRASH_PENALTY] * 4
-            out["G"] = [_CRASH_PENALTY] * 3
+            out["G"] = [_CRASH_PENALTY] * 4
             return
 
         checks = r.get("checks", []) or []
@@ -156,7 +170,7 @@ class ElevatorOptProblem(ElementwiseProblem):
         R_head   = float(r.get("R_headshaft") or _CRASH_PENALTY)
 
         out["F"] = [motor_kw, R_head, -L10, cr_dev]
-        out["G"] = [fail_count, sc_belt_violation, l10_violation]
+        out["G"] = [fail_count, sc_belt_violation, l10_violation, boot_diameter_violation]
 
 
 def _to_native(x):
@@ -223,7 +237,7 @@ def run_nsga2_optimizer(
     if X is not None and F is not None and G is not None:
         for x, f, g in zip(X, F, G):
             feasible = all(gi <= 1e-6 for gi in g)
-            pareto_front.append({
+            point = {
                 "bucket_id":        x["bucket"],
                 "n_rpm":            round(_to_native(x["rpm"]), 2),
                 "fill_pct":         round(_to_native(x["fill"]), 1),
@@ -236,7 +250,32 @@ def run_nsga2_optimizer(
                 "L10_h":            round(_to_native(-f[2]), 0),
                 "cr_deviation":     round(_to_native(f[3]), 4),
                 "feasible":         bool(feasible),
-            })
+                # Display-only extras (cr, capacity, speed) -- not used as
+                # objectives/constraints, just useful context for a human
+                # reviewing the table. Re-running solve_elevator() once more
+                # per point (negligible: ~1.2ms x ~100 points) is simpler and
+                # more robust than threading extra state through pymoo's
+                # internal Result object, which only tracks X/F/G.
+                "cr": None, "Q_th": None, "v_ms": None,
+            }
+            try:
+                _payload = dict(base_input)
+                _payload.update(
+                    auto_bucket=False, bucket_id=point["bucket_id"],
+                    n_rpm=point["n_rpm"], fill_pct=point["fill_pct"],
+                    chain_n_strands=(point["chain_n_strands"] or 1),
+                    D_mm=point["D_mm"], boot_pulley_D_mm=point["boot_pulley_D_mm"],
+                    boot_pulley_same_as_head=False,
+                )
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    _r = solve_elevator(BucketElevatorInput(**_payload))
+                point["cr"]    = round(float(_r.get("cr") or 0), 3)
+                point["Q_th"]  = round(float(_r.get("Q") or 0), 1)
+                point["v_ms"]  = round(float(_r.get("v") or 0), 2)
+            except Exception:
+                pass   # display-only -- leave as None rather than fail the point
+            pareto_front.append(point)
 
     return {
         "pareto_front":        pareto_front,

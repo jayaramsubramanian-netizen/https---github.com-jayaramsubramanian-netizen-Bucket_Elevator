@@ -3220,8 +3220,8 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         if cr >= 1.0:
             checks.append(fail(
                 f"CR={cr:.3f} ≥ 1.0 — centrifugal discharge occurring in HF elevator. "
-                f"HF design requires CR < 1.0 (reduce belt speed or increase pulley D) "
-                f"[CEMA 375 §3.3]", subsystem="process"))
+                f"HF design requires CR < 1.0 (reduce {'chain' if is_chain else 'belt'} "
+                f"speed or increase pulley D) [CEMA 375 §3.3]", subsystem="process"))
         elif cr >= 0.7:
             checks.append(warn(
                 f"CR={cr:.3f} approaching 1.0 — centrifugal discharge onset risk in HF mode. "
@@ -3937,7 +3937,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             if cent_risk:
                 checks.append(fail(
                     f"HF casing: CR={cr_val:.3f} ≥ 1.0 — centrifugal discharge "
-                    f"will occur. Reduce belt speed below "
+                    f"will occur. Reduce {'chain' if is_chain else 'belt'} speed below "
                     f"v = {9.81 * inp.D_mm / 2000.0:.2f} m/s [CEMA 375 §3.3]", subsystem="discharge"))
             else:
                 checks.append(ok(
@@ -3956,7 +3956,8 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 checks.append(fail(
                     f"Casing clearance: stream strikes casing wall{loc} "
                     f"(stream max x={max_x:.3f}m, wall at {wall_x:.3f}m) — "
-                    f"increase casing width or reduce belt speed [CEMA 375 §7]", subsystem="discharge"))
+                    f"increase casing width or reduce {'chain' if is_chain else 'belt'} "
+                    f"speed [CEMA 375 §7]", subsystem="discharge"))
             elif clearance < 0.020:
                 checks.append(warn(
                     f"Casing clearance: only {clearance*1000:.0f}mm margin "
@@ -4017,7 +4018,8 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             note = stream_chute.get("note", "Stream does not reach chute inlet")
             checks.append(warn(
                 f"Stream interception: {note} — "
-                f"review chute position or increase belt speed [CEMA 375 §5]", subsystem="discharge"))
+                f"review chute position or increase {'chain' if is_chain else 'belt'} "
+                f"speed [CEMA 375 §5]", subsystem="discharge"))
 
     # 22b — Head:boot pulley diameter ratio (CEMA §3.2)
     _boot_D_mm_chk = (inp.D_mm if getattr(inp, "boot_pulley_same_as_head", False)
@@ -4248,6 +4250,23 @@ def run_optimizer(req: OptimizerRequest) -> List[dict]:
     }
     W = OBJ_WEIGHTS.get(objective, OBJ_WEIGHTS["balanced"])
 
+    # FIX (Jay's report -- wheat ranking centrifugal C_16x7/AA_12x7 buckets in
+    # the top 6 despite preferring continuous/HF): the discharge-quality score
+    # below was computed entirely from the CANDIDATE BUCKET's own type
+    # (_is_cont_o) -- a centrifugal candidate sitting in its own ideal CR
+    # range scores d_penalty=0.0, and a continuous candidate sitting in ITS
+    # ideal range ALSO scores 0.0. Nothing here ever compared either to what
+    # the MATERIAL actually prefers, so two equally "CR-perfect" candidates
+    # of opposite discharge type looked identical on this term, and the
+    # decision fell through to power/tension/motor -- where centrifugal
+    # buckets often win at the same rpm, silently burying the material's own
+    # preferred style. Reads the same pref_discharge_type/pref_cr_min/max
+    # columns materials.py already has (built for the v2 NSGA-II optimizer,
+    # round 5) -- not new data, just finally connected to this search too.
+    _pref_discharge = mat.get("pref_discharge_type", "centrifugal")
+    _pref_cr_lo      = mat.get("pref_cr_min", 1.20)
+    _pref_cr_hi      = mat.get("pref_cr_max", 1.50)
+
     candidates = []
 
     for bucket in BUCKET_SERIES:
@@ -4307,6 +4326,28 @@ def run_optimizer(req: OptimizerRequest) -> List[dict]:
                     else:
                         d_penalty = min(1.0, ((cr - CR_IDEAL_HI) / 1.00) ** 2)
 
+                # ── Material-preference penalty (new) ────────────────────────
+                # Strong default, not a hard wall -- same principle as the v2
+                # NSGA-II optimizer's cr_dev objective, applied here too.
+                # A candidate of the material's non-preferred discharge type
+                # is heavily penalised even if its OWN-type CR is perfectly
+                # centred, rather than scoring identically to a matching-type
+                # candidate the way d_penalty alone did.
+                _bkt_discharge = "continuous" if _is_cont_o else "centrifugal"
+                _pref_mismatch = _bkt_discharge != _pref_discharge
+                if _pref_mismatch:
+                    pref_penalty = 1.0
+                else:
+                    # Matching type: also reflect how close CR sits to this
+                    # material's OWN preferred sub-range (not just the
+                    # generic bucket-type ideal used for d_penalty above) --
+                    # mirrors v2's cr_dev exactly.
+                    pref_penalty = (
+                        0.0 if _pref_cr_lo <= cr <= _pref_cr_hi
+                        else min(1.0, (min(abs(cr - _pref_cr_lo), abs(cr - _pref_cr_hi))
+                                       / max(_pref_cr_hi - _pref_cr_lo, 0.01)) ** 2)
+                    )
+
                 # ── Bearing life quick estimate (ISO 281 simplified) ─────────
                 # Approximate radial load as headshaft resultant (2 × T_head)
                 R_approx   = 2.0 * T_head          # [N] — conservative
@@ -4324,7 +4365,12 @@ def run_optimizer(req: OptimizerRequest) -> List[dict]:
                 P_norm = P_total  / 400.0
                 T_norm = T_head   / 400_000.0
                 M_norm = motor    / 400.0
-                D_norm = d_penalty                # already in [0, 1]
+                # FIX: was D_norm = d_penalty (bucket-own-type CR quality only).
+                # Now also folds in pref_penalty (material-preference match),
+                # taking whichever is worse -- a mismatch alone is enough to
+                # tank this term regardless of how good the CR looks for the
+                # wrong type.
+                D_norm = max(d_penalty, pref_penalty)
 
                 score = (
                     W["P"] * P_norm
@@ -4356,6 +4402,12 @@ def run_optimizer(req: OptimizerRequest) -> List[dict]:
                     "slip_margin_pct": round(slip_margin, 1),
                     "L10_est_h":   L10_h_est,
                     "cr_discharge_penalty": round(d_penalty, 4),
+                    # New -- material-preference transparency (so it's
+                    # visible WHY something ranked where it did, not just a
+                    # silently-applied penalty)
+                    "material_pref_discharge_type": _pref_discharge,
+                    "discharge_type_mismatch":       _pref_mismatch,
+                    "material_pref_penalty":         round(pref_penalty, 4),
                     # Score
                     "score":       round(score, 4),
                     "objective":   objective,
