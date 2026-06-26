@@ -177,7 +177,8 @@ def _query_all(app_filter: str = "be") -> list[dict]:
 def get_material(mat_id: str) -> dict:
     """
     Return a BE material dict by mat_id slug (e.g. "wheat", "cement").
-    Falls back to name search, then to static materials.py if DB unavailable.
+    Falls back to name search, then to static materials.py if DB unavailable,
+    then to a user-created custom material, then to safe defaults.
     """
     # Try DB first — by mat_id slug
     result = _query_one("mat_id = ?", (mat_id,))
@@ -190,6 +191,12 @@ def get_material(mat_id: str) -> dict:
     if result is None:
         result = _get_static_material(mat_id)
 
+    # Fallback: a user-created custom material (Material Library tab) --
+    # checked after built-ins so a collision can never silently shadow one
+    # (collisions are also rejected at creation time, in custom_materials.py).
+    if result is None:
+        result = _get_custom_material(mat_id)
+
     # Hard fallback: unknown material — return safe defaults
     if result is None:
         result = _unknown_material(mat_id)
@@ -197,24 +204,16 @@ def get_material(mat_id: str) -> dict:
     return result
 
 
-def search_materials(
+def _search_builtin(
     query: str = "",
     category: str = "",
-    app: str = "",   # default: no filter — material properties span all modules
+    app: str = "",
     limit: int = 50,
 ) -> list[dict]:
-    """
-    Search materials by name/category for the frontend search dropdown.
-
-    Parameters
-    ----------
-    query    : partial name match (case-insensitive)
-    category : filter by category code (e.g. "GRAIN")
-    app      : module filter ("be", "sc", or "" for all)
-    limit    : max results
-
-    Returns list of compact dicts: {mat_id, name, category, rho_loose, abr_code, flowability}
-    """
+    """The original search_materials() logic, unchanged -- DB 'materials'
+    table if present, else the static materials.py fallback. Renamed to a
+    private helper so the public search_materials() below can merge in
+    custom-material matches regardless of which path this takes."""
     con = _get_connection()
     if con is None:
         # Fallback: search static list
@@ -268,19 +267,87 @@ def search_materials(
         return _search_static(query, category, limit)
 
 
-def list_categories(app: str = "") -> list[str]:
-    """Return sorted list of distinct category codes for the given app module."""
-    con = _get_connection()
-    if con is None:
-        return sorted({m.get("category","") for m in _STATIC_LIST})
+def _search_custom(query: str, category: str, limit: int) -> list[dict]:
+    """Matching custom materials, in the same compact shape as the built-in
+    search results -- plus is_custom:True so the frontend can badge them if
+    it wants to, though MaterialSearchDropdown.jsx doesn't have to."""
     try:
-        rows = con.execute(
-            "SELECT DISTINCT category FROM materials WHERE app LIKE ? ORDER BY category",
-            (f"%{app}%",)
-        ).fetchall()
-        return [r[0] for r in rows if r[0]]
+        from custom_materials import list_custom_materials
+        mats = list_custom_materials()
     except Exception:
         return []
+    q = (query or "").lower()
+    results = []
+    for m in mats:
+        if category and m.get("category") != category:
+            continue
+        if q and q not in m.get("name", "").lower() and q not in m.get("id", "").lower():
+            continue
+        results.append({
+            "mat_id": m["id"], "name": m["name"], "category": m.get("category", ""),
+            "rho_loose": m.get("rho_loose", 0), "abr_code": m.get("abr_code", 3),
+            "flowability": m.get("flowability", 2), "is_custom": True,
+        })
+        if len(results) >= limit:
+            break
+    return results
+
+
+def search_materials(
+    query: str = "",
+    category: str = "",
+    app: str = "",   # default: no filter — material properties span all modules
+    limit: int = 50,
+) -> list[dict]:
+    """
+    Search materials by name/category for the frontend search dropdown --
+    built-in materials (DB-backed if available, else the static materials.py
+    list) merged with any matching user-created custom materials.
+
+    Parameters
+    ----------
+    query    : partial name match (case-insensitive)
+    category : filter by category code (e.g. "GRAIN")
+    app      : module filter ("be", "sc", or "" for all)
+    limit    : max results
+
+    Returns list of compact dicts: {mat_id, name, category, rho_loose, abr_code, flowability}
+    """
+    builtin = _search_builtin(query, category, app, limit)
+    remaining = max(0, limit - len(builtin))
+    custom = _search_custom(query, category, remaining) if remaining else []
+    return builtin + custom
+
+
+def _custom_categories() -> set[str]:
+    try:
+        from custom_materials import list_custom_materials
+        return {m.get("category", "") for m in list_custom_materials() if m.get("category")}
+    except Exception:
+        return set()
+
+
+def list_categories(app: str = "") -> list[str]:
+    """Return sorted list of distinct category codes for the given app
+    module, merged with any categories used by custom materials."""
+    con = _get_connection()
+    if con is None:
+        cats = {m.get("category", "") for m in _STATIC_LIST}
+    else:
+        try:
+            rows = con.execute(
+                "SELECT DISTINCT category FROM materials WHERE app LIKE ? ORDER BY category",
+                (f"%{app}%",)
+            ).fetchall()
+            cats = {r[0] for r in rows if r[0]}
+        except Exception:
+            # FIX: previously returned [] on the (expected, in this
+            # environment) "no materials table" exception instead of
+            # falling back to the static list, the same way the con-is-None
+            # branch above already correctly does.
+            cats = {m.get("category", "") for m in _STATIC_LIST}
+    cats |= _custom_categories()
+    return sorted(c for c in cats if c)
 
 
 def get_bearing(name: str) -> dict | None:
@@ -403,6 +470,17 @@ def _get_static_material(mat_id: str) -> dict | None:
         if m.get("name", "").lower() == mat_id.lower():
             return m
     return None
+
+
+def _get_custom_material(mat_id: str) -> dict | None:
+    """User-created material from the Material Library tab (custom_materials
+    table). Defensive import + broad except: a custom-material lookup
+    failure must never take down the solver for every OTHER material."""
+    try:
+        from custom_materials import get_custom_material
+        return get_custom_material(mat_id)
+    except Exception:
+        return None
 
 
 def _search_static(query: str, category: str, limit: int) -> list[dict]:

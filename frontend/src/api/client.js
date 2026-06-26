@@ -49,3 +49,16 @@ export const deleteDesign = (id) => req("DELETE", `/api/designs/${id}`);
 
 // ─── Projects ────────────────────────────────────────────────────
 export const listProjects = () => req("GET", "/api/projects");
+
+// ─── Material Library (custom materials) ────────────────────────
+// Uses /api/v1 directly (not the /api compat shim) -- matches the
+// convention MaterialSearchDropdown.jsx already uses for materials
+// search/lookup. Built-in materials have no PUT/DELETE here on purpose;
+// they're immutable, only custom_materials rows are editable.
+export const listCustomMaterials  = () => req("GET", "/api/v1/materials/custom");
+export const getCustomMaterial    = (id) => req("GET", `/api/v1/materials/custom/${encodeURIComponent(id)}`);
+export const createCustomMaterial = (data) => req("POST", "/api/v1/materials/custom", data);
+export const updateCustomMaterial = (id, data) =>
+  req("PUT", `/api/v1/materials/custom/${encodeURIComponent(id)}`, data);
+export const deleteCustomMaterial = (id) =>
+  req("DELETE", `/api/v1/materials/custom/${encodeURIComponent(id)}`);

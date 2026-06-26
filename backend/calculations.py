@@ -469,6 +469,19 @@ BUCKET_SERIES = [
      "note":"SC maximum width — highest capacity super duty"},
 ]
 
+# Bolt mounting-flange / chain-pin data (Martin catalog H-152) -- adds
+# punch/boltA_mm/boltB_mm/boltDia_mm/boltN/punch_confirmed to every entry
+# above. AC and SC are engineering estimates (catalog says "Consult Martin"
+# for these two styles specifically) -- punch_confirmed:False flags this
+# distinction through to the frontend rather than presenting an estimate
+# with the same confidence as a published dimension. See that file's own
+# docstring for the full per-style sourcing notes.
+try:
+    from .calculations_bucket_punching_patch import apply_punching_data
+except ImportError:
+    from calculations_bucket_punching_patch import apply_punching_data
+apply_punching_data(BUCKET_SERIES)
+
 # ── Bucket material properties (v1.9.0) ──────────────────────────────────────
 BUCKET_MATERIAL_PROPS: dict = {
     "steel": {"name": "Carbon Steel",      "density_factor": 1.00, "abr_limit": 7, "temp_max_c": 400, "corrosion": "none"},
@@ -1770,6 +1783,15 @@ def feed_design(
 def solve_elevator(inp: BucketElevatorInput) -> dict:
     # ── Material & density ────────────────────────────────────────────────────
     mat = get_material(inp.mat_id)
+    # FIX (Jay: "list the default values... and allow user to change a
+    # specific property and keep the rest the same"): r["mat"] further down
+    # gets the POST-override dict, so once any override is active the
+    # frontend has no way to show what the actual DB default was -- the
+    # Custom/Override Properties panel's "0/-1 = DB value" notes referred to
+    # a number nobody could actually see. Snapshotting here, before any
+    # override is merged in, fixes that without changing how mat itself is
+    # used anywhere downstream.
+    mat_db_defaults = dict(mat)
     rho = inp.custom_rho if inp.custom_rho > 0 else mat["rho_loose"]
 
     # ── Custom material property overrides (v1.6.0) ───────────────────────────
@@ -1783,6 +1805,21 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     _c_mois = getattr(inp, "custom_moisture",    -1)
     _c_coh  = getattr(inp, "custom_cohesion",    -1)
     _c_name = getattr(inp, "custom_mat_name",    "")
+    # FIX (found while verifying the InputSidebar default-value display):
+    # custom_rho was computed into the local `rho` variable above (correctly
+    # driving every actual physics calculation that follows) but never
+    # merged into `mat` itself the way the other 5 override fields are --
+    # so r.mat.rho_loose silently kept showing the stale DB value even with
+    # a genuinely active density override. Confirmed live: custom_rho=1650
+    # on cement (DB default 1506) correctly produced r.rho=1650 throughout
+    # the calculation, but r.mat.rho_loose still read 1506 -- inconsistent
+    # with angle_repose/abr_code/flowability/moisture_pct/cohesion, which
+    # all correctly reflect their own overrides in `mat`. This wasn't just
+    # a cosmetic mismatch: the "save current overrides as a custom
+    # material" bridge (InputSidebar.jsx) reads r.mat as "the effective
+    # values to save" -- without this, saving an overridden density would
+    # have silently saved the original, unoverridden one instead.
+    if inp.custom_rho > 0: _overrides["rho_loose"]   = inp.custom_rho
     if _c_aor  > 0:  _overrides["angle_repose"] = _c_aor
     if _c_abr  > 0:  _overrides["abr_code"]     = int(_c_abr)
     if _c_flow > 0:  _overrides["flowability"]  = int(_c_flow)
@@ -1993,6 +2030,21 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
             (b for b in BUCKET_SERIES if b["id"] == inp.bucket_id),
             BUCKET_SERIES[4],   # fallback: Series B
         )
+
+    # FIX: `bucket` above is a direct reference into the shared, module-level
+    # BUCKET_SERIES list -- every existing read in this file (bucket["P"],
+    # bucket.get("bucket_mass_kg"), etc., confirmed via a full-file grep,
+    # there is no precedent for writing to this dict anywhere) treats it as
+    # read-only, for good reason. active_volume_L depends on inp.fill_pct,
+    # which varies per request -- writing it directly onto the shared dict
+    # (as a literal patch suggested) would mean one request's fill_pct could
+    # silently leak into another concurrent request's response (classic
+    # shared-mutable-state bug, not hypothetical with multiple requests
+    # in flight). Copying here, before any per-request field is added, so
+    # the original patch's data computation is preserved but safely scoped
+    # to this call.
+    bucket = dict(bucket)
+    bucket["active_volume_L"] = round(bucket["V"] * inp.fill_pct / 100.0, 3)
 
     # ── Spacing & capacity ────────────────────────────────────────────────────
     spacing = (bucket["P"] + inp.bucket_gap) / 1000.0
@@ -2392,7 +2444,19 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         tension_profile.get("T_max_N", F_eff)
         if (not is_chain and tension_profile) else F_eff
     )
-    belt_ply = math.ceil(_ply_basis_N / (BW_mm / 25.4 * 4450 * 0.5))
+    _belt_ply_auto = math.ceil(_ply_basis_N / (BW_mm / 25.4 * 4450 * 0.5))
+    # FIX (Jay: "I used to have the ability to pick different plies of belt
+    # which does not exist anymore"): belt_ply was purely auto-calculated
+    # with no override path at all -- a user who saw a thin rating_margin
+    # warning (e.g. "margin 1.21... consider next ply size") had no way to
+    # actually act on it directly; they'd have to fight the auto-calc via
+    # some other input instead of just picking the ply count. _belt_rated_N
+    # below already derives directly from belt_ply, so overriding it here
+    # correctly flows through to the rating_margin check with no separate
+    # recalculation needed.
+    _belt_ply_override = getattr(inp, "belt_ply_override", 0)
+    belt_ply = int(_belt_ply_override) if _belt_ply_override > 0 else _belt_ply_auto
+    belt_ply_is_override = _belt_ply_override > 0
 
     # v1.9.2 — Belt rated tension, used to verify the tension PROFILE's actual
     # peak (not just the lumped F_eff at the head) against belt capacity.
@@ -2967,7 +3031,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "shaft_material_name": _shaft_mat.get("name", _shaft_mat_id),  # v1.9.5
         "shaft_tau_allow_MPa": round(_tau_allow_Pa / 1e6, 1),           # v1.9.5
         # Belt & buckets
-        "belt_ply": belt_ply, "belt_w": BW_mm,
+        "belt_ply": belt_ply, "belt_ply_is_override": belt_ply_is_override, "belt_w": BW_mm,
         "bucket_mass_kg": round(bw_kg, 2),
         "bucket_thickness": bucket_thickness_calc,   # v1.9.7 — None if no override
         "belt_length_working_m": belt_qty["belt_length_working_m"],   # v1.9.9
@@ -3077,7 +3141,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         # expose T_total alias so KpiGrid / ReportView don't need to sum T1+T2+T3
         "T_total":  round(T1 + T2 + T3, 1),
         # Context
-        "bucket": bucket, "mat": mat, "rho": rho,
+        "bucket": bucket, "mat": mat, "mat_db_defaults": mat_db_defaults, "rho": rho,
         # v1.7.0 — bucket geometry for UI / report
         "bucket_style":              bucket.get("style"),
         "bucket_front_angle":        bucket.get("front_angle_deg"),

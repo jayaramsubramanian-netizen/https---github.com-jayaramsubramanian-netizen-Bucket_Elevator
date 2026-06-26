@@ -132,6 +132,16 @@ class BucketElevatorInput(BaseModel):
         ),
     )
 
+    belt_ply_override: int = Field(
+        0, ge=0, le=10,
+        description=(
+            "Belt ply count override (0 = auto-calculate from peak tension "
+            "profile). Set to bump ply size for service-life margin -- the "
+            "rating_margin check on the tension profile will reflect "
+            "whatever ply count is actually in effect, auto or overridden."
+        ),
+    )
+
     wind_pressure_pa: float = Field(
         800.0,
         ge=0.0,

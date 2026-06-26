@@ -36,7 +36,7 @@ import os
 import sqlite3
 from typing import Any, Never, Optional
 
-from fastapi import APIRouter, BackgroundTasks, FastAPI, HTTPException, Depends
+from fastapi import APIRouter, BackgroundTasks, Body, FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -289,6 +289,30 @@ async def lifespan(app: FastAPI):
     init_db()
     _init_audit_table()        # create audit table alongside designs table
     _init_versions_table()     # create design revision history table
+    # Unified component-catalog tables (materials/bearings/gearboxes/motors/
+    # drives/cost_items/buckets/material_grades/belts/screws/bolts) -- same
+    # physical vectrix.db file, a second (SQLAlchemy) connection alongside
+    # the raw-sqlite3 one above. list_motors()/list_gearboxes()/
+    # list_bearings()/list_drives() below already queried these tables via
+    # raw SQL; they 500'd on every call until this existed, since the
+    # tables themselves were never created. Defensive try/except: a
+    # missing optional dependency or schema issue here must never prevent
+    # the core bucket-elevator solver from starting.
+    try:
+        from vectrix_database import create_tables
+        create_tables()
+        # Re-sync Bucket/MaterialGrade from their real Python sources
+        # (BUCKET_SERIES, SHAFT_MATERIALS) on every boot -- same principle
+        # as calc_audit/design_versions being populated from runtime data
+        # rather than hand-maintained: BUCKET_SERIES in calculations.py
+        # stays the single source of truth solve_elevator() actually reads,
+        # this just keeps the queryable DB mirror from drifting out of sync
+        # with it (e.g. after a punching-data update like this round's).
+        # Idempotent (upserts by unique key) -- safe to run every startup.
+        from seed_catalog import run_seed
+        run_seed()
+    except Exception as e:
+        print(f"⚠ Unified catalog tables not initialised/synced: {e}")
     yield
 
 
@@ -403,6 +427,87 @@ def list_material_categories(app: str = "be"):
     return {"categories": list_categories(app=app)}
 
 
+# ── Material Library (custom materials) ────────────────────────────────────────
+# Backs the Material Library tab: browse/copy/edit/delete custom materials.
+# Built-in materials (materials.py's MATERIALS list) are immutable — there is
+# deliberately no PUT/DELETE for them, only for custom_materials rows.
+#
+# CRITICAL ORDERING: these routes must be registered BEFORE
+# /materials/{mat_id} below — FastAPI/Starlette matches routes in
+# registration order, and {mat_id} is a wildcard that would otherwise
+# swallow "custom" as a literal mat_id on every request to this path,
+# never reaching the actual custom-material handlers.
+
+@v1.get("/materials/custom")
+def list_custom_materials_api():
+    """Full-detail list of every custom material, for the Library tab's
+    browse view (the compact /materials/search shape doesn't carry enough
+    fields to populate an edit form)."""
+    try:
+        from .custom_materials import list_custom_materials
+    except ImportError:
+        from custom_materials import list_custom_materials
+    return {"materials": list_custom_materials()}
+
+
+@v1.get("/materials/custom/{mat_id}")
+def get_custom_material_api(mat_id: str):
+    try:
+        from .custom_materials import get_custom_material
+    except ImportError:
+        from custom_materials import get_custom_material
+    mat = get_custom_material(mat_id)
+    if not mat:
+        raise HTTPException(status_code=404, detail=f"Custom material '{mat_id}' not found")
+    return mat
+
+
+@v1.post("/materials/custom")
+def create_custom_material(data: dict = Body(...)):
+    """Create a new custom material. `data` should include every field in
+    custom_materials.MATERIAL_FIELDS; missing fields fall back to sane
+    defaults (see save_custom_material()). Rejects an id that collides with
+    a built-in material — the whole point of the separate table is that
+    built-ins stay immutable and unambiguous."""
+    try:
+        from .custom_materials import save_custom_material
+        from .materials import MATERIALS
+    except ImportError:
+        from custom_materials import save_custom_material
+        from materials import MATERIALS
+    try:
+        return save_custom_material(data, builtin_ids={m["id"] for m in MATERIALS}, is_update=False)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@v1.put("/materials/custom/{mat_id}")
+def update_custom_material(mat_id: str, data: dict = Body(...)):
+    try:
+        from .custom_materials import save_custom_material
+        from .materials import MATERIALS
+    except ImportError:
+        from custom_materials import save_custom_material
+        from materials import MATERIALS
+    data = {**data, "id": mat_id}
+    try:
+        return save_custom_material(data, builtin_ids={m["id"] for m in MATERIALS}, is_update=True)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@v1.delete("/materials/custom/{mat_id}")
+def delete_custom_material_api(mat_id: str):
+    try:
+        from .custom_materials import delete_custom_material
+    except ImportError:
+        from custom_materials import delete_custom_material
+    deleted = delete_custom_material(mat_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Custom material '{mat_id}' not found")
+    return {"deleted": True, "id": mat_id}
+
+
 @v1.get("/materials/{mat_id}")
 def get_material_by_id(mat_id: str):
     """Return a single material dict by its slug ID (e.g. 'wheat')."""
@@ -414,6 +519,10 @@ def get_material_by_id(mat_id: str):
     if not mat or mat.get("_source") == "fallback":
         raise HTTPException(status_code=404, detail=f"Material '{mat_id}' not found")
     return mat
+
+
+# ── Material Library (custom materials) — endpoints moved above, before
+# the /materials/{mat_id} wildcard route (see ordering note there) ────────────
 
 @v1.get("/bucket-series")
 def get_bucket_series(): return _bucket_series_payload()
@@ -507,6 +616,69 @@ def list_drives(
         (pkw_min,),
     ).fetchall()
     return {"drives": [dict(r) for r in rows], "count": len(rows)}
+
+
+@v1.get("/components/buckets")
+def list_catalog_buckets(
+    style: str = "",
+    discharge_type: str = "",
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """
+    Bucket catalog (vectrix_tables.Bucket -- seeded from calculations.py's
+    BUCKET_SERIES). This is a separate, DB-backed read path alongside the
+    existing /bucket-series static-list endpoint -- not yet what
+    select_bucket_auto()/the manual picker actually read from (those still
+    use the in-code BUCKET_SERIES list directly); this exists so the
+    catalog is queryable/extendable with custom entries the same way
+    motors/gearboxes/bearings/drives already are, ahead of actually
+    switching the solver's own read path over.
+    """
+    filters, params = ["1=1"], []
+    if style:
+        filters.append("style = ?"); params.append(style)
+    if discharge_type:
+        filters.append("discharge_type = ?"); params.append(discharge_type)
+    rows = db.execute(
+        f"SELECT * FROM buckets WHERE {' AND '.join(filters)} ORDER BY V_L",
+        params,
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["recommended_materials"] = json.loads(d.get("recommended_materials") or "[]")
+        except Exception:
+            d["recommended_materials"] = []
+        out.append(d)
+    return {"buckets": out, "count": len(out)}
+
+
+@v1.get("/components/material-grades")
+def list_material_grades(
+    component_type: str = "",
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """
+    Structural material grades for shaft/pulley/casing/chain (vectrix_tables.
+    MaterialGrade -- seeded from constants.py's SHAFT_MATERIALS, the only
+    grade currently with a real multi-option catalog; pulley/casing/chain
+    rows don't exist yet, see seed_catalog.py's own notes on why). Filter by
+    component_type to get only grades valid for a given part, e.g.
+    component_type=shaft.
+    """
+    rows = db.execute("SELECT * FROM material_grades ORDER BY Sy_Pa").fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["component_types"] = json.loads(d.get("component_types") or "[]")
+        except Exception:
+            d["component_types"] = []
+        if component_type and component_type not in d["component_types"]:
+            continue
+        out.append(d)
+    return {"material_grades": out, "count": len(out)}
 
 @v1.post("/bucket-elevator/calculate", response_model=CalcResponse)
 def calculate(

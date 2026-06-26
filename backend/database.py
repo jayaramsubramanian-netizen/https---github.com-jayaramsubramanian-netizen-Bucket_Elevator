@@ -43,6 +43,23 @@ def get_db():
 def init_db():
     """Create tables if they don't exist. Run at startup."""
     conn = get_connection()
+
+    # ── Migration: the original custom_materials table (scaffolded, never
+    # wired to any endpoint or frontend code) used a minimal, incompatible
+    # schema (rho/angle/abr-as-text/flow-as-text, missing category,
+    # pref_discharge_type, pref_cr_min/max, hazard_codes, and a dozen other
+    # fields a real material needs to actually drive the solver correctly).
+    # Table was confirmed empty (0 rows) and unreferenced anywhere except
+    # this file before this change -- safe to drop and recreate with the
+    # complete schema rather than attempt a column-by-column ALTER TABLE
+    # migration for data that doesn't exist.
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(custom_materials)").fetchall()]
+        if cols and "rho_loose" not in cols:
+            conn.execute("DROP TABLE custom_materials")
+    except Exception:
+        pass
+
     conn.executescript("""
         -- ─── DESIGNS TABLE ─────────────────────────────────────────────
         -- Stores serialised inputs + results for any conveyor module.
@@ -59,17 +76,41 @@ def init_db():
             updated_at          TEXT NOT NULL
         );
 
-        -- ─── MATERIALS TABLE (user-defined overrides) ──────────────────
+        -- ─── CUSTOM MATERIALS TABLE (user-defined, full schema) ────────
+        -- Field set mirrors materials.py's MATERIALS entries exactly (21
+        -- fields) so a custom material is a first-class citizen everywhere
+        -- a built-in one is -- including pref_discharge_type/pref_bucket_
+        -- style/pref_cr_min/pref_cr_max, which the auto-bucket CR-target
+        -- selection (round 7) and the NSGA-II optimizer (round 3+) both
+        -- depend on. based_on/created_at/updated_at are bookkeeping, not
+        -- part of the solver-facing material dict.
         CREATE TABLE IF NOT EXISTS custom_materials (
-            id          TEXT PRIMARY KEY,
-            name        TEXT NOT NULL,
-            rho         REAL NOT NULL,
-            angle       REAL NOT NULL DEFAULT 35,
-            abr         TEXT NOT NULL DEFAULT 'B',
-            flow        TEXT NOT NULL DEFAULT 'Average',
-            Km          REAL NOT NULL DEFAULT 1.1,
-            notes       TEXT,
-            created_at  TEXT NOT NULL
+            id                       TEXT PRIMARY KEY,
+            name                     TEXT NOT NULL,
+            category                 TEXT NOT NULL DEFAULT 'MIN',
+            rho_loose                REAL NOT NULL,
+            rho_vib                  REAL,
+            angle_repose             REAL NOT NULL DEFAULT 35,
+            angle_surcharge          REAL,
+            angle_internal_friction  REAL,
+            moisture_pct             REAL NOT NULL DEFAULT 0,
+            cohesion                 REAL NOT NULL DEFAULT 0,
+            abr_code                 INTEGER NOT NULL DEFAULT 3,
+            flowability              INTEGER NOT NULL DEFAULT 2,
+            size_code                TEXT DEFAULT 'B',
+            hazard_codes             TEXT NOT NULL DEFAULT '[]',
+            Km                       REAL NOT NULL DEFAULT 1.0,
+            Ceff_default             REAL NOT NULL DEFAULT 1.15,
+            Leq_default              REAL NOT NULL DEFAULT 8,
+            wall_friction_deg        REAL NOT NULL DEFAULT 20,
+            bucket_fill_factor       REAL NOT NULL DEFAULT 0.75,
+            pref_discharge_type      TEXT NOT NULL DEFAULT 'centrifugal',
+            pref_bucket_style        TEXT NOT NULL DEFAULT 'AA',
+            pref_cr_min              REAL NOT NULL DEFAULT 1.2,
+            pref_cr_max              REAL NOT NULL DEFAULT 1.5,
+            based_on                 TEXT,
+            created_at               TEXT NOT NULL,
+            updated_at               TEXT NOT NULL
         );
 
         -- ─── CALCULATION LOG (optional audit trail) ────────────────────

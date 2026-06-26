@@ -12,3 +12,9 @@ reportlab>=3.8.0
 
 # Added 2026-06 for the NSGA-II multi-objective optimizer (vectrix_optimizer_v2.py)
 pymoo>=0.6.1
+
+# Added 2026-06 for the unified component-catalog tables (vectrix_database.py/
+# vectrix_tables.py) -- buckets, material grades, motors, gearboxes, bearings,
+# drives, belts, screws, bolts, cost reference, all sharing vectrix.db with the
+# existing raw-sqlite3 layer (database.py).
+sqlalchemy>=2.0.0

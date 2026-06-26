@@ -42,12 +42,14 @@ import TakeupCasingCard             from "./components/TakeupCasingCard";
 import ChuteFlowCard                from "./components/ChuteFlowCard";
 import BOMCard                      from "./components/BOMCard";
 import MaintenanceCard              from "./components/MaintenanceCard";
+import MaterialLibraryPanel         from "./components/MaterialLibraryPanel";
 
 // ─── Nav tab definitions ────────────────────────────────────────────────────
 const TABS = [
   { id: "design",     label: "Results"    },
   { id: "optimizer",  label: "Optimizer", badge: "AI" },
   { id: "components", label: "Components" },
+  { id: "materials",  label: "Materials"  },
   { id: "checks",     label: "Checks",    failBadge: true },
 ];
 
@@ -566,6 +568,13 @@ export default function BucketElevatorPage({ onResultsChange }) {
                   <MaintenanceCard results={results} />
                 </>
               )}
+            </div>
+          )}
+
+          {/* ── MATERIALS TAB — full-width Material Library ───────────── */}
+          {activeTab === "materials" && (
+            <div style={{ flex: 1, overflow: "hidden" }}>
+              <MaterialLibraryPanel />
             </div>
           )}
 

@@ -28,6 +28,8 @@
 
 import { useState, useCallback, useEffect } from "react";
 import MaterialSearchDropdown from "./MaterialSearchDropdown";
+import { slugify } from "./MaterialLibraryPanel";
+import { createCustomMaterial } from "../api/client";
 
 // API base URL — Vite uses import.meta.env (not process.env)
 const API_BASE = (import.meta.env?.VITE_API_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -166,6 +168,43 @@ function F({ label, name, type="number", value, onChange, unit, min, max, step, 
           flexShrink: 0, minWidth: 28 }}>{unit}</span>}
       </div>
     </div>
+  );
+}
+
+// FIX (Jay: "Bulk Density of cement 1400 kg/m3 should be listed in the box
+// (not 0 or -1 for default)... if the user says the cement is wet and
+// needs to change the density he should know what the initial value is
+// that he is changing"): the override fields below used to show the bare
+// sentinel (0 or -1) in the box itself, with the real DB value only in a
+// parenthetical note underneath -- confirmed by the screenshot Jay sent,
+// this reads as "0" or "-1" in the actual input, not as the real number.
+// This wrapper shows the real database default AS the field's value
+// whenever no override is active, so the user always sees what they'd
+// actually be calculating with -- not a sentinel they have to decode
+// against a note. The backend's 0/-1 = no-override contract is unchanged
+// underneath: typing the exact DB value back resets to the sentinel
+// (same effective calculation either way), typing anything else becomes
+// a real override.
+function OverridableField({ label, inp, setField, name, dbValue, sentinel, unit, min, max, step, hint }) {
+  const raw = inp[name];
+  const isActive = sentinel === 0 ? raw > 0 : raw != null && raw >= 0;
+  const fallback = sentinel === 0 ? 0 : -1;   // if dbValue itself is unknown (no calc run yet)
+  const displayValue = isActive ? raw : (dbValue ?? fallback);
+  const handleChange = (n, v) => {
+    const numV = Number(v);
+    setField(n, (dbValue != null && numV === Number(dbValue)) ? sentinel : numV);
+  };
+  const statusNote =
+    dbValue == null
+      ? "No calculation yet — showing placeholder until a material is selected"
+      : isActive
+        ? `Overriding for this run — database default is ${dbValue}${unit ? " " + unit : ""}`
+        : `Database default for this material — edit to override for this run`;
+  return (
+    <F label={label} name={name} value={displayValue} onChange={handleChange}
+      unit={unit} min={min} max={max} step={step}
+      note={hint ? `${statusNote}  (${hint})` : statusNote}
+    />
   );
 }
 
@@ -507,6 +546,7 @@ function ComponentPicker({
 function ProcessEdit({ inp, setField, results }) {
   const r = results || {};
   const df = r.dynamic_fill ?? null;   // dynamic_fill_efficiency() output — has spacing_status
+  const dbDefaults = r.mat_db_defaults ?? {};
   return (
     <>
       <SectionHead label="Drive Type" />
@@ -612,38 +652,137 @@ function ProcessEdit({ inp, setField, results }) {
       </div>
 
       <SectionHead label="Custom / Override Properties" />
-      <div style={{ fontSize: 11, color: T.text3, marginBottom: 10, lineHeight: 1.5 }}>
-        Leave at 0 / –1 to use database values.
-        Override individual properties for site-specific conditions.
-      </div>
+      <SaveOverridesAsCustomMaterial inp={inp} setField={setField} results={r} />
       <F label="Custom Display Name" name="custom_mat_name" type="text"
         value={inp.custom_mat_name || ""} onChange={setField}
         note="Optional — shown in reports when overrides are active" />
       <Row2>
-        <F label="Bulk Density" name="custom_rho" value={inp.custom_rho}
-          onChange={setField} unit="kg/m³" min={0} max={5000} step={10}
-          note="0 = DB value" />
-        <F label="Angle of Repose" name="custom_aor" value={inp.custom_aor ?? 0}
-          onChange={setField} unit="°" min={0} max={90} step={1}
-          note="0 = DB value" />
+        <OverridableField label="Bulk Density" name="custom_rho" inp={inp} setField={setField}
+          dbValue={dbDefaults.rho_loose} sentinel={0} unit="kg/m³" min={0} max={5000} step={10} />
+        <OverridableField label="Angle of Repose" name="custom_aor" inp={inp} setField={setField}
+          dbValue={dbDefaults.angle_repose} sentinel={0} unit="°" min={0} max={90} step={1} />
       </Row2>
       <Row2>
-        <F label="Abrasiveness 1–7" name="custom_abr" value={inp.custom_abr ?? 0}
-          onChange={setField} min={0} max={7} step={1}
-          note="0=DB  1=Low  7=V.High" />
-        <F label="Flowability 1–4" name="custom_flowability"
-          value={inp.custom_flowability ?? 0} onChange={setField}
-          min={0} max={4} step={1} note="0=DB  1=Free  4=Sluggish" />
+        <OverridableField label="Abrasiveness 1–7" name="custom_abr" inp={inp} setField={setField}
+          dbValue={dbDefaults.abr_code} sentinel={0} min={0} max={7} step={1}
+          hint="1=Low  7=V.High" />
+        <OverridableField label="Flowability 1–4" name="custom_flowability" inp={inp} setField={setField}
+          dbValue={dbDefaults.flowability} sentinel={0} min={0} max={4} step={1}
+          hint="1=Free  4=Sluggish" />
       </Row2>
       <Row2>
-        <F label="Moisture %" name="custom_moisture"
-          value={inp.custom_moisture ?? -1} onChange={setField}
-          unit="%" min={-1} max={100} step={1} note="–1 = DB value" />
-        <F label="Cohesion kPa" name="custom_cohesion"
-          value={inp.custom_cohesion ?? -1} onChange={setField}
-          unit="kPa" min={-1} max={100} step={0.1} note="–1 = DB value" />
+        <OverridableField label="Moisture %" name="custom_moisture" inp={inp} setField={setField}
+          dbValue={dbDefaults.moisture_pct} sentinel={-1} unit="%" min={-1} max={100} step={1} />
+        <OverridableField label="Cohesion kPa" name="custom_cohesion" inp={inp} setField={setField}
+          dbValue={dbDefaults.cohesion} sentinel={-1} unit="kPa" min={-1} max={100} step={0.1} />
       </Row2>
     </>
+  );
+}
+
+// FIX (Jay: "make sure this is not on a track of its own... make sure add
+// material and custom overrides are linked to the same database"):
+// these per-run overrides (above) and the Material Library (a separate tab,
+// persisted, reusable) were two real, working but disconnected mechanisms --
+// not because either one was broken, but because there was no path from
+// "I tweaked some properties for this run" to "I want that as a saved,
+// reusable material" other than re-typing everything by hand in the Library
+// tab. This bridges them: takes the actual EFFECTIVE values currently in
+// play (DB defaults with whatever overrides are active layered on top --
+// results.mat, not the raw DB defaults) and saves them as a new custom
+// material via the same custom_materials API the Library tab uses, then
+// points mat_id at it and clears the override fields, since they're now
+// baked into a real saved material rather than living as ephemeral,
+// per-run-only values. Deliberately kept as an explicit, opt-in action
+// rather than auto-saving on every override change -- per-run overrides for
+// quick what-if exploration without cluttering the material catalogue is a
+// real, intentional use case Jay's own "Option 1" described, not a gap to
+// eliminate.
+function SaveOverridesAsCustomMaterial({ inp, setField, results }) {
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [saved, setSaved] = useState(null);
+
+  const hasOverrides = !!(
+    (inp.custom_rho > 0) || (inp.custom_aor > 0) || (inp.custom_abr > 0) ||
+    (inp.custom_flowability > 0) || (inp.custom_moisture >= 0) || (inp.custom_cohesion >= 0) ||
+    !!inp.custom_mat_name
+  );
+  const effective = results?.mat ?? null;     // DB defaults + active overrides merged
+  const dbDefaults = results?.mat_db_defaults ?? {};
+
+  if (!hasOverrides || !effective) return (
+    <div style={{ fontSize: 11, color: "var(--text3)", marginBottom: 10, lineHeight: 1.5 }}>
+      Leave at 0 / –1 to use database values. Overrides below apply to this
+      run only and are not saved as a material — for a reusable named
+      material, use the <b>Materials</b> tab instead.
+    </div>
+  );
+
+  const handleSave = async () => {
+    setError(null);
+    const finalName = name.trim() || `${effective.name} (Custom)`;
+    setSaving(true);
+    try {
+      const payload = { ...effective, id: slugify(finalName), name: finalName, based_on: inp.mat_id };
+      delete payload._app; delete payload._source;
+      const result = await createCustomMaterial(payload);
+      setSaved(result);
+      // Link: point the design at the new saved material and clear the
+      // now-redundant per-run overrides -- same effective properties,
+      // now via a real catalogue entry instead of ephemeral overrides.
+      setField("mat_id", result.id);
+      setField("custom_rho", 0); setField("custom_aor", 0);
+      setField("custom_abr", 0); setField("custom_flowability", 0);
+      setField("custom_moisture", -1); setField("custom_cohesion", -1);
+      setField("custom_mat_name", "");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (saved) {
+    return (
+      <div style={{
+        fontSize: 11, color: "var(--success)", marginBottom: 10, padding: "8px 10px",
+        background: "rgba(31,184,110,.08)", border: "1px solid rgba(31,184,110,.25)", borderRadius: 5,
+      }}>
+        ✓ Saved as "{saved.name}" and applied to this design. Find it anytime in the Materials tab.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      fontSize: 11, marginBottom: 12, padding: "8px 10px",
+      background: "rgba(74,158,255,.05)", border: "1px solid rgba(74,158,255,.2)", borderRadius: 5,
+    }}>
+      <div style={{ color: "var(--text2)", lineHeight: 1.5, marginBottom: 8 }}>
+        Overrides below apply to <b>this run only</b> — they don't change the
+        database or create a saved material. Want to reuse these exact
+        properties later? Save them as a real material here, or in the{" "}
+        <b>Materials</b> tab.
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input
+          value={name} onChange={e => setName(e.target.value)}
+          placeholder={`${effective.name} (Custom)`}
+          style={{
+            flex: 1, padding: "5px 8px", fontSize: 11, background: "var(--panel2)",
+            border: "1px solid var(--border)", borderRadius: 5, color: "var(--text)",
+            fontFamily: "inherit",
+          }}
+        />
+        <button className="btn-secondary" style={{ margin: 0, whiteSpace: "nowrap" }}
+          onClick={handleSave} disabled={saving}>
+          {saving ? "Saving…" : "Save as Custom Material"}
+        </button>
+      </div>
+      {error && <div style={{ color: "var(--danger)", marginTop: 6 }}>{error}</div>}
+    </div>
   );
 }
 
@@ -1008,7 +1147,7 @@ function BeltEdit({ inp, setField, results }) {
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
           {[
             ["Auto Width", `${r.belt_w ?? "—"} mm`],
-            ["Plies", `${r.belt_ply ?? "—"}`],
+            ["Plies", `${r.belt_ply ?? "—"}${r.belt_ply_is_override ? " (override)" : ""}`],
             ["Eff. Tension  (sizing basis)", `${r.F_eff != null ? (r.F_eff/1000).toFixed(1) : "—"} kN`],
           ].map(([l,v]) => (
             <div key={l}>
@@ -1047,11 +1186,24 @@ function BeltEdit({ inp, setField, results }) {
             <div style={{ fontSize: 10, color: "var(--danger, #e05252)" }}>
               ⚠ Ply count above is sized for effective tension only — peak tension
               (including empty-leg self-weight) exceeds belt rating. Increase belt
-              width or specify a higher ply count manually.
+              width, or set Belt Ply Override below to a higher count.
             </div>
           )}
         </div>
       )}
+      {/* FIX (Jay: "I used to have the ability to pick different plies of
+          belt which does not exist anymore"): the warning text just above
+          already said "...or specify a higher ply count manually" with no
+          actual control to do it -- belt_ply was purely auto-calculated.
+          Mirrors Belt Width Override's 0=auto convention exactly. */}
+      <F label="Belt Ply Override" name="belt_ply_override"
+        value={inp.belt_ply_override ?? 0} onChange={setField}
+        min={0} max={10} step={1}
+        note={
+          r.belt_ply != null
+            ? `0 = auto (currently ${r.belt_ply}${r.belt_ply_is_override ? ", from your override" : ""}). Set > 0 to pick a specific ply count.`
+            : "0 = auto-calculate from peak tension. Set > 0 to pick a specific ply count."
+        } />
       <F label="Belt Width Override" name="belt_width_override_mm"
         value={inp.belt_width_override_mm ?? 0} onChange={setField}
         unit="mm" min={0} max={1500} step={25}
