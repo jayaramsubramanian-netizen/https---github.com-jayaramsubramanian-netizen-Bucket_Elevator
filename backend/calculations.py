@@ -2560,10 +2560,15 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         )
 
         _rp_chute   = DischargePhysics.calculate_release_point(v, inp.D_mm / 2000.0)
-        _chute_x    = _casing_inner_x - 0.010 + float(inp.chute_x_offset_m or 0.0)
+        # FIX: inp.chute_x_offset_mm/chute_opening_height_mm are millimetres
+        # (renamed from _m for consistency with every other dimensional
+        # field in models.py) -- this function's surrounding geometry
+        # (_casing_inner_x, _rp_chute.y0, etc.) all works in metres, same
+        # as inp.D_mm/2000.0 just above, so convert at the point of use.
+        _chute_x    = _casing_inner_x - 0.010 + float(inp.chute_x_offset_mm or 0.0) / 1000.0
         _chute_ytop = _rp_chute.y0 + 0.020
-        # chute_opening_height_m: 0 = auto (D_mm / 500 gives ~2× radius in mm → metres)
-        _chute_opening = float(inp.chute_opening_height_m or 0.0)
+        # chute_opening_height_mm: 0 = auto (D_mm / 500 gives ~2× radius in mm → metres)
+        _chute_opening = float(inp.chute_opening_height_mm or 0.0) / 1000.0
         _chute_ybot = _rp_chute.y0 - (_chute_opening if _chute_opening > 0 else inp.D_mm / 500.0)
         stream_chute = DischargePhysics.stream_intersects_chute(
             trajectory    = traj_center,
@@ -2604,6 +2609,15 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     )
     # Chute sizing: back-plate angle from trajectory; width from bucket + clearance
     chute_angle_auto = chute_geom.get("back_plate_angle_deg")
+    # FIX (Jay: missing chute angle override): use the user's specified
+    # fabrication angle when set, exactly the same override-precedence
+    # pattern as every other 0=auto field in this file (belt_ply_override,
+    # chute_x_offset_mm, etc.) -- not a separate, special-cased mechanism.
+    _chute_angle_override = getattr(inp, "chute_angle_override_deg", 0.0)
+    chute_angle_deg_effective = (
+        float(_chute_angle_override) if _chute_angle_override > 0
+        else (float(chute_angle_auto) if chute_angle_auto is not None else 65.0)
+    )
     chute_w_m        = (bkt_w_mm + 100.0) / 1000.0   # CEMA §5: +50mm each side
     chute_h_m        = chute_w_m * 0.75
 
@@ -2614,7 +2628,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
             capacity_tph    = Q,
             velocity_mps    = v,
             drop_height_m   = drop_h_m,
-            chute_angle_deg = float(chute_angle_auto) if chute_angle_auto is not None else 65.0,
+            chute_angle_deg = chute_angle_deg_effective,
             chute_width_m   = chute_w_m,
             chute_height_m  = chute_h_m,
             liner_override  = _liner_id,
@@ -2623,6 +2637,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         discharge_chute = {"_error": str(_ce), "performance": {}, "maintenance": {}, "recommendations": []}
     discharge_chute["geometry"]   = chute_geom
     discharge_chute["hood_spoon"] = hood_spoon
+    discharge_chute["angle_is_override"] = _chute_angle_override > 0
 
     # ── Boot pulley analysis (v1.6.0) ─────────────────────────────────────────
     # Must be computed BEFORE _build_checks so boot_analysis kwarg is bound.

@@ -198,7 +198,17 @@ function ElevationView({ inputs, results, W, H, hovered, setHovered }) {
 
   // ── FIX #2: pulleys scaled from ONE shared range so equal diameters
   //    render as EQUAL circles. No per-pulley independent clamp ranges. ──
-  const headD=Number(inp.D_mm||500), bootD=Number(inp.boot_pulley_D_mm||300);
+  // FIX (Jay: boot pulley dia not updating after "match head pulley"):
+  // inp.boot_pulley_D_mm is the RAW input field -- toggling "Match head
+  // pulley diameter" in InputSidebar.jsx sets boot_pulley_same_as_head
+  // but deliberately does NOT touch this raw field (confirmed: Input
+  // Sidebar.jsx's own bootDia summary uses `same_as_head ? inp.D_mm :
+  // inp.boot_pulley_D_mm`, the same conditional this file was missing).
+  // Reading r.boot_pulley.boot_D_mm instead -- the backend already
+  // resolves this exact conditional correctly server-side -- avoids
+  // duplicating that logic a second time in the frontend.
+  const headD=Number(inp.D_mm||500);
+  const bootD=Number(r.boot_pulley?.boot_D_mm ?? inp.boot_pulley_D_mm ?? 300);
   const maxD=Math.max(headD,bootD,1);
   const PULLEY_PX_MAX=32, PULLEY_PX_MIN=10;
   const pScale=PULLEY_PX_MAX/maxD;   // single scale derived from the LARGER pulley
@@ -411,7 +421,14 @@ function PlanView({ inputs, results, W, H, hovered, setHovered }) {
   const dShaft=Number(r.d_mm??60);
   const CW=BW+120;
   const PL=BW+50;
-  const CD=400;
+  // FIX (Jay: overlapping/wrong dimensions -- found while investigating):
+  // this was a flat CD=400 regardless of bucket size, the same way CW
+  // already correctly derives from BW+120 (clearance) rather than being
+  // a constant. Casing depth genuinely needs to scale with the bucket's
+  // actual projection (bkt.P) -- a small AA_6x4 bucket (P~102mm) and a
+  // large HF_24x10 (P~300+mm) need visibly different casing depth, not
+  // the same fixed 400mm either way.
+  const CD=Number(r.bucket?.P??130)+120;
 
   const scale=Math.min((W-140)/CW, (H-140)/(CD+80));
   const cw=CW*scale, cd=CD*scale, pl=PL*scale, bw=BW*scale;
@@ -524,7 +541,7 @@ function PlanView({ inputs, results, W, H, hovered, setHovered }) {
       {hovered==="casing" && (
         <Callout x={cx} y={cy}
           title="CASING (PLAN)" W={W} H={H}
-          lines={[`Width: ${CW.toFixed(0)} mm  (BW + 120)`,"Depth: 400 mm (typical)",`H = ${inp.H_m??'—'} m total`]}/>
+          lines={[`Width: ${CW.toFixed(0)} mm  (BW + 120)`,`Depth: ${CD.toFixed(0)} mm  (P + 120)`,`H = ${inp.H_m??'—'} m total`]}/>
       )}
 
       <TitleBlock W={W} H={H} view="plan" inputs={inputs} results={results}/>
@@ -535,10 +552,15 @@ function PlanView({ inputs, results, W, H, hovered, setHovered }) {
 // ─── SIDE ELEVATION ───────────────────────────────────────────────────────────
 function SideView({ inputs, results, W, H }) {
   const r=results||{}, inp=inputs||{};
-  const CD=400;
+  // FIX (same as PlanView above): was a flat 400 regardless of bucket
+  // size; now scales with the actual bucket projection.
+  const CD=Number(r.bucket?.P??130)+120;
   const H_m=Number(inp.H_m||25);
   const D=Number(inp.D_mm||500);
-  const bootD=Number(inp.boot_pulley_D_mm||300);
+  // FIX (same as ElevationView above): read the backend's resolved boot
+  // diameter, not the raw input field that the "match head" toggle never
+  // updates.
+  const bootD=Number(r.boot_pulley?.boot_D_mm ?? inp.boot_pulley_D_mm ?? 300);
 
   const scale=Math.min((W-100)/(CD+180),(H-140)/(H_m*38+D*0.6));
   const casDepth=CD*scale;
@@ -559,10 +581,13 @@ function SideView({ inputs, results, W, H }) {
         Viewed from drive side  ·  Casing depth shown
       </text>
 
-      {/* ── FIX #7: Casing depth dimension placed ABOVE with clear gap
-            before the HEAD label, which is now placed INSIDE/BELOW the
-            pulley box instead of overlapping the dimension line ── */}
-      <Dim x1={cx-casDepth/2} y1={48} x2={cx+casDepth/2} y2={48}
+      {/* FIX (Jay: overlapping dimensional info): Dim's label renders at
+          (y1 - offset) - 4 -- with y1=48/offset=14 that's exactly y=30,
+          the SAME y-coordinate as the subtitle text two lines above,
+          guaranteed to collide (confirmed exactly this in Jay's
+          screenshot). Moved down so the label clears the subtitle with
+          real margin: (62-14)-4 = 44, vs subtitle's baseline at 30. */}
+      <Dim x1={cx-casDepth/2} y1={62} x2={cx+casDepth/2} y2={62}
         label={`Casing depth = ${CD.toFixed(0)} mm`} offset={14}/>
 
       <rect x={cx-casDepth/2} y={topY} width={casDepth} height={elevH_px}

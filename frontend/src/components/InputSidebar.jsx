@@ -1908,16 +1908,38 @@ function DischargeEdit({ inp, setField, results }) {
         </div>
       )}
 
+      {/* FIX (Jay: "Chute angle asks for adjustment but there is no input
+          in input sidebar to adjust this"): chute_angle_deg was purely
+          trajectory-derived with no way to specify what's actually being
+          fabricated. A Root Cause finding can recommend "steepen back-
+          plate to 45°" with an Apply button (RootCausePanel.jsx), but
+          until now there was nothing for that button to actually set. */}
+      <F label="Chute Back-Plate Angle Override" name="chute_angle_override_deg"
+        value={inp.chute_angle_override_deg ?? 0} onChange={setField}
+        unit="°" min={0} max={90} step={1}
+        note={
+          results?.discharge_chute?.performance?.chute_angle_deg != null
+            ? `0 = auto (currently ${results.discharge_chute.performance.chute_angle_deg.toFixed(0)}°${results.discharge_chute.angle_is_override ? ", from your override" : ", trajectory-derived"}). Set the angle you actually intend to fabricate.`
+            : "0 = auto (derived from discharge trajectory). Set the angle you actually intend to fabricate."
+        } />
+
       <SectionHead label="Chute Position" />
       {/* Chute position — v1.9.9. Previously the stream interception check
           could warn "review chute position" but the UI had no control for it. */}
-      <F label="Chute inlet offset from wall" name="chute_x_offset_m"
-        value={inp.chute_x_offset_m ?? 0} onChange={setField}
-        unit="m" min={0} max={0.5} step={0.01}
+      {/* FIX (Jay: 422 error the instant either of these changes from
+          default): these were the only two dimensional fields on this
+          entire form using metres -- a user typing "100" the way they
+          naturally would everywhere else on this form (D_mm,
+          boot_pulley_D_mm, belt_width_override_mm all expect millimetres)
+          sent 100 METRES, blowing through the backend's 0.5/1.0m bounds.
+          Renamed to mm, matching every other dimensional field here. */}
+      <F label="Chute inlet offset from wall" name="chute_x_offset_mm"
+        value={inp.chute_x_offset_mm ?? 0} onChange={setField}
+        unit="mm" min={0} max={500} step={10}
         note="Move chute inlet inward from casing wall. 0 = auto (flush - 10mm). Increase if stream misses chute." />
-      <F label="Chute opening height" name="chute_opening_height_m"
-        value={inp.chute_opening_height_m ?? 0} onChange={setField}
-        unit="m" min={0} max={1.0} step={0.05}
+      <F label="Chute opening height" name="chute_opening_height_mm"
+        value={inp.chute_opening_height_mm ?? 0} onChange={setField}
+        unit="mm" min={0} max={1000} step={10}
         note="Vertical height of chute inlet opening. 0 = auto (derived from head pulley diameter)." />
       {/* Live stream interception feedback */}
       {results?.stream_chute && (

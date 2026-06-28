@@ -87,6 +87,15 @@ STRAND_OPTIONS = [1, 2, 3, 4]    # matches models.py chain_n_strands ge=1,le=4
 # exactly (ge=100,le=1500 / ge=100,le=1000), not invented bounds.
 D_MM_BOUNDS      = (100.0, 1500.0)
 BOOT_D_MM_BOUNDS = (100.0, 1000.0)
+# #22 (remaining scope, per findings log): head/boot sprocket teeth as real
+# search variables, not just the diameter<->teeth relationship that was
+# already fixed. Matches models.py's chain_sprocket_teeth/chain_boot_
+# sprocket_teeth (ge=0,le=32) -- excluding 0 from the searchable set since
+# 0 means "auto" (diameter-derived), which isn't a distinct point to search,
+# it's the absence of an explicit choice. 6 as a practical floor: CEMA-class
+# sprockets below that have enough chordal/polygon action to be impractical
+# at this scale, not a value worth the optimizer wasting evaluations on.
+SPROCKET_TEETH_OPTIONS = list(range(6, 33))   # 6..32 inclusive
 
 # Penalty assigned to a candidate that raises an exception inside
 # solve_elevator() (e.g. the boot-pulley end-disc domain error under extreme
@@ -96,18 +105,20 @@ _CRASH_PENALTY = 1.0e6
 
 
 class ElevatorOptProblem(ElementwiseProblem):
-    """Mixed discrete(bucket, chain strands)/continuous(rpm, fill, D_mm,
-    boot_D_mm) problem, evaluated through the real solver. See module
-    docstring for objectives and constraints."""
+    """Mixed discrete(bucket, chain strands, sprocket teeth)/continuous(rpm,
+    fill, D_mm, boot_D_mm) problem, evaluated through the real solver. See
+    module docstring for objectives and constraints."""
 
     def __init__(self, base_input: dict, mat: dict):
         variables = {
-            "bucket":    Choice(options=_BUCKET_IDS),
-            "rpm":       Real(bounds=RPM_BOUNDS),
-            "fill":      Real(bounds=FILL_BOUNDS),
-            "n_strands": Choice(options=STRAND_OPTIONS),
-            "D_mm":      Real(bounds=D_MM_BOUNDS),
-            "boot_D_mm": Real(bounds=BOOT_D_MM_BOUNDS),
+            "bucket":      Choice(options=_BUCKET_IDS),
+            "rpm":         Real(bounds=RPM_BOUNDS),
+            "fill":        Real(bounds=FILL_BOUNDS),
+            "n_strands":   Choice(options=STRAND_OPTIONS),
+            "D_mm":        Real(bounds=D_MM_BOUNDS),
+            "boot_D_mm":   Real(bounds=BOOT_D_MM_BOUNDS),
+            "head_teeth":  Choice(options=SPROCKET_TEETH_OPTIONS),
+            "boot_teeth":  Choice(options=SPROCKET_TEETH_OPTIONS),
         }
         super().__init__(vars=variables, n_obj=4, n_ieq_constr=4)
         self.base_input = base_input
@@ -127,6 +138,14 @@ class ElevatorOptProblem(ElementwiseProblem):
             # the independently-searched boot_D_mm back to D_mm whenever
             # base_input happened to have this set, defeating the search.
             boot_pulley_same_as_head=False,
+            # #22: only meaningful in chain mode (sprocket_geometry() is only
+            # called inside calculations.py's is_chain branch -- same as how
+            # chain_n_strands above is harmlessly unused in belt mode), but
+            # included unconditionally for every run, matching n_strands'
+            # own existing precedent rather than branching the variable set
+            # by conveyor_type.
+            chain_sprocket_teeth=int(X["head_teeth"]),
+            chain_boot_sprocket_teeth=int(X["boot_teeth"]),
         )
         # FIX (Jay's direction: "add constraint, not practical design"): the
         # search previously had nothing tying boot diameter to head diameter,
@@ -245,6 +264,12 @@ def run_nsga2_optimizer(
                                       if is_chain_run else None),
                 "D_mm":             round(_to_native(x["D_mm"]), 0),
                 "boot_pulley_D_mm": round(_to_native(x["boot_D_mm"]), 0),
+                # #22: only meaningful in chain mode, same display
+                # convention as chain_n_strands just above.
+                "chain_sprocket_teeth":      (int(_to_native(x["head_teeth"]))
+                                               if is_chain_run else None),
+                "chain_boot_sprocket_teeth": (int(_to_native(x["boot_teeth"]))
+                                               if is_chain_run else None),
                 "motor_kw":         round(_to_native(f[0]), 2),
                 "R_headshaft_N":    round(_to_native(f[1]), 0),
                 "L10_h":            round(_to_native(-f[2]), 0),
@@ -266,6 +291,8 @@ def run_nsga2_optimizer(
                     chain_n_strands=(point["chain_n_strands"] or 1),
                     D_mm=point["D_mm"], boot_pulley_D_mm=point["boot_pulley_D_mm"],
                     boot_pulley_same_as_head=False,
+                    chain_sprocket_teeth=(point["chain_sprocket_teeth"] or 0),
+                    chain_boot_sprocket_teeth=(point["chain_boot_sprocket_teeth"] or 0),
                 )
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")

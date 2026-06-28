@@ -96,15 +96,43 @@ class BucketElevatorInput(BaseModel):
     chute_liner_id: str   = Field("auto", description="Discharge chute liner selection. 'auto' = CEMA wear index selection")
     # v1.9.9 — Chute position inputs. Previously the stream_chute check could
     # warn "review chute position" but the UI had no way to change it.
-    # chute_x_offset_m: how far the chute inlet is set back from the casing
+    # FIX (Jay: 422 error the moment either of these is changed from
+    # default): these were the ONLY two dimensional inputs in the entire
+    # model using metres (range 0-0.5 / 0-1.0) while every single other
+    # dimensional field in this app -- D_mm, boot_pulley_D_mm,
+    # belt_width_override_mm, bucket_gap, etc. -- uses millimetres. A user
+    # typing "100" the same way they naturally would for any other
+    # dimension on this form (intending 100mm) sent literally 100 metres,
+    # blowing straight through the 0.5/1.0 ge/le bounds -- which is exactly
+    # what produced the 422, with nothing more informative than a raw
+    # console error to explain why. Renamed to the _mm convention used
+    # everywhere else in this file, with the equivalent millimetre ranges
+    # -- calculations.py's two read sites convert to metres at the point
+    # they're actually used, where the surrounding casing-clearance physics
+    # already works in metres internally.
+    # chute_x_offset_mm: how far the chute inlet is set back from the casing
     #   inner wall (positive = further inward toward centreline). Default 0
     #   = chute inlet flush with casing wall minus 10mm clearance.
-    # chute_opening_height_m: vertical extent of the chute opening. Default 0
+    # chute_opening_height_mm: vertical extent of the chute opening. Default 0
     #   = auto (pulley D / 500, i.e. approximately 2 × pulley radius in mm).
-    chute_x_offset_m:        float = Field(0.0, ge=0.0, le=0.500,
-        description="Chute inlet offset from casing wall toward centreline [m]. 0 = auto (flush with wall - 10mm)")
-    chute_opening_height_m:  float = Field(0.0, ge=0.0, le=1.0,
-        description="Chute opening vertical height [m]. 0 = auto (derived from head pulley diameter)")
+    chute_x_offset_mm:        float = Field(0.0, ge=0.0, le=500.0,
+        description="Chute inlet offset from casing wall toward centreline [mm]. 0 = auto (flush with wall - 10mm)")
+    chute_opening_height_mm:  float = Field(0.0, ge=0.0, le=1000.0,
+        description="Chute opening vertical height [mm]. 0 = auto (derived from head pulley diameter)")
+    # FIX (Jay: "Chute angle asks for adjustment but there is no input in
+    # input sidebar to adjust this"): chute_angle_deg was purely derived
+    # from discharge trajectory geometry (root_cause.py's own comment said
+    # "Chute angle is a fabrication parameter, not a solver input" -- a
+    # deliberate choice, not an oversight) with a 65 deg fallback, and the
+    # only lever the mass-flow check could suggest was fill_pct. But the
+    # back-plate angle IS something the fabricator sets from a drawing --
+    # exactly like chute_x_offset_mm/chute_opening_height_mm above, which
+    # are also fabrication details and already have real override inputs.
+    # Without this, a user has no way to ask "if I actually build it at
+    # 45°, does it clear the mass-flow requirement" -- they could only
+    # take the suggested angle on faith. 0 = auto (trajectory-derived).
+    chute_angle_override_deg: float = Field(0.0, ge=0.0, le=90.0,
+        description="Discharge chute back-plate angle override [deg]. 0 = auto (derived from discharge trajectory)")
     sf:             float = Field(1.25,  ge=1.0,  le=2.0,   description="Motor service factor")
 
     # ── v1.3.0 — Structural module inputs ──────────────────────────────────────

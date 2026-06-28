@@ -785,14 +785,30 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                 _driver("fill_pct", "Bucket fill", fill_pct, "%",
                     "Lower fill reduces material head pressure on chute — less plugging risk", 2),
             ]
-            # Chute angle is a fabrication parameter, not a solver input
-            # The only solver inputs that affect this: fill_pct
+            # Chute angle is a fabrication parameter -- but the fabricator
+            # needs a number to build to, and the solver needs to evaluate
+            # the angle actually being built, not just an auto-derived one.
+            # chute_angle_override_deg (models.py) makes this a real,
+            # settable input now, not just narrative advice.
             fill_target = max(fill_pct - 10, 40)
+            # FIX (Jay: "no input to adjust this"): chute_angle_override_deg
+            # now exists (models.py) specifically so this can be a real,
+            # applicable correction rather than just narrative text telling
+            # the user to go fabricate something different with no way to
+            # actually model that choice first. Listed first (priority 1)
+            # since it directly addresses the angle the finding is about;
+            # fill_pct (priority 2) remains as the secondary lever.
             corrections = [
+                _correction("chute_angle_override_deg", "Steepen back-plate angle",
+                    angle, float(target_angle), "°",
+                    "Directly sets the fabrication angle so the mass-flow check "
+                    "evaluates what you actually intend to build, not the "
+                    "trajectory-derived default",
+                    1),
                 _correction("fill_pct", "Reduce fill factor",
                     fill_pct, float(fill_target), "%",
                     "Reduces chute loading and cohesive arch formation risk",
-                    1),
+                    2),
             ]
             findings.append(_finding(i, msg, sev,
                 f"Chute angle {angle:.0f}° — flow regime at risk (min {min_a:.0f}°, mass-flow {mass_a:.0f}°)",

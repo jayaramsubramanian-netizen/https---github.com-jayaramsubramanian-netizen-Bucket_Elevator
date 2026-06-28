@@ -37,9 +37,9 @@ const C = {
 
 const SORT_OPTIONS = [
   { id: "cr_deviation", label: "CR Match (closest to material preference)" },
-  { id: "motor_kw",     label: "Motor Power (lowest first)" },
-  { id: "R_headshaft_N",label: "Structural Load (lowest first)" },
-  { id: "L10_h",        label: "Bearing Life (longest first)" },
+  { id: "motor_kw", label: "Motor Power (lowest first)" },
+  { id: "R_headshaft_N", label: "Structural Load (lowest first)" },
+  { id: "L10_h", label: "Bearing Life (longest first)" },
 ];
 
 // Maps a v2 Pareto-front point into the field shape generate_report.py's
@@ -52,20 +52,24 @@ const SORT_OPTIONS = [
 // selected on screen; score is omitted.
 function toVariantReportShape(p, rank) {
   return {
-    rpm:       p.n_rpm,
+    rpm: p.n_rpm,
     bucket_id: p.bucket_id,
-    fill:      p.fill_pct,
-    speed:     p.v_ms ?? 0,
-    capacity:  p.Q_th ?? 0,
-    power:     p.motor_kw,            // closest available analog
-    motor_kw:  p.motor_kw,
-    T1_kN:     Math.round((p.R_headshaft_N ?? 0) / 100) / 10,  // N -> kN
-    cr:        p.cr ?? 0,
+    fill: p.fill_pct,
+    speed: p.v_ms ?? 0,
+    capacity: p.Q_th ?? 0,
+    power: p.motor_kw, // closest available analog
+    motor_kw: p.motor_kw,
+    T1_kN: Math.round((p.R_headshaft_N ?? 0) / 100) / 10, // N -> kN
+    cr: p.cr ?? 0,
     rank,
     // Extra v2-specific fields included alongside -- harmless if the PDF
     // builder ignores unknown keys, useful if it's ever extended to show them.
-    D_mm: p.D_mm, boot_pulley_D_mm: p.boot_pulley_D_mm,
-    chain_n_strands: p.chain_n_strands, cr_deviation: p.cr_deviation,
+    D_mm: p.D_mm,
+    boot_pulley_D_mm: p.boot_pulley_D_mm,
+    chain_n_strands: p.chain_n_strands,
+    cr_deviation: p.cr_deviation,
+    chain_sprocket_teeth: p.chain_sprocket_teeth,
+    chain_boot_sprocket_teeth: p.chain_boot_sprocket_teeth,
     L10_h: p.L10_h,
   };
 }
@@ -124,8 +128,10 @@ export default function OptimizerPanel({ inputs, onApply }) {
 
   const sortedFront = useMemo(() => {
     const front = results?.pareto_front ?? [];
-    const dir = sortBy === "L10_h" ? -1 : 1;   // longer life first, everything else ascending
-    return [...front].sort((a, b) => dir * ((a[sortBy] ?? 0) - (b[sortBy] ?? 0)));
+    const dir = sortBy === "L10_h" ? -1 : 1; // longer life first, everything else ascending
+    return [...front].sort(
+      (a, b) => dir * ((a[sortBy] ?? 0) - (b[sortBy] ?? 0)),
+    );
   }, [results, sortBy]);
 
   const toggleSelect = (i) => {
@@ -148,12 +154,13 @@ export default function OptimizerPanel({ inputs, onApply }) {
     >
       <div style={{ fontSize: 11, color: C.muted }}>
         Multi-objective (NSGA-II) optimizer searches RPM × Bucket × Fill × Head
-        &amp; Boot Pulley Diameter{isChainRun ? " × Chain Strands" : ""} space
+        &amp; Boot Pulley Diameter
+        {isChainRun ? " × Chain Strands × Sprocket Teeth (H/B)" : ""} space
         subject to Q ≥ <span style={{ color: C.text }}>{inputs.Q_req}</span>{" "}
         t/h, CEMA speed limits, and a 20,000h bearing-life floor. Returns a
         genuine Pareto-efficient front — every row below is a real trade-off,
-        not a single "best" answer. Select one or more rows to apply or
-        export as a comparison report.
+        not a single "best" answer. Select one or more rows to apply or export
+        as a comparison report.
       </div>
 
       <button
@@ -177,13 +184,21 @@ export default function OptimizerPanel({ inputs, onApply }) {
           {pref && (
             <div
               style={{
-                padding: "8px 12px", background: "rgba(74,158,255,.06)",
-                border: "1px solid rgba(74,158,255,.2)", borderRadius: 5,
-                fontSize: 11, color: C.muted2,
+                padding: "8px 12px",
+                background: "rgba(74,158,255,.06)",
+                border: "1px solid rgba(74,158,255,.2)",
+                borderRadius: 5,
+                fontSize: 11,
+                color: C.muted2,
               }}
             >
-              <span style={{ color: C.text }}>{inputs.mat_id ?? "Material"}</span>{" "}
-              prefers <span style={{ color: C.blue, fontWeight: 700 }}>{pref.bucket_style}</span>{" "}
+              <span style={{ color: C.text }}>
+                {inputs.mat_id ?? "Material"}
+              </span>{" "}
+              prefers{" "}
+              <span style={{ color: C.blue, fontWeight: 700 }}>
+                {pref.bucket_style}
+              </span>{" "}
               ({pref.discharge_type}), target CR{" "}
               <span style={{ fontFamily: "JetBrains Mono", color: C.text }}>
                 {pref.cr_target_range?.[0]}–{pref.cr_target_range?.[1]}
@@ -209,8 +224,15 @@ export default function OptimizerPanel({ inputs, onApply }) {
               {results.elapsed_s}s
               {top && (
                 <>
-                  {" "}· top by current sort:{" "}
-                  <span style={{ color: C.green, fontFamily: "JetBrains Mono", fontWeight: 700 }}>
+                  {" "}
+                  · top by current sort:{" "}
+                  <span
+                    style={{
+                      color: C.green,
+                      fontFamily: "JetBrains Mono",
+                      fontWeight: 700,
+                    }}
+                  >
                     {top.n_rpm} rpm · {top.bucket_id} · {top.motor_kw} kW
                   </span>
                 </>
@@ -232,7 +254,9 @@ export default function OptimizerPanel({ inputs, onApply }) {
               onChange={(e) => setSortBy(e.target.value)}
             >
               {SORT_OPTIONS.map((o) => (
-                <option key={o.id} value={o.id}>{o.label}</option>
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
               ))}
             </select>
           </div>
@@ -250,9 +274,15 @@ export default function OptimizerPanel({ inputs, onApply }) {
                 const idx = [...selected][0];
                 const c = sortedFront[idx];
                 onApply({
-                  rpm: c.n_rpm, bucket_id: c.bucket_id, fill: c.fill_pct,
-                  D_mm: c.D_mm, boot_pulley_D_mm: c.boot_pulley_D_mm,
+                  rpm: c.n_rpm,
+                  bucket_id: c.bucket_id,
+                  fill: c.fill_pct,
+                  D_mm: c.D_mm,
+                  boot_pulley_D_mm: c.boot_pulley_D_mm,
                   chain_n_strands: c.chain_n_strands ?? undefined,
+                  chain_sprocket_teeth: c.chain_sprocket_teeth ?? undefined,
+                  chain_boot_sprocket_teeth:
+                    c.chain_boot_sprocket_teeth ?? undefined,
                 });
               }}
             >
@@ -267,7 +297,7 @@ export default function OptimizerPanel({ inputs, onApply }) {
               onClick={() =>
                 downloadVariantReport(
                   pinned.map((c, i) => toVariantReportShape(c, i + 1)),
-                  inputs
+                  inputs,
                 )
               }
             >
@@ -281,9 +311,7 @@ export default function OptimizerPanel({ inputs, onApply }) {
             <button
               className="btn-secondary"
               style={{ margin: 0, fontSize: 10 }}
-              onClick={() =>
-                setSelected(new Set(sortedFront.map((_, i) => i)))
-              }
+              onClick={() => setSelected(new Set(sortedFront.map((_, i) => i)))}
             >
               Select All
             </button>
@@ -318,6 +346,7 @@ export default function OptimizerPanel({ inputs, onApply }) {
                   <th>D mm</th>
                   <th>Boot mm</th>
                   {isChainRun && <th>Strands</th>}
+                  {isChainRun && <th>Teeth H/B</th>}
                   <th>Q t/h</th>
                   <th>Motor kW</th>
                   <th>Load kN</th>
@@ -341,10 +370,16 @@ export default function OptimizerPanel({ inputs, onApply }) {
                           ? "rgba(59,130,246,.12)"
                           : isTop
                             ? "rgba(16,185,129,.06)"
-                            : (c.feasible === false ? "rgba(239,68,68,.06)" : ""),
+                            : c.feasible === false
+                              ? "rgba(239,68,68,.06)"
+                              : "",
                         outline: isPinned ? `1px solid ${C.blue}40` : "none",
                       }}
-                      title={c.feasible === false ? "Marked infeasible by the optimizer's own constraints" : ""}
+                      title={
+                        c.feasible === false
+                          ? "Marked infeasible by the optimizer's own constraints"
+                          : ""
+                      }
                     >
                       <td style={{ textAlign: "center", fontSize: 14 }}>
                         {isPinned ? "☑" : "☐"}
@@ -362,7 +397,15 @@ export default function OptimizerPanel({ inputs, onApply }) {
                       <td className="mono">{c.fill_pct}%</td>
                       <td className="mono">{c.D_mm}</td>
                       <td className="mono">{c.boot_pulley_D_mm}</td>
-                      {isChainRun && <td className="mono">{c.chain_n_strands ?? "—"}</td>}
+                      {isChainRun && (
+                        <td className="mono">{c.chain_n_strands ?? "—"}</td>
+                      )}
+                      {isChainRun && (
+                        <td className="mono">
+                          {c.chain_sprocket_teeth ?? "—"}/
+                          {c.chain_boot_sprocket_teeth ?? "—"}
+                        </td>
+                      )}
                       <td className="mono" style={{ color: C.green }}>
                         {c.Q_th ?? "—"}
                       </td>
@@ -370,10 +413,14 @@ export default function OptimizerPanel({ inputs, onApply }) {
                         {c.motor_kw}
                       </td>
                       <td className="mono">
-                        {c.R_headshaft_N != null ? Math.round(c.R_headshaft_N / 1000) : "—"}
+                        {c.R_headshaft_N != null
+                          ? Math.round(c.R_headshaft_N / 1000)
+                          : "—"}
                       </td>
                       <td className="mono">
-                        {c.L10_h != null ? Math.round(c.L10_h).toLocaleString() : "—"}
+                        {c.L10_h != null
+                          ? Math.round(c.L10_h).toLocaleString()
+                          : "—"}
                       </td>
                       <td className="mono">{c.cr ?? "—"}</td>
                       <td className="mono" style={{ color: crColor }}>

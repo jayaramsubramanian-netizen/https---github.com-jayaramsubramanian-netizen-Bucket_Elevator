@@ -1,0 +1,7 @@
+# VECTRIX™ desktop-poc — PySide6 frontend experiment
+# Independent of backend/requirements.txt and frontend/package.json --
+# this is a third client talking to the same FastAPI backend over HTTP,
+# not part of either existing environment.
+
+PySide6>=6.11.1
+requests>=2.33.1

@@ -574,20 +574,23 @@ export function useElevatorCalc() {
     setInputs((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  const applyOptimizer = useCallback(({ rpm, bucket_id, fill, D_mm, boot_pulley_D_mm, chain_n_strands }) => {
+  const applyOptimizer = useCallback(({ rpm, bucket_id, fill, D_mm, boot_pulley_D_mm, chain_n_strands, chain_sprocket_teeth, chain_boot_sprocket_teeth }) => {
     setInputs((prev) => ({
       ...prev,
       n_rpm:       rpm,
       bucket_id,
       auto_bucket: false,
       fill_pct:    fill,
-      // v2 (NSGA-II) optimizer also searches pulley diameters and chain
-      // strand count -- only present when applying a v2 result; v1
-      // candidates don't carry these, so fall back to whatever was already
+      // v2 (NSGA-II) optimizer also searches pulley diameters, chain
+      // strand count, and (this round, #22) sprocket teeth counts -- only
+      // present when applying a v2 result; v1 candidates and belt-mode
+      // results don't carry these, so fall back to whatever was already
       // in the design rather than clobbering it with undefined.
       ...(D_mm != null ? { D_mm } : {}),
       ...(boot_pulley_D_mm != null ? { boot_pulley_D_mm } : {}),
       ...(chain_n_strands != null ? { chain_n_strands } : {}),
+      ...(chain_sprocket_teeth != null ? { chain_sprocket_teeth } : {}),
+      ...(chain_boot_sprocket_teeth != null ? { chain_boot_sprocket_teeth } : {}),
     }));
   }, []);
 
