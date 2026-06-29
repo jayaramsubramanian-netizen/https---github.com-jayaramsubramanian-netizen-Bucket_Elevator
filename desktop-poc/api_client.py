@@ -45,3 +45,18 @@ def get_material(mat_id: str) -> dict | None:
     if resp.status_code != 200:
         return None
     return resp.json()
+
+
+def fetch_components(path: str, params: dict | None = None) -> list:
+    """Mirrors ComponentPicker.jsx's own fetch: GET /api/v1{path}?{params},
+    response is a dict with exactly one list-valued key (e.g.
+    {"bearings": [...], "count": N}) -- find and return that list,
+    same as the JSX's Object.values(data).find(v => Array.isArray(v))."""
+    clean = {k: v for k, v in (params or {}).items() if v is not None and v != ""}
+    resp = requests.get(f"{API_BASE_V1}{path}", params=clean, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    for v in data.values():
+        if isinstance(v, list):
+            return v
+    return []

@@ -2680,7 +2680,23 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         T_total_N     = _R_boot_N,
         face_width_mm = BW_mm + 50.0,
     )
-    boot_shell["t_use_mm"] = boot_shell["t_governing_mm"]
+    # v1.9.10 — boot_shell_t_override_mm added: this previously always used
+    # the calculated minimum with no override path at all, unlike the head
+    # pulley's shell (pulley_shell_t_override_mm, above) which has supported
+    # a real PASS/FAIL override since v1.9.6. Same pattern, applied here for
+    # the boot/tail pulley specifically -- different diameter and reaction
+    # load than the head pulley, so it needs its own override, not a shared
+    # one.
+    _boot_shell_t_override = getattr(inp, "boot_shell_t_override_mm", 0) or 0
+    boot_shell["t_calc_mm"] = boot_shell["t_governing_mm"]
+    if _boot_shell_t_override > 0:
+        boot_shell["t_use_mm"]         = round(float(_boot_shell_t_override), 1)
+        boot_shell["override_applied"] = True
+        boot_shell["override_pass"]    = _boot_shell_t_override >= boot_shell["t_governing_mm"]
+    else:
+        boot_shell["t_use_mm"]         = boot_shell["t_governing_mm"]
+        boot_shell["override_applied"] = False
+        boot_shell["override_pass"]    = True
 
     boot_end_disc = StructuralStressEngine.pulley_end_disc(
         pulley_diameter_m = _boot_D_mm / 1000.0,
@@ -3088,6 +3104,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "lagging":           lagging,
         "end_disc":          end_disc,
         "pulley_shell":      pulley_shell,        # v1.9.0
+        "boot_shell":        boot_shell,          # v1.9.10 — was computed internally for BOM/end-disc use only, never returned
         "critical_speed":    critical_speed,       # v1.9.0
         "backlegging_risk":  backlegging_risk,     # v1.9.1
         "tension_profile":   tension_profile,      # v1.9.2

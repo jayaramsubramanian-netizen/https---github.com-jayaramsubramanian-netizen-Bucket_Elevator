@@ -325,12 +325,27 @@ class BucketElevatorInput(BaseModel):
     pulley_shell_t_override_mm: float = Field(
         0.0, ge=0.0, le=50.0,
         description=(
-            "Pulley shell plate thickness override [mm]. "
+            "HEAD pulley shell plate thickness override [mm]. "
             "0 = auto-calculate from CEMA Pulley Standard minimum and belt-"
             "pressure hoop stress criteria (whichever governs). "
             "Set to a preferred standard plate thickness (e.g. 6, 8, 10, 12) — "
             "solver reports PASS/FAIL against the calculated minimum required "
-            "for the actual belt tension and face width."
+            "for the actual belt tension and face width. See "
+            "boot_shell_t_override_mm for the boot (tail) pulley's independent "
+            "override -- the two pulleys see different loads and diameters "
+            "and are checked separately, not shared."
+        ),
+    )
+    boot_shell_t_override_mm: float = Field(
+        0.0, ge=0.0, le=50.0,
+        description=(
+            "BOOT (tail) pulley shell plate thickness override [mm], independent "
+            "of pulley_shell_t_override_mm above. 0 = auto-calculate from CEMA "
+            "Pulley Standard minimum and belt-pressure hoop stress criteria "
+            "using the boot pulley's own diameter and reaction load (not the "
+            "head pulley's). Set to a preferred standard plate thickness — "
+            "solver reports PASS/FAIL against the boot-specific calculated "
+            "minimum."
         ),
     )
 
