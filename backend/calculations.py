@@ -1038,7 +1038,7 @@ def bucket_mass_for_thickness(
     }
 
 
-def bucket_recommendation(material: dict, Q_req: float = 0.0) -> dict:
+def bucket_recommendation(material: dict, Q_req: float = 0.0, material_temp_c: float = 20.0) -> dict:
     """
     3.7 — Material → Bucket Style Recommendation Engine.
 
@@ -1054,6 +1054,18 @@ def bucket_recommendation(material: dict, Q_req: float = 0.0) -> dict:
     4. Wet / sticky / cohesive           → C  (open front centrifugal)
     5. Moderately abrasive minerals      → AC (mill duty, 50° front)
     6. General free-flowing              → AA (standard centrifugal)
+
+    v1.9.11 — also advises drive type (belt vs chain) from material
+    temperature, using the same BELT_TEMP_LIMITS thresholds the
+    downstream temperature check (section 10b) already enforces. This
+    used to only ever surface as a fail/warn check AFTER a belt was
+    already chosen and a full calculation run -- the same material-
+    level reasoning this function already does for bucket style now
+    also covers the belt-vs-chain question, matching the reference
+    decision tree where temperature gates drive type before bucket
+    style is even considered (Jay: "material temperature... typically
+    also defines if a belt will be able to handle it or if we need to
+    move to a chain conveyor design").
     """
     abr      = int(material.get("abr_code",     3) or 3)
     cohesion = float(material.get("cohesion",   0) or 0)
@@ -1135,6 +1147,46 @@ def bucket_recommendation(material: dict, Q_req: float = 0.0) -> dict:
     if style == "SC":
         notes.append("SC is CHAIN ONLY — not compatible with belt mount")
 
+    # ── Drive type advisory from material temperature ─────────────────────
+    # Same thresholds as BELT_TEMP_LIMITS (section 10b's check uses these
+    # identically) -- this is the proactive version of that check, surfaced
+    # here before a drive type is even chosen.
+    ep_lim, st_lim = BELT_TEMP_LIMITS["EP"], BELT_TEMP_LIMITS["ST"]
+    if style == "SC":
+        # Mechanical constraint overrides temperature -- SC is chain-only
+        # regardless of how cool the material runs.
+        drive_type, drive_reason = "chain", "SC bucket style is chain-only by design, independent of temperature."
+        belt_viable = False
+    elif material_temp_c > st_lim["max_c"]:
+        drive_type = "chain"
+        drive_reason = (
+            f"Material temperature {material_temp_c:.0f}°C exceeds the highest-rated belt "
+            f"option (ST cord, {st_lim['max_c']:.0f}°C max) — a belt would suffer heat "
+            f"damage regardless of cover grade. Chain is required."
+        )
+        belt_viable = False
+    elif material_temp_c > ep_lim["max_c"]:
+        drive_type = "belt"
+        drive_reason = (
+            f"Material temperature {material_temp_c:.0f}°C exceeds standard EP belt "
+            f"({ep_lim['max_c']:.0f}°C max) but is within ST cord range "
+            f"({st_lim['max_c']:.0f}°C max). Belt is viable — set Belt Type to ST in "
+            f"Belt Selection."
+        )
+        belt_viable = True
+    elif material_temp_c > ep_lim["warn_c"]:
+        drive_type = "belt"
+        drive_reason = (
+            f"Material temperature {material_temp_c:.0f}°C is within standard EP belt "
+            f"limits ({ep_lim['max_c']:.0f}°C max) but above {ep_lim['warn_c']:.0f}°C, "
+            f"where a heat-resistant cover grade is recommended."
+        )
+        belt_viable = True
+    else:
+        drive_type = "belt"
+        drive_reason = f"Material temperature {material_temp_c:.0f}°C is well within standard EP belt limits."
+        belt_viable = True
+
     return {
         "recommended_style":   style,
         "alternative_style":   alt,
@@ -1147,6 +1199,11 @@ def bucket_recommendation(material: dict, Q_req: float = 0.0) -> dict:
             "very_abrasive": is_very_abrasive,
             "super_duty":    is_super_duty,
         },
+        "recommended_drive_type": drive_type,
+        "drive_type_reasoning":   drive_reason,
+        "belt_viable":            belt_viable,
+        "ep_belt_max_c":          ep_lim["max_c"],
+        "st_belt_max_c":          st_lim["max_c"],
     }
 
 
@@ -2051,7 +2108,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     Q = calc_capacity(v, spacing, bucket["V"], inp.fill_pct, rho)
 
     # ── 3.7 — Bucket recommendation (advisory only) ───────────────────────────
-    bucket_rec = bucket_recommendation(mat, inp.Q_req)
+    bucket_rec = bucket_recommendation(mat, inp.Q_req, material_temp_c=float(getattr(inp, "material_temperature_c", 20) or 20))
 
     # ── 3.8 — Dynamic fill efficiency (advisory only) ─────────────────────────
     fill_eff = dynamic_fill_efficiency(
@@ -3383,7 +3440,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
     # The recommendation engine (bucket_recommendation) is called here with the
     # same material dict so we don't need to pass bucket_rec as an extra kwarg.
     try:
-        _brec = bucket_recommendation(mat)
+        _brec = bucket_recommendation(mat, material_temp_c=float(getattr(inp, "material_temperature_c", 20) or 20))
         _rec_style = _brec.get("recommended_style", "")
         _cur_style = (bucket.get("style") or bucket.get("type") or "").upper()
         _rec_disch  = _brec.get("discharge_type", "centrifugal")

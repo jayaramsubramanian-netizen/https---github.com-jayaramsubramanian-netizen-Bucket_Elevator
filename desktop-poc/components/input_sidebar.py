@@ -57,8 +57,6 @@ from api_client import search_materials, get_material, fetch_components
 # Sections not yet ported -- listed explicitly so the gap is named, not
 # silently absent. (id, label)
 NOT_YET_PORTED = [
-    ("belt",      "Belt / Chain Selection"),
-    ("bucket",    "Bucket Selection"),
     ("takeup",    "Take-Up Selection"),
     ("discharge", "Discharge Section"),
     ("feed",      "Feed Design"),
@@ -69,6 +67,40 @@ NOT_YET_PORTED = [
 
 ABR_HINT = {1: "Low", 2: "Low", 3: "Med", 4: "Med", 5: "High", 6: "High", 7: "V.High"}
 FLOW_HINT = {1: "Free", 2: "Free", 3: "Average", 4: "Sluggish"}
+
+# Style-level descriptive text only -- NOT a duplicate catalog. Actual
+# dimensions (W/P/V per size) come live from /components/buckets; the API
+# doesn't return a style-level label/description, just per-size rows, so
+# this fills in just the descriptive text, confirmed against the live
+# catalog to be exactly these 6 styles (40 total sizes, matches exactly).
+BUCKET_STYLE_INFO = {
+    "AA": ("AA — General Purpose Centrifugal", "centrifugal",
+           "Curved bottom, reinforced lip. Grain, aggregate, sand, coal, fertiliser."),
+    "AC": ("AC — Mill Duty (50° front, Added Capacity)", "centrifugal",
+           "Hooded back, 50° face angle. Cement, clinker, ore, shale, coal, asphalt."),
+    "C":  ("C — Wet / Sticky / Powdered (low profile)", "centrifugal",
+           "Open front, angled sides. Sugar, salt, wet grain, clay, flour, chemicals."),
+    "MF": ("MF — Continuous Medium Front (30°)", "continuous",
+           "Gentle handling, CR < 1.0. Gypsum, cement, pellets, grain, salt, fertiliser."),
+    "HF": ("HF — Continuous High Front (45°)", "continuous",
+           "Higher front than MF, ~8% more capacity. Grain, gypsum, pellets, fragile materials."),
+    "SC": ("SC — Super Capacity (Double Chain only)", "continuous",
+           "Very slow, heavy abrasive duty. Cement, clinker, limestone, rock. DOUBLE CHAIN only."),
+}
+
+# Static reference list, mirroring the JSX's own CHAIN_OPTIONS exactly --
+# there's no live /components/chains endpoint to fetch this from (checked
+# directly: 404), unlike buckets, which do have a real catalog table.
+CHAIN_OPTIONS = [
+    ("N102B", 'N-102B  — 4" std  WL=4,990kg  1 strand'),
+    ("S102B", 'S-102B  — 4" heavy WL=6,804kg  1 strand'),
+    ("S110",  'S-110   — 6" heavy WL=12,474kg 1 strand'),
+    ("ER856", 'ER-856  — 6" MDC   WL=18,144kg 1 strand'),
+    ("ER857", 'ER-857  — 6" MDC   WL=22,680kg 1 strand'),
+    ("ER859", 'ER-859  — 6" SC    WL=31,750kg 2 strands'),
+    ("C6102", '6102-1/2 — 12" SC   WL=27,215kg 2 strands'),
+    ("C9124", '9124    — 9" SC    WL=38,100kg 2 strands'),
+]
 
 
 def fmt(v, dp=1, fb="—"):
@@ -657,6 +689,7 @@ class ProcessEditDialog(QDialog):
         self.results = results or {}
         self.setWindowTitle("Process Design")
         self.setMinimumWidth(760)
+        self.resize(780, 700)
         self.setStyleSheet(f"background-color: {PANEL};")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -669,17 +702,9 @@ class ProcessEditDialog(QDialog):
 
         left = QVBoxLayout()
         left.setSpacing(10)
-        left.addWidget(section_head("Drive Type"))
-        drive_row = QHBoxLayout()
-        self.belt_btn = QPushButton("🔵 Belt Drive")
-        self.chain_btn = QPushButton("⛓ Chain Drive")
-        for btn, val in ((self.belt_btn, "belt"), (self.chain_btn, "chain")):
-            btn.setCheckable(True)
-            btn.clicked.connect(lambda checked, v=val: self._set_drive_type(v))
-            drive_row.addWidget(btn)
-        self._set_drive_type(self.inputs.get("conveyor_type", "belt"), restyle_only=True)
-        left.addLayout(drive_row)
-
+        # FIX (Jay: decide material/tonnage/height BEFORE drive type, not
+        # after): this used to put Drive Type first. Swapped so the order
+        # on screen matches the order you'd actually think through it.
         left.addWidget(section_head("Process Requirements"))
         row2 = QHBoxLayout()
         self.q_req = styled_spinbox(QDoubleSpinBox())
@@ -691,6 +716,40 @@ class ProcessEditDialog(QDialog):
         self.h_m.setValue(float(self.inputs.get("H_m", 25)))
         row2.addLayout(field_row("Lift Height", self.h_m, "m"))
         left.addLayout(row2)
+
+        self.material_temp = styled_spinbox(QDoubleSpinBox())
+        self.material_temp.setRange(-30, 400); self.material_temp.setSingleStep(10)
+        self.material_temp.setValue(float(self.inputs.get("material_temperature_c", 20)))
+        left.addLayout(field_row(
+            "Material Temperature", self.material_temp, "°C",
+            note="20°C = ambient. Drives belt-vs-chain guidance below — set this for hot "
+                 "materials (cement 80-120°C, clinker 150-300°C) before deciding drive type."
+        ))
+
+        # ── Design Guidance -- the actual point of this round: material
+        # temperature and character now advise drive type and discharge
+        # style HERE, before the Drive Type decision below, instead of
+        # only ever surfacing as a fail/warn check after a belt was
+        # already chosen and a full calculation run. Mirrors the BEUMER
+        # reference chart's structure: temperature gates belt feasibility,
+        # material character gates continuous vs centrifugal -- both
+        # checked against the backend's actual bucket_recommendation()
+        # output, not a second copy of that logic living here.
+        self.guidance_box = QVBoxLayout()
+        left.addLayout(self.guidance_box)
+        self._rebuild_guidance()
+
+        left.addWidget(section_head("Drive Type"))
+        drive_row = QHBoxLayout()
+        self.belt_btn = QPushButton("🔵 Belt Drive")
+        self.chain_btn = QPushButton("⛓ Chain Drive")
+        for btn, val in ((self.belt_btn, "belt"), (self.chain_btn, "chain")):
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda checked, v=val: self._set_drive_type(v))
+            drive_row.addWidget(btn)
+        self._set_drive_type(self.inputs.get("conveyor_type", "belt"), restyle_only=True)
+        left.addLayout(drive_row)
+
 
         self.fill_pct = styled_spinbox(QSpinBox())
         self.fill_pct.setRange(30, 100); self.fill_pct.setSingleStep(5)
@@ -771,7 +830,19 @@ class ProcessEditDialog(QDialog):
         right.addStretch()
         columns.addLayout(right, 1)
 
-        layout.addLayout(columns)
+        # FIX: this was the one dialog still missing a QScrollArea --
+        # every other dialog already got this fix when the Shaft modal
+        # overflowed the screen with no scrollbar. Adding the Design
+        # Guidance card just now made this column taller, which is what
+        # actually surfaced it here (cramped/overlapping text, not a
+        # rendering bug in the card itself).
+        body = QWidget()
+        body.setLayout(columns)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+        scroll.setWidget(body)
+        layout.addWidget(scroll)
         layout.addWidget(modal_footer(self))
 
     def _rebuild_advisory(self):
@@ -788,6 +859,66 @@ class ProcessEditDialog(QDialog):
                 w.deleteLater()
         if self.results.get("min_fill_pct") is not None or self.results.get("dynamic_fill"):
             self.advisory_box.addWidget(DynamicFillAdvisory(self.results, self.fill_pct.value()))
+
+    def _rebuild_guidance(self):
+        while self.guidance_box.count():
+            item = self.guidance_box.takeAt(0)
+            w = item.widget() if item else None
+            if w:
+                w.setParent(None)
+                w.deleteLater()
+        rec = self.results.get("bucket_recommendation")
+        if not rec:
+            return
+        current_drive = self.inputs.get("conveyor_type", "belt")
+        recommended_drive = rec.get("recommended_drive_type", "belt")
+        mismatch = current_drive != recommended_drive
+
+        box = QFrame()
+        box.setStyleSheet(
+            f"background-color: {'rgba(224,82,82,.08)' if mismatch else 'rgba(31,184,110,.07)'}; "
+            f"border: 1px solid {'rgba(224,82,82,.3)' if mismatch else 'rgba(31,184,110,.25)'}; border-radius: 5px;"
+        )
+        bl = QVBoxLayout(box)
+        bl.setContentsMargins(10, 8, 10, 8)
+        bl.setSpacing(4)
+        head = QLabel("●  MATERIAL-BASED DESIGN GUIDANCE")
+        head.setStyleSheet(f"color: {PRIMARY}; font-size: 10px; font-weight: 700; letter-spacing: .5px;")
+        bl.addWidget(head)
+
+        drive_line = QLabel(
+            f"⚠ You've selected {current_drive.upper()}, but material temperature suggests {recommended_drive.upper()}"
+            if mismatch else
+            f"✓ {current_drive.capitalize()} matches the material-temperature recommendation"
+        )
+        drive_line.setWordWrap(True)
+        drive_line.setStyleSheet(f"color: {DANGER if mismatch else SUCCESS}; font-size: 11px; font-weight: 700;")
+        bl.addWidget(drive_line)
+
+        reason1 = QLabel(rec.get("drive_type_reasoning", ""))
+        reason1.setWordWrap(True)
+        reason1.setStyleSheet(f"color: {TEXT3}; font-size: 10px;")
+        bl.addWidget(reason1)
+
+        discharge_line = QLabel(
+            f"Discharge character: {rec.get('discharge_type', '—').capitalize()} ({rec.get('recommended_style', '—')} style)"
+        )
+        discharge_line.setStyleSheet(f"color: {TEXT2}; font-size: 11px; font-weight: 600;")
+        discharge_line.setContentsMargins(0, 4, 0, 0)
+        bl.addWidget(discharge_line)
+
+        reason2 = QLabel(rec.get("reasoning", ""))
+        reason2.setWordWrap(True)
+        reason2.setStyleSheet(f"color: {TEXT3}; font-size: 10px;")
+        bl.addWidget(reason2)
+
+        stale_note = QLabel("Based on the last calculated result — click Apply after changing "
+                             "material or temperature to refresh this guidance.")
+        stale_note.setWordWrap(True)
+        stale_note.setStyleSheet(f"color: {MUTED}; font-size: 9px; margin-top: 2px;")
+        bl.addWidget(stale_note)
+
+        self.guidance_box.addWidget(box)
 
     def _on_material_selected(self, mat_id):
         self.inputs["mat_id"] = mat_id
@@ -821,10 +952,17 @@ class ProcessEditDialog(QDialog):
             else:
                 btn.setStyleSheet(f"background-color: {PANEL2}; color: {TEXT3}; "
                                    f"border: 1px solid {BORDER}; border-radius: 5px; padding: 8px;")
+        # Mismatch warning is a straight comparison against the last-
+        # calculated recommendation, not a recalculation -- safe to
+        # refresh immediately on toggle, same way the bore-ratio field
+        # refreshes immediately on the solid/hollow toggle elsewhere.
+        if hasattr(self, "guidance_box"):
+            self._rebuild_guidance()
 
     def updated_inputs(self):
         self.inputs["Q_req"] = self.q_req.value()
         self.inputs["H_m"] = self.h_m.value()
+        self.inputs["material_temperature_c"] = self.material_temp.value()
         self.inputs["mat_id"] = self.material_search.current_mat_id
         self.inputs["fill_pct"] = self.fill_pct.value()
         self.inputs["custom_mat_name"] = self.custom_name.text().strip()
@@ -1145,6 +1283,523 @@ class PulleyEditDialog(QDialog):
         self.inputs["boot_pulley_D_mm"] = self.boot_d_mm.value()
         self.inputs["pulley_shell_t_override_mm"] = self.head_shell_override.value()
         self.inputs["boot_shell_t_override_mm"] = self.boot_shell_override.value()
+        return self.inputs
+
+
+class BeltChainEditDialog(QDialog):
+    """Belt / Chain Selection -- combines BeltEdit and ChainEdit from the
+    JSX into one modal that switches content based on conveyor_type,
+    the same way EquipmentTree.jsx already switches its own Belt/Chain
+    Selection section. Moved up in the sidebar order per the engineering-
+    flow discussion: drive type is decided right after Design
+    Requirements, well before Pulley/Shaft, so this should sit right
+    after it too, not buried in the middle of the list."""
+
+    def __init__(self, inputs, results, parent=None):
+        super().__init__(parent)
+        self.inputs = dict(inputs)
+        self.results = results or {}
+        self.is_chain = bool(self.results.get("is_chain"))
+        title = "Chain Selection" if self.is_chain else "Belt Selection"
+        self.setWindowTitle(title)
+        self.setMinimumWidth(460)
+        self.setStyleSheet(f"background-color: {PANEL};")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(modal_header(title, "CEMA 375 §4"))
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+        body = QWidget()
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(16, 16, 16, 16)
+        bl.setSpacing(10)
+
+        if self.is_chain:
+            self._build_chain_content(bl)
+        else:
+            self._build_belt_content(bl)
+
+        bl.addStretch()
+        scroll.setWidget(body)
+        layout.addWidget(scroll)
+        layout.addWidget(modal_footer(self))
+
+    # ── Belt mode ─────────────────────────────────────────────────────
+    def _build_belt_content(self, bl):
+        r = self.results
+        tp = r.get("tension_profile") or {}
+        margin_bad = tp.get("rating_margin") is not None and tp["rating_margin"] < 1.0
+
+        bl.addWidget(section_head("Belt Configuration"))
+        bl.addWidget(stat_box([
+            ("Auto Width", f"{fmt(r.get('belt_w'), 0)} mm"),
+            ("Plies", f"{r.get('belt_ply', '—')}" + (" (override)" if r.get("belt_ply_is_override") else "")),
+            ("Eff. Tension (sizing basis)", f"{fmt((r.get('F_eff') or 0) / 1000, 1)} kN"),
+        ]))
+
+        if tp.get("T_max_N") is not None:
+            note = None
+            if margin_bad:
+                note = ("⚠ Ply count above is sized for effective tension only — peak tension "
+                        "(including empty-leg self-weight) exceeds belt rating. Increase belt "
+                        "width, or set Belt Ply Override below to a higher count.")
+            bl.addWidget(stat_box(
+                [("Peak Tension (actual max, full loop)", f"{fmt(tp.get('T_max_N', 0) / 1000, 1)} kN"),
+                 ("Belt Rated", f"{fmt((tp.get('belt_rated_N') or 0) / 1000, 1)} kN"),
+                 ("Margin", fmt(tp.get("rating_margin"), 2))],
+                border_color=DANGER if margin_bad else None,
+                note=note, note_color=DANGER,
+            ))
+
+        self.belt_ply_override = styled_spinbox(QSpinBox())
+        self.belt_ply_override.setRange(0, 10); self.belt_ply_override.setSingleStep(1)
+        self.belt_ply_override.setValue(int(self.inputs.get("belt_ply_override", 0)))
+        ply_note = (f"0 = auto (currently {r.get('belt_ply')}"
+                    f"{', from your override' if r.get('belt_ply_is_override') else ''}). "
+                    f"Set > 0 to pick a specific ply count."
+                    if r.get("belt_ply") is not None else
+                    "0 = auto-calculate from peak tension. Set > 0 to pick a specific ply count.")
+        bl.addLayout(field_row("Belt Ply Override", self.belt_ply_override, note=ply_note))
+
+        self.belt_width_override = styled_spinbox(QDoubleSpinBox())
+        self.belt_width_override.setRange(0, 1500); self.belt_width_override.setSingleStep(25)
+        self.belt_width_override.setValue(float(self.inputs.get("belt_width_override_mm", 0)))
+        bl.addLayout(field_row("Belt Width Override", self.belt_width_override, "mm",
+                                note="0 = auto-select from bucket width. Set > 0 to specify exact width."))
+
+        bl.addWidget(section_head("Belt Type"))
+        self.belt_type_combo = QComboBox()
+        self.belt_type_combo.setMinimumHeight(28)
+        self.belt_type_combo.setStyleSheet(
+            f"background-color: {PANEL2}; color: {TEXT}; border: 1px solid {BORDER}; "
+            f"border-radius: 4px; padding: 5px 8px; font-size: 12px;"
+        )
+        belt_types = [("EP", "EP — Fabric ply (standard)"), ("ST", "ST — Steel cord (high tension)")]
+        current_belt_type = self.inputs.get("belt_type", "EP")
+        for i, (val, text) in enumerate(belt_types):
+            self.belt_type_combo.addItem(text, val)
+            if val == current_belt_type:
+                self.belt_type_combo.setCurrentIndex(i)
+        bl.addWidget(self.belt_type_combo)
+        type_note = QLabel("ST belts use herringbone lagging — not diamond groove")
+        type_note.setStyleSheet(f"color: {MUTED}; font-size: 9.5px;")
+        bl.addWidget(type_note)
+
+        bl.addWidget(section_head("Belt Cover Grade"))
+        self.belt_grade_combo = QComboBox()
+        self.belt_grade_combo.setMinimumHeight(28)
+        self.belt_grade_combo.setStyleSheet(
+            f"background-color: {PANEL2}; color: {TEXT}; border: 1px solid {BORDER}; "
+            f"border-radius: 4px; padding: 5px 8px; font-size: 12px;"
+        )
+        belt_grades = [
+            ("", "Auto — solver selects grade"),
+            ("M", "M — Abrasion resistant (DIN 22102 Grade M)"),
+            ("N", "N — General duty (DIN 22102 Grade N)"),
+            ("W", "W — Oil and heat resistant"),
+        ]
+        current_grade = self.inputs.get("belt_grade", "")
+        for i, (val, text) in enumerate(belt_grades):
+            self.belt_grade_combo.addItem(text, val)
+            if val == current_grade:
+                self.belt_grade_combo.setCurrentIndex(i)
+        bl.addWidget(self.belt_grade_combo)
+        grade_note = QLabel("Grade M for abrasive materials (abr ≥ 4). Grade N for grain/light minerals.")
+        grade_note.setWordWrap(True)
+        grade_note.setStyleSheet(f"color: {MUTED}; font-size: 9.5px;")
+        bl.addWidget(grade_note)
+
+    # ── Chain mode ────────────────────────────────────────────────────
+    def _build_chain_content(self, bl):
+        r = self.results
+        cs = r.get("chain_selected")
+        sp = r.get("sprocket")
+        bsp = r.get("boot_sprocket")
+
+        bl.addWidget(section_head("Chain Series"))
+        self.chain_series_combo = QComboBox()
+        self.chain_series_combo.setMinimumHeight(28)
+        self.chain_series_combo.setStyleSheet(
+            f"background-color: {PANEL2}; color: {TEXT}; border: 1px solid {BORDER}; "
+            f"border-radius: 4px; padding: 5px 8px; font-size: 12px; font-family: 'JetBrains Mono', monospace;"
+        )
+        self.chain_series_combo.addItem("Auto — select by pull force", "")
+        current_chain = self.inputs.get("chain_series", "")
+        for i, (val, text) in enumerate(CHAIN_OPTIONS, start=1):
+            self.chain_series_combo.addItem(text, val)
+            if val == current_chain:
+                self.chain_series_combo.setCurrentIndex(i)
+        bl.addWidget(self.chain_series_combo)
+        if cs:
+            sel_note = QLabel(
+                f"✓ Selected: {cs.get('name')} — pull {fmt((r.get('chain_pull_N') or 0) / 1000, 1)}kN  "
+                f"SF={fmt(r.get('chain_SF_actual'), 2)}"
+            )
+            sel_note.setStyleSheet(f"color: {SUCCESS}; font-size: 10px;")
+            bl.addWidget(sel_note)
+
+        row = QHBoxLayout()
+        strands_col = QVBoxLayout()
+        strands_lbl = QLabel("No. of Strands")
+        strands_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px; font-weight: 600;")
+        strands_col.addWidget(strands_lbl)
+        self._strands_val = [int(self.inputs.get("chain_n_strands", 1))]
+        strands_row = QHBoxLayout()
+        strands_buttons = {}
+
+        def restyle_strands():
+            for n, btn in strands_buttons.items():
+                active = n == self._strands_val[0]
+                btn.setStyleSheet(
+                    (f"background-color: rgba(74,158,255,.15); color: {PRIMARY}; "
+                     f"border: 1px solid {PRIMARY}; border-radius: 5px; padding: 7px 4px; font-weight: 600;")
+                    if active else
+                    (f"background-color: {PANEL2}; color: {TEXT3}; border: 1px solid {BORDER}; "
+                     f"border-radius: 5px; padding: 7px 4px;")
+                )
+
+        for n, label in ((1, "1 — Single"), (2, "2 — SC Double")):
+            btn = QPushButton(label)
+
+            def clicked(checked, v=n):
+                self._strands_val[0] = v
+                restyle_strands()
+            btn.clicked.connect(clicked)
+            strands_row.addWidget(btn)
+            strands_buttons[n] = btn
+        restyle_strands()
+        strands_col.addLayout(strands_row)
+        row.addLayout(strands_col)
+
+        self.chain_sf = styled_spinbox(QDoubleSpinBox())
+        self.chain_sf.setRange(3, 12); self.chain_sf.setSingleStep(0.5)
+        self.chain_sf.setValue(float(self.inputs.get("chain_sf", 6.0)))
+        row.addLayout(field_row("Chain SF", self.chain_sf, note="CEMA default 6.0; 8.0 for shock/abrasive"))
+        bl.addLayout(row)
+
+        bl.addWidget(section_head("Sprocket"))
+        self.sprocket_teeth = styled_spinbox(QSpinBox())
+        self.sprocket_teeth.setRange(0, 32); self.sprocket_teeth.setSingleStep(1)
+        self.sprocket_teeth.setValue(int(self.inputs.get("chain_sprocket_teeth", 0)))
+        bl.addLayout(field_row("Sprocket Teeth Override", self.sprocket_teeth,
+                                note="0 = auto from D_mm. Recommend 10–20 teeth for smooth chain engagement."))
+        if sp:
+            bl.addWidget(stat_box(
+                [("PD", f"{fmt(sp.get('PD_mm'), 0)} mm"), ("Teeth", str(sp.get("n_teeth", "—"))),
+                 ("Smooth", "✓ Yes" if sp.get("smooth") else "⚠ No")],
+                border_color=None if sp.get("smooth") else WARNING,
+                note=sp.get("note") if not sp.get("smooth") else None, note_color=WARNING,
+            ))
+
+        bl.addWidget(section_head("Boot Sprocket"))
+        self.boot_sprocket_teeth = styled_spinbox(QSpinBox())
+        self.boot_sprocket_teeth.setRange(0, 32); self.boot_sprocket_teeth.setSingleStep(1)
+        self.boot_sprocket_teeth.setValue(int(self.inputs.get("chain_boot_sprocket_teeth", 0)))
+        bl.addLayout(field_row(
+            "Boot Sprocket Teeth Override", self.boot_sprocket_teeth,
+            note="0 = auto from boot pulley diameter. Same physical relationship as the head "
+                 "sprocket — the boot/tail wheel engages the chain too, not a smooth-faced pulley."
+        ))
+        if bsp:
+            bl.addWidget(stat_box(
+                [("PD", f"{fmt(bsp.get('PD_mm'), 0)} mm"), ("Teeth", str(bsp.get("n_teeth", "—"))),
+                 ("Smooth", "✓ Yes" if bsp.get("smooth") else "⚠ No")],
+                border_color=None if bsp.get("smooth") else WARNING,
+                note=bsp.get("note") if not bsp.get("smooth") else None, note_color=WARNING,
+            ))
+
+        if r.get("chain_v_ok") is not None:
+            bl.addWidget(section_head("Chain Speed Check"))
+            ok = r["chain_v_ok"]
+            v_max = (cs or {}).get("v_max_ms", "—")
+            speed_note = QFrame()
+            speed_note.setStyleSheet(
+                f"background-color: {'rgba(31,184,110,.08)' if ok else 'rgba(224,82,82,.10)'}; "
+                f"border: 1px solid {'rgba(31,184,110,.3)' if ok else 'rgba(224,82,82,.3)'}; border-radius: 5px;"
+            )
+            sl = QVBoxLayout(speed_note)
+            sl.setContentsMargins(10, 6, 10, 6)
+            text = (f"✓ Speed {fmt(r.get('v'), 2)} m/s ≤ chain rated {v_max} m/s" if ok else
+                    f"⚠ Speed {fmt(r.get('v'), 2)} m/s EXCEEDS chain rated {v_max} m/s")
+            lbl = QLabel(text)
+            lbl.setStyleSheet(f"color: {SUCCESS if ok else DANGER}; font-size: 11px;")
+            sl.addWidget(lbl)
+            bl.addWidget(speed_note)
+
+    def updated_inputs(self):
+        if self.is_chain:
+            self.inputs["chain_series"] = self.chain_series_combo.currentData()
+            self.inputs["chain_n_strands"] = self._strands_val[0]
+            self.inputs["chain_sf"] = self.chain_sf.value()
+            self.inputs["chain_sprocket_teeth"] = self.sprocket_teeth.value()
+            self.inputs["chain_boot_sprocket_teeth"] = self.boot_sprocket_teeth.value()
+        else:
+            self.inputs["belt_ply_override"] = self.belt_ply_override.value()
+            self.inputs["belt_width_override_mm"] = self.belt_width_override.value()
+            self.inputs["belt_type"] = self.belt_type_combo.currentData()
+            self.inputs["belt_grade"] = self.belt_grade_combo.currentData()
+        return self.inputs
+
+
+class BucketEditDialog(QDialog):
+    """Bucket Selection -- fetches the real 40-row bucket catalog live
+    from /components/buckets (confirmed directly: exactly the 6 styles
+    AA/AC/C/MF/HF/SC the JSX hardcodes, same 40 total sizes), grouped by
+    style. Only the descriptive text per style (BUCKET_STYLE_INFO above)
+    isn't available from the API and is kept as a small lookup -- the
+    actual dimensions driving every calculation come from the live
+    catalog, not a duplicated copy.
+
+    auto_bucket lives here, not in Design Requirements -- confirmed
+    against the real JSX before assuming otherwise; this is also where
+    the bucket-aware fill % discussion from the engineering-flow
+    question actually resolves: the recommendation card and size
+    constraints below are what should inform revisiting Bucket Fill
+    Factor in Design Requirements, once a bucket is actually chosen."""
+
+    def __init__(self, inputs, results, parent=None):
+        super().__init__(parent)
+        self.inputs = dict(inputs)
+        self.results = results or {}
+        self.setWindowTitle("Bucket Selection")
+        self.setMinimumWidth(460)
+        self.setStyleSheet(f"background-color: {PANEL};")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(modal_header("Bucket Selection", "CEMA 375 §6"))
+
+        try:
+            all_buckets = fetch_components("/components/buckets")
+        except Exception:
+            all_buckets = []
+        self.catalog = {}
+        for b in all_buckets:
+            self.catalog.setdefault(b.get("style"), []).append(b)
+        for style_rows in self.catalog.values():
+            style_rows.sort(key=lambda b: b.get("V_L", 0))
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+        body = QWidget()
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(16, 16, 16, 16)
+        bl.setSpacing(10)
+        r = self.results
+
+        bl.addWidget(section_head("Auto-Select"))
+        self.auto_toggle = ToggleButton()
+        self.auto_toggle.setChecked(bool(self.inputs.get("auto_bucket", True)))
+        self.auto_toggle.toggled.connect(self._on_auto_toggled)
+        bl.addLayout(field_row("Auto-select smallest adequate series", self.auto_toggle,
+                                note="Auto picks the smallest size that meets Q_req at current speed and fill"))
+
+        rec = r.get("bucket_recommendation")
+        if rec:
+            current_style = (self.inputs.get("bucket_id", "") or "").split("_")[0]
+            is_current = current_style == rec.get("recommended_style")
+            card = QFrame()
+            card.setStyleSheet(
+                f"background-color: {'rgba(31,184,110,.08)' if is_current else 'rgba(74,158,255,.07)'}; "
+                f"border: 1px solid {'rgba(31,184,110,.3)' if is_current else 'rgba(74,158,255,.3)'}; border-radius: 5px;"
+            )
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(10, 8, 10, 8)
+            cl.setSpacing(4)
+            head = QLabel("✓ CURRENT STYLE MATCHES RECOMMENDATION" if is_current else "●  RECOMMENDATION FOR THIS MATERIAL")
+            head.setStyleSheet(f"color: {SUCCESS if is_current else PRIMARY}; font-size: 10px; font-weight: 700;")
+            cl.addWidget(head)
+            style_lbl = QLabel(f"{rec.get('recommended_style')} style" +
+                                (f"   (alt: {rec.get('alternative_style')})" if rec.get("alternative_style") != rec.get("recommended_style") else ""))
+            style_lbl.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700;")
+            cl.addWidget(style_lbl)
+            reasoning = QLabel(rec.get("reasoning", ""))
+            reasoning.setWordWrap(True)
+            reasoning.setStyleSheet(f"color: {TEXT3}; font-size: 11px;")
+            cl.addWidget(reasoning)
+            for note in rec.get("notes") or []:
+                note_lbl = QLabel(f"⚠ {note}")
+                note_lbl.setWordWrap(True)
+                note_lbl.setStyleSheet(f"color: {WARNING}; font-size: 10px;")
+                cl.addWidget(note_lbl)
+            bl.addWidget(card)
+
+        bl.addWidget(section_head("Bucket Style"))
+        self.style_combo = QComboBox()
+        self.style_combo.setMinimumHeight(28)
+        self.style_combo.setStyleSheet(
+            f"background-color: {PANEL2}; color: {TEXT}; border: 1px solid {BORDER}; "
+            f"border-radius: 4px; padding: 5px 8px; font-size: 12px;"
+        )
+        current_bucket_id = self.inputs.get("bucket_id", "AC_12x8")
+        current_style = current_bucket_id.split("_")[0] if "_" in current_bucket_id else "AA"
+        for style in self.catalog.keys():
+            label = BUCKET_STYLE_INFO.get(style, (style, "", ""))[0]
+            self.style_combo.addItem(label, style)
+        idx = self.style_combo.findData(current_style)
+        if idx >= 0:
+            self.style_combo.setCurrentIndex(idx)
+        self.style_combo.currentIndexChanged.connect(self._on_style_changed)
+        bl.addWidget(self.style_combo)
+        self.style_desc = QLabel()
+        self.style_desc.setWordWrap(True)
+        self.style_desc.setStyleSheet(f"color: {MUTED}; font-size: 9.5px;")
+        bl.addWidget(self.style_desc)
+
+        bl.addWidget(section_head("Size"))
+        self.belt_width_note = QLabel()
+        self.belt_width_note.setStyleSheet(f"color: {PRIMARY}; font-size: 9px; font-weight: 700;")
+        bl.addWidget(self.belt_width_note)
+        self.size_combo = QComboBox()
+        self.size_combo.setMinimumHeight(28)
+        self.size_combo.setStyleSheet(
+            f"background-color: {PANEL2}; color: {TEXT}; border: 1px solid {BORDER}; "
+            f"border-radius: 4px; padding: 5px 8px; font-size: 12px; font-family: 'JetBrains Mono', monospace;"
+        )
+        # Connected exactly once, here -- _populate_sizes() used to
+        # disconnect/reconnect this on every call, which raised a
+        # RuntimeWarning the first time (nothing was connected yet to
+        # disconnect). A single permanent connection plus blockSignals()
+        # during repopulation (already done below) is the correct pattern.
+        self.size_combo.currentIndexChanged.connect(self._rebuild_size_summary)
+        bl.addWidget(self.size_combo)
+        self.size_warn = QLabel()
+        self.size_warn.setWordWrap(True)
+        self.size_warn.setStyleSheet(f"color: {WARNING}; font-size: 10px;")
+        bl.addWidget(self.size_warn)
+
+        self.size_summary_box = QVBoxLayout()
+        bl.addLayout(self.size_summary_box)
+
+        self._populate_sizes(current_bucket_id)
+        self._update_auto_state(self.auto_toggle.isChecked())
+
+        bl.addWidget(section_head("Spacing"))
+        self.bucket_gap = styled_spinbox(QDoubleSpinBox())
+        self.bucket_gap.setRange(0, 200); self.bucket_gap.setSingleStep(5)
+        self.bucket_gap.setValue(float(self.inputs.get("bucket_gap", 25)))
+        bl.addLayout(field_row("Bucket Spacing Gap", self.bucket_gap, "mm",
+                                note="Gap added beyond bucket projection for spacing. CEMA default 25mm. "
+                                     "Continuous elevators typically 0mm."))
+
+        bl.addWidget(section_head("Plate Thickness"))
+        bt = r.get("bucket_thickness")
+        if bt:
+            bl.addWidget(stat_box([
+                ("Catalogue gauge", f"{fmt(bt.get('t_implied_mm'), 1)} mm"),
+                ("Specified", f"{fmt(bt.get('t_override_mm'), 1)} mm"),
+                ("Mass", f"{fmt(bt.get('mass_scaled_kg'), 1)} kg"),
+            ]))
+        self.thickness_override = styled_spinbox(QDoubleSpinBox())
+        self.thickness_override.setRange(0, 20); self.thickness_override.setSingleStep(0.5)
+        self.thickness_override.setValue(float(self.inputs.get("bucket_thickness_override_mm", 0)))
+        bl.addLayout(field_row(
+            "Plate Thickness Override", self.thickness_override, "mm",
+            note="0 = catalogue standard gauge for the selected series. Heavier gauge adds wear "
+                 "allowance and dead load; mass scales linearly from catalogue reference (not "
+                 "independently structurally validated)."
+        ))
+
+        bl.addStretch()
+        scroll.setWidget(body)
+        layout.addWidget(scroll)
+        layout.addWidget(modal_footer(self))
+
+    def _resolved_belt_w(self):
+        override = self.inputs.get("belt_width_override_mm", 0) or 0
+        if override > 0:
+            return override
+        return self.results.get("belt_w") or self.results.get("belt_width_mm")
+
+    def _on_style_changed(self):
+        style = self.style_combo.currentData()
+        rows = self.catalog.get(style, [])
+        if rows:
+            mid = rows[len(rows) // 2]
+            self._populate_sizes(mid.get("bucket_id"), force_style=style)
+        self.inputs["auto_bucket"] = False
+        self.auto_toggle.setChecked(False)
+
+    def _populate_sizes(self, bucket_id, force_style=None):
+        style = force_style or (bucket_id.split("_")[0] if bucket_id and "_" in bucket_id else self.style_combo.currentData())
+        info = BUCKET_STYLE_INFO.get(style, (style, "", f"{style} series"))
+        self.style_desc.setText(info[2] + (
+            "   ●  Continuous discharge — CR must be < 1.0" if info[1] == "continuous" else ""
+        ))
+
+        belt_w = self._resolved_belt_w()
+        max_w = (belt_w - 50) if belt_w else None
+        rows = self.catalog.get(style, [])
+        filtered = [b for b in rows if max_w is None or b.get("W_mm", 0) <= max_w]
+        hidden = len(rows) - len(filtered)
+        rows_to_show = filtered if filtered else rows
+
+        if belt_w:
+            self.belt_width_note.setText(f"Belt {fmt(belt_w,0)}mm → max W={fmt(max_w,0)}mm")
+        else:
+            self.belt_width_note.setText("")
+
+        self.size_combo.blockSignals(True)
+        self.size_combo.clear()
+        selected_index = len(rows_to_show) // 2
+        for i, b in enumerate(rows_to_show):
+            self.size_combo.addItem(b.get("catalog", b.get("bucket_id")), b.get("bucket_id"))
+            if b.get("bucket_id") == bucket_id:
+                selected_index = i
+        if rows_to_show:
+            self.size_combo.setCurrentIndex(selected_index)
+        self.size_combo.blockSignals(False)
+
+        if hidden > 0:
+            self.size_warn.setText(
+                f"⚠ {hidden} size{'s' if hidden > 1 else ''} hidden — wider than belt "
+                f"({fmt(belt_w,0)}mm − 50mm clearance). Increase belt width override to unlock them."
+            )
+        else:
+            self.size_warn.setText("")
+        self._current_rows = {b.get("bucket_id"): b for b in rows_to_show}
+        self._rebuild_size_summary()
+
+    def _rebuild_size_summary(self, _index=None):
+        while self.size_summary_box.count():
+            item = self.size_summary_box.takeAt(0)
+            w = item.widget() if item else None
+            if w:
+                w.setParent(None)
+                w.deleteLater()
+        if self.auto_toggle.isChecked():
+            note = QLabel("Auto-select active — disable toggle above to pick a specific size")
+            note.setStyleSheet(f"color: {SUCCESS}; font-size: 10px;")
+            self.size_summary_box.addWidget(note)
+            return
+        bucket_id = self.size_combo.currentData()
+        row = getattr(self, "_current_rows", {}).get(bucket_id)
+        if row:
+            self.size_summary_box.addWidget(stat_box([
+                ("Width", f"{fmt(row.get('W_mm'), 0)} mm"),
+                ("Projection", f"{fmt(row.get('P_mm'), 0)} mm"),
+                ("Volume", f"{fmt(row.get('V_L'), 2)} L"),
+                ("Style", row.get("style", "—")),
+            ]))
+
+    def _on_auto_toggled(self, checked):
+        self.inputs["auto_bucket"] = checked
+        self._update_auto_state(checked)
+        self._rebuild_size_summary()
+
+    def _update_auto_state(self, auto_on):
+        self.size_combo.setEnabled(not auto_on)
+
+    def updated_inputs(self):
+        self.inputs["auto_bucket"] = self.auto_toggle.isChecked()
+        if not self.auto_toggle.isChecked():
+            self.inputs["bucket_id"] = self.size_combo.currentData()
+        self.inputs["bucket_gap"] = self.bucket_gap.value()
+        self.inputs["bucket_thickness_override_mm"] = self.thickness_override.value()
         return self.inputs
 
 
@@ -1621,6 +2276,24 @@ class InputSidebarPanel(QWidget):
         process_row.clicked = lambda: self._open_process_dialog()
         self.list_layout.addWidget(process_row)
 
+        # FIX (engineering-flow discussion): Belt/Chain and Bucket Selection
+        # moved here, right after Design Requirements -- this used to sit
+        # after Pulley/Shaft, the reverse of the order you'd actually
+        # decide things in (material/tonnage/height, then drive type and
+        # bucket, THEN pulley/shaft sizing that depends on them).
+        is_chain = bool(self.results.get("is_chain"))
+        belt_summary = (self._chain_summary() if is_chain else self._belt_summary())
+        belt_row = SectionRow("Chain Selection" if is_chain else "Belt Selection", belt_summary)
+        belt_row.clicked = lambda: self._open_belt_chain_dialog()
+        self.list_layout.addWidget(belt_row)
+
+        bkt = self.results.get("bucket") or {}
+        bucket_summary = (f"{'Auto: ' if self.inputs.get('auto_bucket') else ''}{bkt.get('id', 'auto')} series · "
+                           f"{fmt(bkt.get('V'), 1)}L · Gap {self.inputs.get('bucket_gap','—')}mm")
+        bucket_row = SectionRow("Bucket Selection", bucket_summary)
+        bucket_row.clicked = lambda: self._open_bucket_dialog()
+        self.list_layout.addWidget(bucket_row)
+
         boot_pulley = self.results.get("boot_pulley") or {}
         boot_d = boot_pulley.get("boot_D_mm", self.inputs.get("boot_pulley_D_mm", "—"))
         wrap = self.results.get("wrap_effective_deg", self.inputs.get("wrap_deg", 180))
@@ -1642,13 +2315,17 @@ class InputSidebarPanel(QWidget):
 
         self.list_layout.addStretch()
 
+    def _belt_summary(self):
+        r = self.results
+        return f"{r.get('belt_class') or (str(r['belt_ply']) + ' PLY' if r.get('belt_ply') else 'auto')} · {fmt(r.get('belt_w'), 0)}mm"
+
+    def _chain_summary(self):
+        r = self.results
+        cs = r.get("chain_selected") or {}
+        return f"{cs.get('name', 'auto')} · SF={fmt(r.get('chain_SF_actual'), 2)}"
+
     def _summary_for(self, section_id):
         r = self.results
-        bkt = r.get("bucket") or {}
-        if section_id == "belt":
-            return f"{r.get('belt_w', 'auto')}mm · {self.inputs.get('belt_type', 'EP')} · {r.get('belt_ply', '—')} ply"
-        if section_id == "bucket":
-            return f"{bkt.get('id', 'auto')} series · {bkt.get('V', '—')}L · Gap {self.inputs.get('bucket_gap', '—')}mm"
         if section_id == "takeup":
             return f"{self.inputs.get('takeup_type', 'gravity')} take-up"
         if section_id == "discharge":
@@ -1666,6 +2343,16 @@ class InputSidebarPanel(QWidget):
 
     def _open_process_dialog(self):
         dlg = ProcessEditDialog(self.inputs, self.results, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.inputsChanged.emit(dlg.updated_inputs())
+
+    def _open_belt_chain_dialog(self):
+        dlg = BeltChainEditDialog(self.inputs, self.results, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.inputsChanged.emit(dlg.updated_inputs())
+
+    def _open_bucket_dialog(self):
+        dlg = BucketEditDialog(self.inputs, self.results, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.inputsChanged.emit(dlg.updated_inputs())
 
