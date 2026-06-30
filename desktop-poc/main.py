@@ -26,8 +26,46 @@ plain QWidget with set_data(inputs, results) (same shape as the two
 already here), then swap the matching placeholder below for the real
 import.
 
-Run:
-    python3 main.py
+FIXES this round (direct visual feedback against a real render, comparing
+3 screenshots: the JSX reference, an earlier wider PySide6 render, and the
+actual narrow-window PySide6 render that surfaced these):
+
+  1. TopNav was a hard 40px, with the same 2px spacing serving both the
+     tightly-packed tab row AND the KPI chips -- the chips had no breathing
+     room of their own and the whole bar read as cramped next to the JSX
+     reference's taller, more padded version. TopNav is now 56px, and the
+     three KPI chips live in their own sub-layout with 8px spacing and
+     larger padding/fonts, independent of the tab buttons' tighter spacing.
+
+  2. Capacity color coding never changed to red when actual capacity fell
+     under required -- update_kpis() unconditionally painted Q green, P
+     orange, v blue with no comparison against anything. The backend
+     already computes the real pass/fail (cap_ok, calculations.py) -- this
+     was a case of the frontend needing to READ an existing field, not
+     invent a new comparison (which would have duplicated the >= check
+     CEMA-flags as significant: a >= 1.0 t/h margin matters as much as a
+     -1.0 t/h shortfall, exactly the kind of boundary a second client-side
+     implementation could get subtly wrong). Q now reads results["cap_ok"]
+     directly: green when capacity meets/exceeds Q_req, red when it
+     doesn't. P and v don't have an equivalent required-vs-actual concept
+     in the backend (no P_req/v_req field exists) -- they keep their
+     existing categorical accent colors (P=orange, v=blue), which were
+     never meant to be pass/fail in the first place.
+
+  3. The tab pills (Results/Optimizer/Components/Materials/Checks) and the
+     module-switcher pills in AppTitleBar were rendering as plain text with
+     no filled-pill background on Windows, while the JSX reference and an
+     earlier-session render both show a real solid pill behind the active
+     tab. Root cause, not a guess: QApplication() was being constructed
+     with no explicit setStyle() call, so it fell back to the native
+     Windows style (typically "windowsvista") -- and that native style is
+     known to partially ignore QSS background-color on QPushButton,
+     especially once setFlat(True) is also set (NavTabButton had this).
+     Fixed two ways together: app.setStyle("Fusion") in main() so Qt
+     actually honors the stylesheets app-wide instead of deferring to the
+     native theme, and removed the redundant setFlat(True) call (the
+     stylesheet already sets border: none, so the flat flag wasn't doing
+     anything useful and was part of the problem combination).
 """
 import sys
 
@@ -245,13 +283,24 @@ class NavTabButton(QPushButton):
     highlight reliably (confirmed by directly rendering both and
     comparing pixels, not assumed) -- addWidget() gives full, reliable
     control over the persistent rounded-bevel active state the JSX
-    version has, while still living inside a genuine QMenuBar."""
+    version has, while still living inside a genuine QMenuBar.
+
+    FIX: setFlat(True) was removed. Combined with the app previously
+    having no explicit QApplication.setStyle() call (so it defaulted to
+    the native Windows style), this was the real cause of the pill
+    background not rendering -- confirmed against 3 screenshots side by
+    side (JSX reference, an earlier wider render that looked correct, and
+    the actual narrow-window render that didn't): native Windows styles
+    are known to partially ignore QSS background-color on a flat
+    QPushButton. The stylesheet below already sets border: none, so
+    setFlat() wasn't adding anything -- removing it, paired with
+    app.setStyle("Fusion") in main(), is the real fix rather than a
+    workaround."""
 
     def __init__(self, label, parent=None):
         super().__init__(label, parent)
         self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFlat(True)
         self._apply_style()
 
     def setChecked(self, checked):
@@ -262,12 +311,12 @@ class NavTabButton(QPushButton):
         if self.isChecked():
             self.setStyleSheet(f"""
                 QPushButton {{ background-color: {PRIMARY}; color: white; border: none;
-                    border-radius: 999px; padding: 6px 14px; font-size: 12px; font-weight: 600; }}
+                    border-radius: 999px; padding: 8px 16px; font-size: 12.5px; font-weight: 600; }}
             """)
         else:
             self.setStyleSheet(f"""
                 QPushButton {{ background-color: transparent; color: {TEXT3}; border: none;
-                    border-radius: 999px; padding: 6px 14px; font-size: 12px; }}
+                    border-radius: 999px; padding: 8px 16px; font-size: 12.5px; }}
                 QPushButton:hover {{ background-color: {PANEL2}; color: {TEXT2}; }}
             """)
 
@@ -281,27 +330,33 @@ class TopNav(QFrame):
     AppTitleBar (the platform/module switcher) -- this is this specific
     page's own navigation (BucketElevatorPage.jsx's own header).
 
-    FIX: the first version of this used a real QMenuBar with QMenuBar.
-    addWidget() to host the tab buttons -- addWidget() doesn't actually
-    exist on QMenuBar (confirmed directly: dir(QMenuBar) only has
-    addAction/addActions/addMenu/addSeparator), and the QWidgetAction
-    fallback I tried instead left the button with parent=None and the
-    menu bar collapsed to 4px tall when actually rendered -- not a
-    plausible-looking guess, an observed failure. This version uses only
-    patterns confirmed to render correctly: QPushButton.setMenu() for the
-    one real dropdown, plain QPushButtons in a normal QHBoxLayout for
-    everything else. It reads as a native-style menu bar (dark strip,
-    dropdown, click targets) without depending on QMenuBar's widget-
-    hosting, which doesn't work for this use case.
+    FIX (this round): the bar was a hard 40px with KPI chips squeezed into
+    the same 2px spacing as the tab buttons -- too cramped next to the JSX
+    reference. Now 56px tall, and the three KPI chips get their own
+    sub-layout with real spacing (8px) and larger type, independent of
+    the tighter spacing the tab row still uses (the tab row SHOULD stay
+    tight -- that's correct in the reference too, it's specifically the
+    chips that were under-spaced).
+
+    FIX (earlier round, still documented here): the first version of this
+    used a real QMenuBar with QMenuBar.addWidget() to host the tab
+    buttons -- addWidget() doesn't actually exist on QMenuBar (confirmed
+    directly: dir(QMenuBar) only has addAction/addActions/addMenu/
+    addSeparator), and the QWidgetAction fallback I tried instead left
+    the button with parent=None and the menu bar collapsed to 4px tall
+    when actually rendered -- not a plausible-looking guess, an observed
+    failure. This version uses only patterns confirmed to render
+    correctly: QPushButton.setMenu() for the one real dropdown, plain
+    QPushButtons in a normal QHBoxLayout for everything else.
     """
 
     def __init__(self, on_tab_changed, parent=None):
         super().__init__(parent)
         self.on_tab_changed = on_tab_changed
-        self.setFixedHeight(40)
+        self.setFixedHeight(56)
         self.setStyleSheet(f"background-color: {PANEL}; border-bottom: 1px solid {BORDER};")
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setContentsMargins(10, 6, 10, 6)
         layout.setSpacing(2)
 
         menu_qss = f"""
@@ -322,7 +377,7 @@ class TopNav(QFrame):
         app_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         app_btn.setStyleSheet(f"""
             QPushButton {{ background-color: transparent; color: {TEXT2}; border: none;
-                border-radius: 999px; padding: 6px 14px; font-size: 12px; font-weight: 600; }}
+                border-radius: 999px; padding: 8px 16px; font-size: 12.5px; font-weight: 600; }}
             QPushButton:hover {{ background-color: {PANEL2}; }}
             QPushButton::menu-indicator {{ image: none; }}
         """)
@@ -374,25 +429,33 @@ class TopNav(QFrame):
 
         layout.addStretch()
 
+        # KPI chips -- own sub-layout with real spacing, independent of
+        # the tighter 2px spacing the tab row above uses. Larger padding
+        # and type than before, to match the more breathable look in the
+        # JSX reference instead of reading as an afterthought crammed
+        # into the corner.
+        kpi_row = QHBoxLayout()
+        kpi_row.setSpacing(8)
         self.kpi_labels = {}
         for label, unit in (("Q", "t/h"), ("P", "kW"), ("v", "m/s")):
             chip = QFrame()
-            chip.setStyleSheet(f"background-color: {PANEL2}; border: 1px solid {BORDER}; border-radius: 5px;")
+            chip.setStyleSheet(f"background-color: {PANEL2}; border: 1px solid {BORDER}; border-radius: 7px;")
             chip_layout = QVBoxLayout(chip)
-            chip_layout.setContentsMargins(7, 2, 7, 2)
-            chip_layout.setSpacing(0)
+            chip_layout.setContentsMargins(12, 5, 12, 5)
+            chip_layout.setSpacing(1)
             lbl = QLabel(label.upper())
-            lbl.setStyleSheet(f"color: {MUTED}; font-size: 8px; font-weight: 600;")
+            lbl.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 600;")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             val = QLabel("—")
-            val.setStyleSheet(f"color: {TEXT3}; font-size: 12px; font-weight: 700;")
+            val.setStyleSheet(f"color: {TEXT3}; font-size: 15px; font-weight: 700;")
             val.setAlignment(Qt.AlignmentFlag.AlignCenter)
             unit_lbl = QLabel(unit)
-            unit_lbl.setStyleSheet(f"color: {MUTED}; font-size: 8px;")
+            unit_lbl.setStyleSheet(f"color: {MUTED}; font-size: 9px;")
             unit_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             chip_layout.addWidget(lbl); chip_layout.addWidget(val); chip_layout.addWidget(unit_lbl)
-            layout.addWidget(chip)
+            kpi_row.addWidget(chip)
             self.kpi_labels[label] = val
+        layout.addLayout(kpi_row)
 
     def _toggle_maximize(self):
         win = self.window()
@@ -416,13 +479,31 @@ class TopNav(QFrame):
         self.on_tab_changed(tab_id)
 
     def update_kpis(self, results):
+        """FIX: capacity color never changed to red when actual Q fell
+        under required -- this used to paint Q a fixed SUCCESS green
+        unconditionally, with no comparison against anything. The
+        backend already computes the real pass/fail (results["cap_ok"],
+        a straight Q >= Q_req check in calculations.py) -- reading that
+        existing field is correct per the architecture rule that the
+        frontend never duplicates engineering checks; a second client-
+        side >= comparison here could drift from the backend's own
+        margin handling. P and v don't have an equivalent required-vs-
+        actual concept in the backend (no P_req/v_req field exists) --
+        they keep their original fixed categorical colors, which were
+        never meant to be pass/fail indicators in the first place."""
         r = results or {}
         self.kpi_labels["Q"].setText(fmt_kpi(r.get("Q"), 0))
         self.kpi_labels["P"].setText(fmt_kpi(r.get("P_total"), 1))
         self.kpi_labels["v"].setText(fmt_kpi(r.get("v"), 2))
-        for key, color in (("Q", SUCCESS), ("P", WARNING), ("v", PRIMARY)):
-            if r.get({"Q": "Q", "P": "P_total", "v": "v"}[key]) is not None:
-                self.kpi_labels[key].setStyleSheet(f"color: {color}; font-size: 12px; font-weight: 700;")
+
+        if r.get("Q") is not None:
+            cap_ok = r.get("cap_ok")
+            q_color = SUCCESS if cap_ok else (DANGER if cap_ok is False else TEXT3)
+            self.kpi_labels["Q"].setStyleSheet(f"color: {q_color}; font-size: 15px; font-weight: 700;")
+        if r.get("P_total") is not None:
+            self.kpi_labels["P"].setStyleSheet(f"color: {WARNING}; font-size: 15px; font-weight: 700;")
+        if r.get("v") is not None:
+            self.kpi_labels["v"].setStyleSheet(f"color: {PRIMARY}; font-size: 15px; font-weight: 700;")
 
     def update_fail_badge(self, n_fail):
         base = TABS[4]["label"]  # "Checks"
@@ -576,6 +657,14 @@ class ShellWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    # FIX: no explicit style meant Qt fell back to the native Windows
+    # style, which partially ignores QSS background-color on QPushButton
+    # (confirmed against 3 screenshots: tab pills had blue text but no
+    # filled background on a real Windows render, while the JSX reference
+    # and an earlier wider render both show a real solid pill). Fusion is
+    # Qt's own cross-platform style and reliably honors stylesheets the
+    # way every QSS rule in this codebase assumes it will.
+    app.setStyle("Fusion")
     window = ShellWindow()
     window.run_calculation()
     window.show()

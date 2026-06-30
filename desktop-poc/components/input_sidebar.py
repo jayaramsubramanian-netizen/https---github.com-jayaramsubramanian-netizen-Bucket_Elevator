@@ -2,40 +2,26 @@
 components/input_sidebar.py -- PySide6 port of InputSidebar.jsx
 ═══════════════════════════════════════════════════════════════════════════
 Started, not complete -- InputSidebar.jsx is ~2,500 lines covering 11
-sections. This round goes deeper on the 2 sections already started
-(Process Design, Head & Tail Pulley) rather than spreading wider, per
-direct feedback comparing this against the real rendering.
+sections. This round adds the material-temperature null advisory to
+Process Design: when the selected material has no typical/CEMA-sourced
+temperature on file (temp_max is None -- true for all 80 static-list
+fallback materials right now, and for any DB material not yet enriched
+with CEMA 375/550 data), the UI says so honestly and prompts the user to
+enter a value based on their own process conditions, rather than silently
+implying 20°C ambient is a real default for that material. When temp_max
+IS known, it's shown as a labeled reference value next to the editable
+field -- not auto-applied, the user's typed value always wins.
 
-Changes this round:
-    - CEMA reference removed from the sidebar's leaf rows entirely --
-      it now appears exactly once per section, in that section's own
-      modal header, matching how the JSX actually uses it (not repeated
-      on every line of the summary list).
-    - Process Design modal expanded to two columns: the original fields
-      stay on the left; Material Database Search (a real, live search
-      against /materials/search, not a static list) and the Custom/
-      Override Properties block (OverridableField equivalents, showing
-      real DB defaults pulled from results.mat_db_defaults) on the right.
-    - The Dynamic Fill Advisory is now the real visual the JSX has -- a
-      stat row plus a custom-painted horizontal range bar with a
-      recommended-value tick and a current-value dot -- not plain text.
-    - Head & Tail Pulley modal gained the "Wrap Angle Adequate" status
-      card (green/amber depending on results.wrap_recommendation),
-      the head:boot diameter ratio check, and the boot-pulley toggle now
-      reads as a real toggle control with a "Boot locked to head" message
-      when active, matching the real rendering.
-
-Deliberate reorganization, not a faithful copy: the real JSX currently
-has "Head Shaft Bearing" and "Pulley Shell Thickness" living inside
-PulleyEdit. Per direct feedback, those conceptually belong with Shaft
-Design, not Pulley -- they are NOT included here, and will land in the
-Shaft Design modal when that gets built, not be reproduced here just
-because that's where they happen to sit in the original.
+Everything else below is unchanged from the prior round (CEMA reference
+trimmed to once per modal header; Material Database Search + Custom/
+Override Properties in Process Design; Dynamic Fill Advisory; Wrap Angle
+Adequate card; Belt/Chain Selection and Bucket Selection built and
+reordered ahead of Pulley/Shaft per the engineering-flow discussion;
+Shaft Design's 2x2 grid with Boot Shaft/Boot Bearing quadrants).
 
 Still not ported at all (still in the summary-only list, named
-explicitly): Belt/Chain Selection, Bucket Selection, Take-Up Selection,
-Shaft Design, Discharge Section, Feed Design, Casing Design, Service
-Conditions, Power Transmission.
+explicitly): Take-Up Selection, Discharge Section, Feed Design, Casing
+Design, Service Conditions, Power Transmission.
 
 This widget owns no fetch logic of its own for the main calculation --
 it emits inputsChanged(dict) and main.py's run_calculation() does the
@@ -681,7 +667,22 @@ class ProcessEditDialog(QDialog):
     section was missing entirely: LEFT keeps drive type / Q_req / H_m /
     fill% / the real Dynamic Fill Advisory visual; RIGHT adds the live
     Material Database Search and the Custom/Override Properties block
-    (real DB defaults from results.mat_db_defaults, not sentinels)."""
+    (real DB defaults from results.mat_db_defaults, not sentinels).
+
+    NEW this round: Material Temperature now carries a live advisory
+    showing the database's typical/CEMA-sourced max temperature for the
+    selected material, when one exists (temp_max field, part of
+    mat_db_defaults since mat_db_defaults = dict(get_material(...)) on
+    the backend -- confirmed directly, no extra API call needed). All 80
+    static fallback-list materials currently return temp_max = None
+    (confirmed in materials_lookup.py) -- CEMA 375/550 per-material
+    temperature data isn't integrated yet, this is real, not a display
+    bug. When it's None, the advisory says so honestly and prompts the
+    user to enter a value themselves based on their own process
+    conditions, rather than silently treating the 20°C starting value as
+    if it meant something for that material. The advisory is purely
+    informational -- it never overwrites whatever the user has typed
+    into the field above it."""
 
     def __init__(self, inputs, results, parent=None):
         super().__init__(parent)
@@ -725,6 +726,16 @@ class ProcessEditDialog(QDialog):
             note="20°C = ambient. Drives belt-vs-chain guidance below — set this for hot "
                  "materials (cement 80-120°C, clinker 150-300°C) before deciding drive type."
         ))
+
+        # ── Temperature advisory -- separate from the note above, which
+        # is static guidance text. This is dynamic: it reflects the
+        # actual database value for whichever material is currently
+        # selected, and updates live in _on_material_selected() below.
+        self.temp_advisory = QLabel()
+        self.temp_advisory.setWordWrap(True)
+        left.addWidget(self.temp_advisory)
+        db_init = self.results.get("mat_db_defaults") or {}
+        self._update_temp_advisory(db_init.get("temp_max"), db_init.get("name"))
 
         # ── Design Guidance -- the actual point of this round: material
         # temperature and character now advise drive type and discharge
@@ -845,6 +856,33 @@ class ProcessEditDialog(QDialog):
         layout.addWidget(scroll)
         layout.addWidget(modal_footer(self))
 
+    def _update_temp_advisory(self, temp_max, material_name=None):
+        """Refresh the temperature advisory line.
+
+        Honest either way: when the database has a real typical/CEMA-
+        sourced value for the selected material, show it as a labeled
+        reference (not auto-applied -- the field above always keeps
+        whatever the user typed). When it doesn't (None -- true for
+        every static fallback-list material right now, and for any DB
+        material not yet enriched with CEMA 375/550 data), say so
+        plainly and ask the user to enter a value themselves rather than
+        letting the unlabeled 20°C starting value imply a default that
+        doesn't actually exist for that material."""
+        name = material_name or "this material"
+        if temp_max is not None:
+            self.temp_advisory.setText(
+                f"ℹ Typical max on file for {name}: {fmt(temp_max, 0)}°C. "
+                f"Adjust the field above if your process conditions differ."
+            )
+            self.temp_advisory.setStyleSheet(f"color: {TEXT3}; font-size: 9.5px;")
+        else:
+            self.temp_advisory.setText(
+                f"⚠ No typical temperature on file for {name} — CEMA 375/550 per-material "
+                f"temperature data isn't integrated yet. Enter a value above based on your "
+                f"actual process conditions."
+            )
+            self.temp_advisory.setStyleSheet(f"color: {WARNING}; font-size: 9.5px;")
+
     def _rebuild_advisory(self):
         while self.advisory_box.count():
             item = self.advisory_box.takeAt(0)
@@ -940,6 +978,12 @@ class ProcessEditDialog(QDialog):
             self.ov_flow.update_db_value(mat.get("flowability"))
             self.ov_moisture.update_db_value(mat.get("moisture_pct"))
             self.ov_cohesion.update_db_value(mat.get("cohesion"))
+            # NEW: keep the temperature advisory in sync with whichever
+            # material is now selected, same trigger point as the
+            # override fields above -- one place this gets refreshed,
+            # not a second parallel code path that could drift out of
+            # sync with it.
+            self._update_temp_advisory(mat.get("temp_max"), mat.get("name"))
 
     def _set_drive_type(self, value, restyle_only=False):
         if not restyle_only:

@@ -135,12 +135,36 @@ def _row_to_be(row: dict) -> dict:
 
 @lru_cache(maxsize=1)
 def _get_connection():
-    """Cached read-only SQLite connection."""
+    """Cached read-only SQLite connection.
+
+    FIX (regression found while building the InputSidebar material search
+    widget): a separate, unrelated round created a unified `materials`
+    table (vectrix_tables.py, for the cross-module catalog work) in this
+    same database file -- the table now genuinely EXISTS, just with 0 rows,
+    since populating it with real data was explicitly left as a follow-up
+    task, not done yet. Every caller below already has a correct "con is
+    None -> use the static list" fallback, written for the case where the
+    table doesn't exist at all -- but a table that exists and returns zero
+    matching rows raises no exception, so that fallback never triggered.
+    Confirmed directly (not assumed): table exists, row count 0, calling
+    /materials/search returned [] instead of falling back. Checking row
+    count once here, in the one place a connection gets created, fixes
+    every caller in this file at once rather than patching each function
+    that calls _get_connection() separately.
+    """
     if not _DB_PATH:
         return None
     con = sqlite3.connect(f"file:{_DB_PATH}?mode=ro", uri=True,
                           check_same_thread=False)
     con.row_factory = sqlite3.Row
+    try:
+        count = con.execute("SELECT count(*) FROM materials").fetchone()[0]
+        if count == 0:
+            con.close()
+            return None
+    except Exception:
+        con.close()
+        return None
     return con
 
 

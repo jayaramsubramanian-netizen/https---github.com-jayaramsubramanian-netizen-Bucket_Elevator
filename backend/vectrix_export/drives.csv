@@ -1,0 +1,38 @@
+id,model,type,Pkw_max,Vrated,Irated,overload_pct,control,ip,features,note,custom
+1,VFD-0.75-PN,VFD,0.75,400.0,2.2,150.0,V/f,IP20,"Panel-mount, built-in EMC filter","0.75 kW VFD — feeder/dosing, variable flow",0
+2,VFD-1.5-PN,VFD,1.5,400.0,4.0,150.0,V/f,IP20,"Auto-boost, PID, Modbus RTU",1.5 kW panel VFD,0
+3,VFD-2.2-PN,VFD,2.2,400.0,5.8,150.0,V/f,IP20,Built-in braking chopper,2.2 kW VFD,0
+4,VFD-4.0-PN,VFD,4.0,400.0,10.0,150.0,V/f,IP20,"Flux vector, STO safety input",4.0 kW — light conveyors,0
+5,VFD-7.5-PN,VFD,7.5,400.0,18.5,150.0,V/f,IP20,"Dynamic braking, 2xAI, 4xDI, Modbus",7.5 kW VFD,0
+6,VFD-11-PN,VFD,11.0,400.0,26.0,150.0,V/f / FOC,IP20,"Sensorless vector, STO, Profibus option",11 kW — standard screw conveyor,0
+7,VFD-15-PN,VFD,15.0,400.0,34.0,150.0,V/f / FOC,IP20,"Flying restart, auto-tune, ATEX option",15 kW VFD,0
+8,VFD-22-PN,VFD,22.0,400.0,49.0,150.0,FOC,IP20,"Closed-loop FOC, EtherNet/IP option",22 kW — mixer/dryer variable speed,0
+9,VFD-30-PN,VFD,30.0,400.0,65.0,150.0,FOC,IP20,"Safe torque-off SIL2, full fieldbus suite",30 kW VFD,0
+10,VFD-45-PN,VFD,45.0,400.0,96.0,150.0,FOC,IP20,"DC link choke, EMC class C2",45 kW VFD,0
+11,VFD-55-PN,VFD,55.0,400.0,116.0,150.0,FOC,IP20,"Active front end option, regen",55 kW — large conveyor/compactor,0
+12,VFD-75-PN,VFD,75.0,400.0,157.0,150.0,FOC,IP20,"Motor thermistor input, torque limit",75 kW VFD,0
+13,VFD-90-PN,VFD,90.0,400.0,188.0,150.0,DTC,IP20,"Direct torque control, fast response",90 kW — reactor/mixer precise torque,0
+14,VFD-110-PN,VFD,110.0,400.0,230.0,150.0,DTC,IP20,"DTC, active load sharing",110 kW VFD,0
+15,VFD-132-PN,VFD,132.0,400.0,273.0,150.0,DTC,IP20,Regenerative braking unit option,132 kW VFD,0
+16,VFD-160-PN,VFD,160.0,400.0,330.0,150.0,DTC,IP21,Liquid cooling option available,160 kW — large industrial,0
+17,VFD-200-PN,VFD,200.0,400.0,412.0,150.0,DTC,IP21,"12-pulse input option, harmonic filter",200 kW VFD,0
+18,VFD-250-PN,VFD,250.0,400.0,500.0,150.0,DTC,IP21,Encoder feedback option for positioning,250 kW VFD,0
+19,VFD-315-PN,VFD,315.0,400.0,630.0,150.0,DTC,IP21,"Active front end, unity PF, regen",315 kW — heavy drive,0
+20,VFD-4.0-IP66,VFD,4.0,400.0,10.0,150.0,V/f,IP66,"Wash-down rated, field mount, Modbus",4.0 kW IP66 — outdoor / dusty environments,0
+21,VFD-11-IP66,VFD,11.0,400.0,26.0,150.0,FOC,IP66,"Bypass switch, IP66, ATEX option",11 kW IP66 field-mount VFD,0
+22,VFD-30-IP66,VFD,30.0,400.0,65.0,150.0,FOC,IP66,"IP66 enclosed, EMC filter integral",30 kW IP66 field VFD,0
+23,SS-7.5,SS,7.5,400.0,17.0,400.0,Voltage ramp,IP20,"Ramp-up/down, current limit, bypass relay","7.5 kW soft-starter — reduces inrush, no speed control",0
+24,SS-15,SS,15.0,400.0,32.0,400.0,Voltage ramp,IP20,"Torque control ramp, pump stop, Modbus",15 kW soft-starter,0
+25,SS-30,SS,30.0,400.0,65.0,400.0,Voltage ramp,IP20,"Phase loss, thermistor, bypass contactor",30 kW soft-starter,0
+26,SS-55,SS,55.0,400.0,116.0,400.0,Voltage ramp,IP20,"Load monitoring, energy saving mode","55 kW soft-starter — large conveyors, cost effective",0
+27,SS-110,SS,110.0,400.0,230.0,400.0,Voltage ramp,IP20,"Bypass SCR at full speed, integral bypass",110 kW soft-starter,0
+28,SS-160,SS,160.0,400.0,330.0,400.0,Voltage ramp,IP20,"Full digital, remote diagnostics",160 kW soft-starter,0
+29,SS-250,SS,250.0,400.0,500.0,400.0,Voltage ramp,IP20,"6-pulse or 12-pulse supply, bypass option",250 kW soft-starter,0
+30,DOL-0.75,DOL,0.75,400.0,2.2,600.0,None,IP20,Contactor + bimetal OL relay,"Direct-on-line — full voltage start, 6× inrush",0
+31,DOL-4.0,DOL,4.0,400.0,10.0,600.0,None,IP20,Contactor + electronic OL,DOL 4 kW — small feeders/conveyors,0
+32,DOL-11,DOL,11.0,400.0,26.0,600.0,None,IP20,Contactor + motor protection relay,DOL 11 kW — max typical DOL size (UK),0
+33,SD-15,SD,15.0,400.0,34.0,200.0,Star-Delta,IP20,"Reduces start current to ~33%, 2× delay",Star-delta 15 kW — transition shock at switch-over,0
+34,SD-30,SD,30.0,400.0,65.0,200.0,Star-Delta,IP20,"Star-delta with timer, OL relay",Star-delta 30 kW — common on process plants,0
+35,SD-55,SD,55.0,400.0,116.0,200.0,Star-Delta,IP20,Closed transition option (no torque dip),Star-delta 55 kW,0
+36,SD-75,SD,75.0,400.0,157.0,200.0,Star-Delta,IP20,"Electronic OL, thermistor, star-delta",Star-delta 75 kW — large motor starting,0
+37,SD-110,SD,110.0,400.0,230.0,200.0,Star-Delta,IP20,"Closed transition, reduced torque shock",Star-delta 110 kW,0

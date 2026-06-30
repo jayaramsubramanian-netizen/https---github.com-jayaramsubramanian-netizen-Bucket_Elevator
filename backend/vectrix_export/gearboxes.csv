@@ -1,0 +1,37 @@
+id,model,type,stages,Tn,Pkw,ratio_min,ratio_max,eta,mount,ip,temp_max,mass_kg,note,custom
+1,W-063,W,1,120.0,0.37,7.5,100.0,72.0,F/B,IP55,80.0,4.0,"Worm 63 mm — compact, self-locking above 40:1",0
+2,W-075,W,1,200.0,0.75,7.5,100.0,74.0,F/B,IP55,80.0,6.0,Worm 75 mm centre distance,0
+3,W-090,W,1,400.0,1.5,7.5,100.0,76.0,F/B,IP55,80.0,10.0,Worm 90 mm — light conveyor/feeder,0
+4,W-110,W,1,800.0,3.0,7.5,100.0,78.0,F/B,IP55,80.0,18.0,Worm 110 mm,0
+5,W-130,W,1,1500.0,5.5,7.5,100.0,80.0,F/B,IP55,80.0,28.0,Worm 130 mm — mid-range screw conveyors,0
+6,W-150,W,1,2500.0,7.5,7.5,100.0,81.0,F/B,IP55,80.0,42.0,Worm 150 mm,0
+7,W-2S-110,W,2,3000.0,4.0,100.0,3600.0,60.0,F/B,IP55,80.0,32.0,"Double-worm 2-stage — very high ratio, low output speed",0
+8,HW-F37,HW,2,1200.0,2.2,15.0,300.0,84.0,F/B/C,IP65,100.0,16.0,Helical-worm 37 frame — common light-duty screw drive,0
+9,HW-F47,HW,2,2500.0,4.0,15.0,300.0,85.0,F/B/C,IP65,100.0,24.0,Helical-worm 47 frame,0
+10,HW-F57,HW,2,5000.0,7.5,15.0,300.0,86.0,F/B/C,IP65,100.0,38.0,Helical-worm 57 frame — versatile screw conveyor,0
+11,HW-F67,HW,2,8000.0,11.0,15.0,300.0,87.0,F/B/C,IP65,100.0,55.0,Helical-worm 67 frame,0
+12,HW-F77,HW,2,15000.0,18.5,15.0,300.0,88.0,F/B/C,IP65,100.0,80.0,Helical-worm 77 frame — medium duty,0
+13,HW-F87,HW,2,30000.0,30.0,15.0,300.0,88.0,F/B/C,IP65,100.0,130.0,Helical-worm 87 frame — heavy duty conveyors,0
+14,HW-F97,HW,2,50000.0,45.0,15.0,300.0,89.0,F/B/C,IP65,100.0,200.0,Helical-worm 97 frame,0
+15,HF-2S-R07,HF,2,1400.0,3.0,3.6,63.0,97.0,F/B,IP65,100.0,18.0,2-stage helical inline R07 — high efficiency,0
+16,HF-2S-R17,HF,2,3000.0,5.5,3.6,63.0,97.0,F/B,IP65,100.0,30.0,2-stage helical R17,0
+17,HF-2S-R27,HF,2,6000.0,11.0,3.6,63.0,97.0,F/B,IP65,100.0,50.0,2-stage helical R27,0
+18,HF-3S-R37,HF,3,14000.0,18.5,10.0,400.0,96.0,F/B,IP65,100.0,85.0,3-stage helical R37 — heavy conveyor inline,0
+19,HF-3S-R47,HF,3,30000.0,37.0,10.0,400.0,96.0,F/B,IP65,100.0,160.0,3-stage helical R47,0
+20,HF-3S-R57,HF,3,60000.0,75.0,10.0,400.0,96.0,F/B,IP65,100.0,290.0,3-stage helical R57,0
+21,HF-3S-R77,HF,3,120000.0,132.0,10.0,400.0,95.0,F/B,IP65,100.0,550.0,3-stage helical R77 — large capacity,0
+22,HF-3S-R97,HF,3,240000.0,250.0,10.0,400.0,95.0,F/B,IP65,100.0,1100.0,3-stage helical R97 — heavy industrial,0
+23,HB-2S-K07,HB,2,2000.0,3.0,5.0,100.0,96.0,F/B/C,IP65,100.0,22.0,"Helical-bevel K07 — 90° output, compact end-drive",0
+24,HB-2S-K17,HB,2,4500.0,7.5,5.0,100.0,96.0,F/B/C,IP65,100.0,40.0,Helical-bevel K17,0
+25,HB-3S-K27,HB,3,9000.0,15.0,12.5,630.0,95.0,F/B/C,IP65,100.0,70.0,"Helical-bevel K27 — 3-stage, standard screw conveyor",0
+26,HB-3S-K37,HB,3,18000.0,22.0,12.5,630.0,95.0,F/B/C,IP65,100.0,120.0,Helical-bevel K37 — heavy conveyors and mixers,0
+27,HB-3S-K47,HB,3,36000.0,45.0,12.5,630.0,95.0,F/B/C,IP65,100.0,210.0,Helical-bevel K47,0
+28,HB-3S-K57,HB,3,72000.0,90.0,12.5,630.0,94.0,F/B/C,IP65,100.0,390.0,Helical-bevel K57 — heavy industrial,0
+29,HB-3S-K67,HB,3,140000.0,160.0,12.5,630.0,94.0,F/B/C,IP65,100.0,720.0,Helical-bevel K67,0
+30,HB-4S-K87,HB,4,280000.0,280.0,45.0,5000.0,93.0,F/B,IP65,100.0,1500.0,Helical-bevel K87 4-stage — very high torque,0
+31,PL-P002,PL,1,2000.0,5.5,3.15,9.0,98.0,F/C,IP65,100.0,12.0,"1-stage planetary — low ratio, high speed",0
+32,PL-P004,PL,1,5000.0,11.0,3.15,9.0,98.0,F/C,IP65,100.0,22.0,1-stage planetary P004,0
+33,PL-P009,PL,2,12000.0,22.0,9.0,100.0,97.0,F/C,IP65,100.0,45.0,2-stage planetary — good for variable speed VFD,0
+34,PL-P016,PL,2,28000.0,45.0,9.0,100.0,97.0,F/C,IP65,100.0,85.0,2-stage planetary P016 — mixer/compactor duty,0
+35,PL-P025,PL,2,56000.0,90.0,9.0,100.0,97.0,F/C,IP65,100.0,170.0,2-stage planetary P025,0
+36,PL-P040,PL,3,120000.0,160.0,25.0,1000.0,96.0,F/C,IP65,100.0,360.0,3-stage planetary — maximum torque density,0
