@@ -33,8 +33,8 @@ meaningfully brighter) at 11px instead, reserving TEXT3/MUTED for short,
 truly secondary meta text only.
 """
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton, QComboBox
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPalette, QColor
+from PySide6.QtCore import Qt, QRectF
+from PySide6.QtGui import QPalette, QColor, QPainter, QBrush, QPen, QFont
 
 from theme import BG, PANEL, PANEL2, BORDER, TEXT, TEXT2, TEXT3, MUTED, PRIMARY, SUCCESS, WARNING, DANGER
 from api_client import fetch_components
@@ -437,3 +437,84 @@ class ComponentPickerWidget(QWidget):
 
     def value(self):
         return self.combo.currentData()
+
+
+class KPIChip(QWidget):
+    """One performance-indicator-style chip -- single bordered box, no
+    nested box-in-a-box. A small label sits in the top-left corner, a
+    small unit in the bottom-right corner, and the value fills the rest
+    of the box, large and centered. Originally built for TopNav's Q/P/v
+    chips (main.py) -- moved here so any panel needing the same visual
+    language (e.g. maintenance_panel.py's interval/life badges) can reuse
+    the exact same widget instead of a second hand-rolled version that
+    could drift out of sync.
+
+    Drawn directly with QPainter rather than QSS-styled QLabels --
+    confirmed during the original build that QSS `font-weight: 700` on a
+    font with no real bold variant can force Qt to synthesize bold by
+    drawing the glyph outline twice with a slight offset, which read as
+    smeared/doubled at small sizes on a real Windows render. QFont's
+    real Weight.Bold sidesteps that mechanism entirely.
+    """
+
+    def __init__(self, label, unit, parent=None, value_pixel_size=24, min_size=(80, 56)):
+        super().__init__(parent)
+        self.label_text = (label or "").upper()
+        self.unit_text = unit or ""
+        self.value_text = "—"
+        self.accent_color = QColor(TEXT3)
+        self.value_pixel_size = value_pixel_size
+        self.setMinimumSize(*min_size)
+
+    def set_value(self, text, color_hex):
+        self.value_text = text
+        self.accent_color = QColor(color_hex)
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        w, h = self.width(), self.height()
+
+        p.setPen(QPen(self.accent_color, 1.4))
+        p.setBrush(QBrush(QColor(PANEL2)))
+        p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), 8, 8)
+
+        margin = 7
+
+        if self.label_text:
+            label_font = QFont()
+            label_font.setPixelSize(9)
+            label_font.setWeight(QFont.Weight.DemiBold)
+            p.setFont(label_font)
+            p.setPen(QColor(TEXT2))
+            p.drawText(
+                QRectF(margin, margin - 1, w - 2 * margin, 12),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                self.label_text,
+            )
+
+        if self.unit_text:
+            unit_font = QFont()
+            unit_font.setPixelSize(9)
+            unit_font.setWeight(QFont.Weight.DemiBold)
+            p.setFont(unit_font)
+            p.setPen(QColor(TEXT2))
+            p.drawText(
+                QRectF(margin, h - margin - 11, w - 2 * margin, 12),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                self.unit_text,
+            )
+
+        value_font = QFont()
+        value_font.setPixelSize(self.value_pixel_size)
+        value_font.setWeight(QFont.Weight.Bold)
+        p.setFont(value_font)
+        p.setPen(self.accent_color)
+        p.drawText(
+            QRectF(0, 0, w, h),
+            Qt.AlignmentFlag.AlignCenter,
+            self.value_text,
+        )
+        p.end()

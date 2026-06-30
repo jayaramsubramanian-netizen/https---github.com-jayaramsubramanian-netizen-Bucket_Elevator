@@ -27,22 +27,27 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFrame, QStackedWidget, QMenu, QSplitter,
 )
-from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import QAction, QPainter, QColor, QBrush, QPen, QFont
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction
 
 from theme import (
     BG, PANEL, PANEL2, BORDER, TEXT, TEXT2, TEXT3, MUTED, PRIMARY,
     SUCCESS, WARNING, DANGER, BRAND_RED,
 )
 from api_client import fetch_design
-from components import ElevationView, EquipmentTreePanel, InputSidebarPanel
+from components.dialog_helpers import KPIChip
+from components import (
+    ElevationView, EquipmentTreePanel, InputSidebarPanel, StatusPanel, OptimizerPanel,
+    BomPanel, StatusDesignLeaves, MaintenancePanel, ChecksPanel, DesignReviewPanel,
+)
 
 TABS = [
     {"id": "design",     "label": "Results"},
     {"id": "optimizer",  "label": "Optimizer", "badge": "AI"},
-    {"id": "components", "label": "Components"},
-    {"id": "materials",  "label": "Materials"},
     {"id": "checks",     "label": "Checks", "failBadge": True},
+    {"id": "components", "label": "Components"},
+    {"id": "maintenance","label": "Maintenance"},
+    {"id": "materials",  "label": "Materials"},
 ]
 
 TAB_PILL_HEIGHT = 34
@@ -288,94 +293,6 @@ class NavTabButton(QPushButton):
             """)
 
 
-class KPIChip(QWidget):
-    """One performance indicator (Q / P / v) -- single bordered box, no
-    nested box-in-a-box. The label (e.g. "Q") sits as a small mark in the
-    top-left corner, the unit (e.g. "t/h") as a small mark in the
-    bottom-right corner, and the value fills the rest of the box, large
-    and centered -- exactly the layout asked for, corner labels acting
-    as superscript/subscript reference points around one real value.
-
-    FIX (4th attempt at this -- a real Windows screenshot showed the
-    digits themselves rendering garbled/doubled, not just small): the
-    likely cause was never spacing or color, it was font rendering --
-    QLabel's QSS `font-weight: 700` on a font with no real bold variant
-    forces Qt to synthesize bold by drawing the glyph outline twice with
-    a slight offset, which can look smeared or doubled at small pixel
-    sizes, especially under Fusion's text rendering path on Windows.
-    Rather than keep guessing at QSS properties, this draws everything
-    directly with QPainter -- the same proven approach already used for
-    DynamicFillBarWidget elsewhere in this app -- with an explicit QFont
-    or Weight.Bold (Qt's real bold mechanism, not a CSS string Qt has to
-    interpret and possibly synthesize), removing the QSS/QLabel layer
-    that was the actual suspect, not just removing visual clutter.
-    """
-
-    def __init__(self, label, unit, parent=None):
-        super().__init__(parent)
-        self.label_text = label.upper()
-        self.unit_text = unit
-        self.value_text = "—"
-        self.accent_color = QColor(TEXT3)
-        self.setMinimumSize(80, 56)
-
-    def set_value(self, text, color_hex):
-        self.value_text = text
-        self.accent_color = QColor(color_hex)
-        self.update()
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-        w, h = self.width(), self.height()
-
-        # Single box -- border tinted by status, no second nested frame.
-        p.setPen(QPen(self.accent_color, 1.4))
-        p.setBrush(QBrush(QColor(PANEL2)))
-        p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), 8, 8)
-
-        margin = 7
-
-        # Label -- top-left corner.
-        label_font = QFont()
-        label_font.setPixelSize(9)
-        label_font.setWeight(QFont.Weight.DemiBold)
-        p.setFont(label_font)
-        p.setPen(QColor(TEXT2))
-        p.drawText(
-            QRectF(margin, margin - 1, w - 2 * margin, 12),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            self.label_text,
-        )
-
-        # Unit -- bottom-right corner.
-        unit_font = QFont()
-        unit_font.setPixelSize(9)
-        unit_font.setWeight(QFont.Weight.DemiBold)
-        p.setFont(unit_font)
-        p.setPen(QColor(TEXT2))
-        p.drawText(
-            QRectF(margin, h - margin - 11, w - 2 * margin, 12),
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-            self.unit_text,
-        )
-
-        # Value -- fills the box, large and centered. Qt's real
-        # Weight.Bold, not a QSS string Qt has to interpret.
-        value_font = QFont()
-        value_font.setPixelSize(24)
-        value_font.setWeight(QFont.Weight.Bold)
-        p.setFont(value_font)
-        p.setPen(self.accent_color)
-        p.drawText(
-            QRectF(0, 0, w, h),
-            Qt.AlignmentFlag.AlignCenter,
-            self.value_text,
-        )
-        p.end()
-
-
 class TopNav(QFrame):
     """Page-level bar: a "Bucket Elevator" dropdown with standard window
     functions, the tab pills, plus Q/P/v KPI chips.
@@ -527,7 +444,7 @@ class TopNav(QFrame):
             self.kpi_chips["v"].set_value(fmt_kpi(r.get("v"), 2), PRIMARY)
 
     def update_fail_badge(self, n_fail):
-        base = TABS[4]["label"]
+        base = next(t["label"] for t in TABS if t["id"] == "checks")
         text = f"{base}  ·{n_fail}" if n_fail > 0 else base
         self.tab_buttons["checks"].setText(text)
         self.tab_buttons["checks"]._apply_style()
@@ -570,10 +487,15 @@ class ShellWindow(QMainWindow):
         self.middle_stack = QStackedWidget()
         self.elevation = ElevationView()
         self.middle_stack.addWidget(self.elevation)
-        self.middle_stack.addWidget(Placeholder("Optimizer", "OptimizerPanel.jsx"))
-        self.middle_stack.addWidget(Placeholder("Components", "ComponentPanel.jsx"))
+        self.optimizer_panel = OptimizerPanel(on_apply=self._on_optimizer_apply)
+        self.middle_stack.addWidget(self.optimizer_panel)
+        self.checks_panel = ChecksPanel(on_apply_correction=self._on_apply_correction)
+        self.middle_stack.addWidget(self.checks_panel)
+        self.bom_panel = BomPanel()
+        self.middle_stack.addWidget(self.bom_panel)
+        self.maintenance_panel = MaintenancePanel()
+        self.middle_stack.addWidget(self.maintenance_panel)
         self.middle_stack.addWidget(Placeholder("Materials", "MaterialLibraryPanel.jsx"))
-        self.middle_stack.addWidget(Placeholder("Checks", "ChecksPanel.jsx / RootCausePanel.jsx"))
         col3_layout.addWidget(self.middle_stack)
 
         col4 = QWidget()
@@ -581,7 +503,25 @@ class ShellWindow(QMainWindow):
         col4_layout.setContentsMargins(0, 0, 0, 0)
         col4_layout.setSpacing(0)
         col4_layout.addWidget(ColHeader("Status"))
-        col4_layout.addWidget(Placeholder("Design Review", "DesignReview.jsx / KpiGrid.jsx"))
+        # FIX (direct instruction, this round): Status content is tab-aware.
+        # KpiGrid (status_panel.py) for Results/Optimizer/Maintenance/
+        # Materials -- the universal prior default, only ever asked to
+        # diverge for specific tabs. StatusDesignLeaves for Components.
+        # DesignReviewPanel (this round, new) for Checks -- "add the
+        # Design Review elements from the jsx to the status section when
+        # in the checks tab."
+        self.status_stack = QStackedWidget()
+        self.status_panel = StatusPanel()
+        self.status_stack.addWidget(self.status_panel)          # index 0 -- KpiGrid
+        self.status_leaves = StatusDesignLeaves()
+        self.status_stack.addWidget(self.status_leaves)          # index 1 -- BOM design leaves
+        self.design_review_panel = DesignReviewPanel()
+        self.status_stack.addWidget(self.design_review_panel)    # index 2 -- Design Review
+        col4_layout.addWidget(self.status_stack)
+        self._status_view_for_tab = {
+            "design": 0, "optimizer": 0, "components": 1,
+            "maintenance": 0, "materials": 0, "checks": 2,
+        }
 
         body = QSplitter(Qt.Orientation.Horizontal)
         body.setStyleSheet(f"""
@@ -606,9 +546,9 @@ class ShellWindow(QMainWindow):
         outer.addWidget(body)
         self.setCentralWidget(container)
 
-        self._tab_index = {"design": 0, "optimizer": 1, "components": 2, "materials": 3, "checks": 4}
-        self._tab_label = {"design": "Results", "optimizer": "Optimizer", "components": "Components",
-                            "materials": "Materials", "checks": "Checks"}
+        self._tab_index = {"design": 0, "optimizer": 1, "checks": 2, "components": 3, "maintenance": 4, "materials": 5}
+        self._tab_label = {"design": "Results", "optimizer": "Optimizer", "checks": "Checks",
+                            "components": "Components", "maintenance": "Maintenance", "materials": "Materials"}
         self._last_results = {}
         self._default_payload = {
             "Q_req": 100, "H_m": 25, "mat_id": "clinker",
@@ -618,6 +558,7 @@ class ShellWindow(QMainWindow):
 
     def _on_tab_changed(self, tab_id):
         self.middle_stack.setCurrentIndex(self._tab_index[tab_id])
+        self.status_stack.setCurrentIndex(self._status_view_for_tab.get(tab_id, 0))
         action = fail_warn_badges(*self._fail_warn(self._last_results)) if tab_id == "design" else None
         new_header = ColHeader(self._tab_label[tab_id], action=action)
         self.col3_layout.replaceWidget(self.col3_header, new_header)
@@ -641,6 +582,13 @@ class ShellWindow(QMainWindow):
         self.elevation.set_data(payload, results)
         self.tree_panel.set_data(payload, results)
         self.input_sidebar.set_data(payload, results)
+        self.bom_panel.set_data(payload, results)
+        self.status_panel.set_data(payload, results)
+        self.status_leaves.set_data(payload, results)
+        self.maintenance_panel.set_data(payload, results)
+        self.checks_panel.set_data(payload, results)
+        self.design_review_panel.set_data(payload, results)
+        self.optimizer_panel.set_data(payload, results)
 
         n_fail, n_warn = self._fail_warn(results)
         self.top_nav.update_fail_badge(n_fail)
@@ -649,6 +597,36 @@ class ShellWindow(QMainWindow):
             self.col3_layout.replaceWidget(self.col3_header, new_header)
             self.col3_header.deleteLater()
             self.col3_header = new_header
+
+    def _on_optimizer_apply(self, variant):
+        """Mirrors useElevatorCalc.js's applyOptimizer() exactly (read
+        directly before writing this, not assumed): rpm -> n_rpm,
+        fill -> fill_pct, auto_bucket forced False, and the v2-only
+        fields (D_mm/boot_pulley_D_mm/chain_n_strands/sprocket teeth)
+        only merged in when present -- a belt-mode result has no chain
+        fields, and merging None over an existing value would clobber
+        it rather than leave it untouched, same as the JSX's own
+        `D_mm != null ? { D_mm } : {}` spread guards."""
+        payload = dict(self._default_payload)
+        payload["n_rpm"] = variant.get("rpm")
+        payload["bucket_id"] = variant.get("bucket_id")
+        payload["auto_bucket"] = False
+        payload["fill_pct"] = variant.get("fill")
+        for key in ("D_mm", "boot_pulley_D_mm", "chain_n_strands",
+                    "chain_sprocket_teeth", "chain_boot_sprocket_teeth"):
+            if variant.get(key) is not None:
+                payload[key] = variant[key]
+        self.run_calculation(payload)
+
+    def _on_apply_correction(self, param, value):
+        """Mirrors RootCausePanel.jsx's setField(param, target) -- a
+        single corrective param/value pair from a root-cause finding's
+        Apply button gets merged directly into the live payload and
+        recalculated, same pattern as _on_optimizer_apply just above but
+        for one field instead of a whole variant."""
+        payload = dict(self._default_payload)
+        payload[param] = value
+        self.run_calculation(payload)
 
     def _tab_index_of_current(self):
         idx = self.middle_stack.currentIndex()

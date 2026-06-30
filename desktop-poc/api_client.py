@@ -60,3 +60,35 @@ def fetch_components(path: str, params: dict | None = None) -> list:
         if isinstance(v, list):
             return v
     return []
+
+def optimize_elevator_v2(base_input: dict) -> dict:
+    """POST to /bucket-elevator/optimize/v2 -- mirrors OptimizerPanel.jsx's
+    optimizeElevatorV2(). Uses the /api compat path (not /api/v1), same as
+    fetch_design() -- confirmed directly in main.py: the /api/v1 route
+    returns the full CalcResponse{meta, data, warnings} envelope, while
+    /api has a compat shim (_compat_optimize_v2) that strips .data, giving
+    the bare {pareto_front, n_pareto_points, ...} dict this function
+    returns, matching every other API client function in this file. A
+    real NSGA-II run, confirmed directly to take ~3-30s depending on
+    population/generation budget (backend default pop_size=200/n_gen=100,
+    ~29s) -- timeout set well above the usual 15-30s used elsewhere in
+    this file, since a premature client-side timeout here would abort a
+    real in-progress optimization run, not just a slow request."""
+    resp = requests.post(f"{API_BASE}/bucket-elevator/optimize/v2", json={"base_input": base_input}, timeout=120)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def download_variant_report(candidates: list, inputs: dict, save_path: str) -> str:
+    """POST to /bucket-elevator/report-variants and save the returned PDF
+    to save_path. Mirrors OptimizerPanel.jsx's downloadVariantReport(),
+    adapted for a desktop save-to-disk instead of a browser download."""
+    resp = requests.post(
+        f"{API_BASE}/bucket-elevator/report-variants",
+        json={"candidates": candidates, "inputs": inputs},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    with open(save_path, "wb") as f:
+        f.write(resp.content)
+    return save_path

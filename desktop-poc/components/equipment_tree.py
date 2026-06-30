@@ -438,6 +438,24 @@ class EquipmentTreePanel(QWidget):
         add_leaf(power, "Total Power",
                  f"{fmt(r.get('P_total'), 2)} kW  ·  margin {('+' + fmt(r.get('motor_margin_pct'), 1) + '%') if r.get('motor_margin_pct') is not None else '—'}",
                  "none")
+        # Startup dynamics tied to drive_start_type (Power Transmission's
+        # newest real field) -- shock_check is tagged subsystem="belt" in
+        # the backend (a genuine categorization, not an error: shock load
+        # is a belt-tension concern), so node_status(checks, "power")
+        # never catches it. Status read directly from the structured
+        # result instead, same pattern power_edit.py already uses.
+        sd = r.get("startup_dynamic") or {}
+        sc = r.get("shock_check") or {}
+        if sd:
+            margin = sd.get("startup_margin")
+            st_startup = "fail" if (margin or 0) < 1.0 else ("warn" if (margin or 0) < 1.1 else "ok")
+            if sc and not sc.get("adequate_for_normal_shock"):
+                st_startup = "warn" if st_startup == "ok" else st_startup
+            add_leaf(power, "Startup Dynamics",
+                     f"{inp.get('drive_start_type','soft_start')}  ·  peak {fmt((sd.get('T_peak_governing') or 0) / 1000, 1)}kN  "
+                     f"·  margin {fmt(margin, 2)}",
+                     st_startup,
+                     extra_msg=sc.get("recommendation") if sc and not sc.get("adequate_for_normal_shock") else None)
 
         service = add_section(None, "SERVICE CONDITIONS", s_atex["status"])
         add_leaf(service, "Environment", f"{inp.get('environment','dry')}  μ={inp.get('mu','—')}", "none")

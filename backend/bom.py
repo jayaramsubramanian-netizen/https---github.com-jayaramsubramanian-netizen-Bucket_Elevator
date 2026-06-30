@@ -296,6 +296,39 @@ def generate_bom(results: dict, inputs: dict) -> dict:
         "SHAFT",
         shaft_note)
 
+    # FIX: boot shaft was entirely absent from the BOM -- only the head
+    # shaft ever got a SHAFT-category line item, even though the boot
+    # shaft is a real, independently-sized component (results.boot_pulley.
+    # shaft -- d_mm, governed_by, d_deflect_mm, and since this session's
+    # boot_shaft_section/bore_ratio work, its own hollow/solid section
+    # too). No hub-connection line item for it (unlike the head shaft just
+    # above): confirmed directly in calculations.py the boot shaft is
+    # free-running with zero drive torque, so there's genuinely no keyway
+    # or weld to procure for it -- not an oversight, the head shaft's
+    # key/weld block intentionally has no boot-side equivalent.
+    _boot_pulley_r = r.get("boot_pulley") or {}
+    _boot_shaft_r = _boot_pulley_r.get("shaft") or {}
+    if _boot_shaft_r.get("d_mm") is not None:
+        _boot_d_m = float(_boot_shaft_r["d_mm"]) / 1000.0
+        _boot_span_m = float(_boot_shaft_r.get("span_mm") or span_m * 1000) / 1000.0
+        _boot_section = _boot_shaft_r.get("section", "solid")
+        _boot_d_inner_m = float(_boot_shaft_r.get("d_inner_mm") or 0) / 1000.0
+        _boot_shaft_mass = _steel_cyl_kg(_boot_d_m, _boot_d_inner_m, _boot_span_m * 1.25)
+        _boot_section_spec = (
+            f"Ø{_boot_shaft_r['d_mm']:.0f} (bore Ø{_boot_d_inner_m*1000:.0f}) × {_boot_span_m*1250:.0f} mm lg"
+            if _boot_section == "hollow"
+            else f"Ø{_boot_shaft_r['d_mm']:.0f} × {_boot_span_m*1250:.0f} mm lg"
+        )
+        add(f"Boot shaft ({_boot_section} section, free-running)",
+            1, "EA",
+            shaft_mat_label,
+            "CEMA 375 §4",
+            _boot_section_spec,
+            _boot_shaft_mass,
+            "SHAFT",
+            f"Governed by {_boot_shaft_r.get('governed_by','bending/deflection')} — "
+            f"no drive torque, no keyway required")
+
     # v1.9.9 — Hub connection: keyed gets the existing key spec line; welded
     # gets a weld throat spec line instead (no keyway when welded).
     if hub_connection == "welded" and weld_check:
@@ -467,17 +500,63 @@ def generate_bom(results: dict, inputs: dict) -> dict:
     # ══════════════════════════════════════════════════════════════════════════
     # TAKE-UP
     # ══════════════════════════════════════════════════════════════════════════
-    cw_frame_mass = cw_kg * 0.30   # frame ≈ 30% of ballast
-    add("Gravity take-up counterweight (ballast + frame)",
-        1, "SET",
-        "Cast iron / concrete ballast; S275 frame",
-        "CEMA 375 §4",
-        f"Total mass = {cw_kg:.0f} kg  "
-        f"(frame {cw_frame_mass:.0f} kg + ballast {cw_kg-cw_frame_mass:.0f} kg)",
-        cw_kg,
-        "TAKE-UP",
-        f"Travel = {round(float(tg.get('travel_m',0))*1000)} mm min; "
-        f"allow 20% headroom for field adjustment")
+    # FIX: this used to add a gravity counterweight line unconditionally,
+    # regardless of inp.takeup_type -- a procurement BOM for a screw or
+    # hydraulic take-up design would incorrectly list ballast/counterweight
+    # hardware that doesn't exist on that machine. Now branches on the real
+    # selection (with "auto" resolved via whichever of takeup_gravity/
+    # _screw/_hydraulic the backend itself marked primary=True for this
+    # design, same resolution logic the desktop's TakeupEditDialog already
+    # uses) and uses the real computed sizing fields for whichever type is
+    # actually selected -- no new physics, same read-only pattern as every
+    # other BOM line.
+    _takeup_type = (inp.get("takeup_type") or "gravity")
+    if _takeup_type == "auto":
+        _th_check = r.get("takeup_hydraulic") or {}
+        if tg.get("primary"):
+            _takeup_type = "gravity"
+        elif ts.get("primary"):
+            _takeup_type = "screw"
+        elif _th_check.get("primary"):
+            _takeup_type = "hydraulic"
+        else:
+            _takeup_type = "gravity"   # same default the rest of this module already assumes
+
+    if _takeup_type == "screw":
+        _screw_force_kN = float(ts.get("F_screw_N") or 0) / 1000.0
+        add(f"Screw take-up assembly — {ts.get('d_core_min_mm', '—')}mm core",
+            2, "SET",
+            "C45E threaded shank, S275 frame",
+            "CEMA 375 §4",
+            f"Core Ø{ts.get('d_core_min_mm','—')}mm  SF buckling={_f(ts.get('SF_buckling'))}  "
+            f"turns={_f(ts.get('turns_required'), 0)}",
+            float(ts.get("d_core_min_mm") or 50) * 0.18,   # rough mass scale, screw+frame hardware
+            "TAKE-UP",
+            f"Force = {_screw_force_kN:.1f} kN; one assembly per side (2 off)")
+    elif _takeup_type == "hydraulic":
+        _th = r.get("takeup_hydraulic") or {}
+        _cyl_force_kN = float(_th.get("F_cylinder_N") or 0) / 1000.0
+        add(f"Hydraulic take-up cylinder — {_th.get('d_bore_min_mm', '—')}mm bore",
+            1, "SET",
+            "Hydraulic cylinder + power unit (vendor-engineered)",
+            "Standard cylinder mechanics — not a CEMA-published method",
+            f"Bore Ø{_th.get('d_bore_min_mm','—')}mm  stroke={_th.get('stroke_mm','—')}mm  "
+            f"SF buckling={_f(_th.get('SF_buckling'))}",
+            float(_th.get("d_bore_min_mm") or 80) * 0.25,   # rough mass scale, cylinder hardware
+            "TAKE-UP",
+            f"Force = {_cyl_force_kN:.1f} kN; verify against actual cylinder manufacturer data")
+    else:
+        cw_frame_mass = cw_kg * 0.30   # frame ≈ 30% of ballast
+        add("Gravity take-up counterweight (ballast + frame)",
+            1, "SET",
+            "Cast iron / concrete ballast; S275 frame",
+            "CEMA 375 §4",
+            f"Total mass = {cw_kg:.0f} kg  "
+            f"(frame {cw_frame_mass:.0f} kg + ballast {cw_kg-cw_frame_mass:.0f} kg)",
+            cw_kg,
+            "TAKE-UP",
+            f"Travel = {round(float(tg.get('travel_m',0))*1000)} mm min; "
+            f"allow 20% headroom for field adjustment")
 
     # ══════════════════════════════════════════════════════════════════════════
     # CASING
@@ -537,6 +616,24 @@ def generate_bom(results: dict, inputs: dict) -> dict:
         bearing_mass,
         "BEARINGS",
         "SNL plummer block with labyrinth seal; grease-lubricated")
+
+    # FIX: boot shaft bearing was entirely absent -- only the head bearing
+    # ever got a BEARINGS line item, despite the boot bearing being a real,
+    # separately-procured component with its own computed L10 (results.
+    # boot_pulley.L10_boot_h) and, as of this session's optimizer fix, its
+    # own 20,000h floor enforced in the search engine -- a BOM omitting it
+    # would understate real procurement scope, not just display coverage.
+    if _boot_shaft_r.get("d_mm") is not None:
+        _boot_bearing_mass = 0.006 * (float(_boot_shaft_r["d_mm"]))**1.5
+        add("Boot shaft pillow block bearing assembly",
+            2, "EA",
+            "Chrome steel (GCr15)",
+            "ISO 281 / IS 3823",
+            f"Shaft Ø{_boot_shaft_r['d_mm']:.0f}mm  "
+            f"L10 = {float(_boot_pulley_r.get('L10_boot_h', 0)):,.0f}h at {n_rpm:.0f}rpm",
+            _boot_bearing_mass,
+            "BEARINGS",
+            "SNL plummer block with labyrinth seal; grease-lubricated")
 
     # ══════════════════════════════════════════════════════════════════════════
     # DISCHARGE CHUTE

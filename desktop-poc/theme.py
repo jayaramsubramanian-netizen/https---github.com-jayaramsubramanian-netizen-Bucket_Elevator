@@ -23,6 +23,10 @@ SUCCESS  = "#1fb86e"
 WARNING  = "#d98e00"
 DANGER   = "#e05252"
 NONE_C   = "#5a7a9a"
+# Discipline-tag colors for KpiGrid-style cards (Structural/Discharge) --
+# sampled directly from KpiGrid.jsx's own DISC object, not guessed.
+PURPLE   = "#a78bfa"
+TEAL     = "#14b8a6"
 # Sampled directly from the VECTRIX platform title bar image, not guessed.
 BRAND_RED = "#b5362f"
 

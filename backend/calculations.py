@@ -3064,6 +3064,24 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "chain_selected":   chain_selected,
         "sprocket":         sprocket,
         "boot_sprocket":    boot_sprocket,
+        # FIX (found while verifying this session's boot shaft/bearing BOM
+        # fix): these were also genuinely absent from this subset, the
+        # same allowlist-drift failure mode already flagged for the
+        # frontend's normaliseResult(). bom.py reads every one of these
+        # directly -- without them it was silently running on its own
+        # internal fallback defaults for head shaft material/hub-
+        # connection and casing fasteners, not just missing boot_pulley.
+        "boot_pulley":      boot_pulley_analysis,
+        "pulley_shell":     pulley_shell,
+        "casing_bolts":     casing_bolts,
+        "weld_check":       weld_check,
+        "key_check":        key,
+        "shaft_material":   _shaft_mat_id,
+        "shaft_material_name": _shaft_mat.get("name", _shaft_mat_id),
+        "shaft_section":    getattr(inp, "shaft_section", "solid") or "solid",
+        "shaft_hub_connection": _hub_connection,
+        "shaft_bore_ratio": gov.get("bore_ratio", 0.0),
+        "d_inner_mm":       gov.get("d_inner_mm", 0.0),
     }
     _inp_for_tier2 = {
         "Q_req":            inp.Q_req,

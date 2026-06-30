@@ -256,6 +256,20 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
     dc      = r.get("discharge_chute") or {}
     bucket  = r.get("bucket") or {}
     mat     = r.get("mat") or {}
+    # FIX (Jay: "make sure checks and design review backend and frontend
+    # code are updated to have all new components... boot pulley/shaft,
+    # take-up, shaft design, discharge, feed design, bucket styles, chain
+    # elements accounted for"): boot_pulley and chain_selected were never
+    # extracted here, so the boot bearing and chain SF/speed checks (both
+    # real, computed elsewhere in calculations.py -- confirmed directly,
+    # not assumed) had no corresponding root-cause finding at all.
+    bp        = r.get("boot_pulley") or {}
+    L10_boot  = _s(bp.get("L10_boot_h"))
+    R_boot    = _s(bp.get("R_boot_N"))
+    chain_sel = r.get("chain_selected") or {}
+    chain_SF_actual = _s(r.get("chain_SF_actual"))
+    chain_v_ok = r.get("chain_v_ok")
+    chain_sf_req = _s(inp.get("chain_sf"), 6.0)
 
     # ── Extract input values ──────────────────────────────────────────────────
     Q_req     = _s(inp.get("Q_req"), 100)
@@ -613,7 +627,7 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                 f"(next standard commercial bar size above {d_need:.0f} mm with 5% margin)."))
 
         # ─── 9. Bearing L10 ──────────────────────────────────────────────────
-        elif "bearing" in ml and "l10" in ml:
+        elif "bearing" in ml and "l10" in ml and "boot" not in ml:
             L10_target = 40000  # h design target
             # Proportional: L10 ∝ 1/n (constant load) → n_for_target = n × L10_actual / L10_target
             n_for_L10  = n_rpm * (L10 / max(L10_target, 1))
@@ -666,6 +680,112 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
                    f"Primary fix: specify a bearing frame with C ≥ {C_need_kN:.0f} kN "
                    f"for bore {d_mm:.0f}mm (consult SKF/NSK catalogue). "
                    f"Also reduce fill_pct to lower headshaft radial load.")))
+
+        # ─── 9b. Boot Bearing L10 (new this round -- mirrors #9 above,
+        # boot side. Confirmed directly: boot_pulley.L10_boot_h is a real
+        # computed quantity, only ever produced a warn() in calculations.py
+        # with no corresponding root-cause finding until now.) ───────────
+        elif "boot bearing" in ml and "l10" in ml:
+            L10_boot_target = 20000  # matches the warn() threshold itself, not the stricter 40,000h head target
+            n_for_boot = n_rpm * (L10_boot / max(L10_boot_target, 1)) if L10_boot else n_rpm
+            n_std_boot = max(int(n_for_boot // 5) * 5, 10)
+            practical_boot = n_std_boot >= 35
+
+            if practical_boot:
+                drivers = [
+                    _driver("n_rpm", "Shaft speed", n_rpm, "rpm",
+                        f"L10 ∝ 1/n; reduce from {n_rpm} to {n_std_boot} rpm "
+                        f"→ boot L10 ≈ {L10_boot_target:,}h (proportional scaling)", 1),
+                    _driver("boot_pulley_D_mm", "Boot pulley diameter",
+                        _s(inp.get("boot_pulley_D_mm"), 300), "mm",
+                        "Increasing boot diameter reduces R_boot for the same duty", 2),
+                ]
+                corrections = [
+                    _correction("n_rpm", "Reduce shaft speed",
+                        n_rpm, float(n_std_boot), "rpm",
+                        f"L10 ∝ 1/n → estimated boot L10 ≈ {L10_boot_target:,}h. "
+                        f"Verify head-side L10 and capacity are still adequate after change.", 1),
+                ]
+            else:
+                drivers = [
+                    _driver("bearing", "Boot bearing catalogue selection", "current", "—",
+                        f"Boot L10 = {L10_boot:,.0f}h << {L10_boot_target:,}h target. "
+                        f"Upgrading the boot bearing frame resolves without RPM change", 1),
+                    _driver("boot_pulley_D_mm", "Boot pulley diameter",
+                        _s(inp.get("boot_pulley_D_mm"), 300), "mm",
+                        "Larger boot diameter lowers R_boot (partial fix)", 2),
+                ]
+                corrections = [
+                    _correction("boot_pulley_D_mm", "Increase boot pulley diameter",
+                        _s(inp.get("boot_pulley_D_mm"), 300),
+                        _s(inp.get("boot_pulley_D_mm"), 300) + 50, "mm",
+                        "Reduces boot bearing radial load; combine with a bearing upgrade for full fix.", 1),
+                ]
+
+            findings.append(_finding(i, msg, sev,
+                f"Boot L10 = {L10_boot:,.0f} h < {L10_boot_target:,} h minimum",
+                drivers, corrections,
+                f"Boot shaft bearing L10 = {L10_boot:,.0f} h is below the {L10_boot_target:,} h minimum "
+                f"(R_boot = {R_boot:,.0f} N at {n_rpm:.0f} rpm). "
+                + (f"Reduce n_rpm to {n_std_boot} rpm (L10 ∝ 1/n)."
+                   if practical_boot else
+                   f"RPM reduction to {n_std_boot} rpm is impractical -- specify an upgraded "
+                   f"boot bearing frame, or increase boot pulley diameter to reduce R_boot.")))
+
+        # ─── 9c. Chain Safety Factor (new this round -- chain elevators
+        # had NO root-cause coverage at all before this. Confirmed
+        # directly: chain_SF_actual is a real computed quantity, the
+        # corresponding fail()/warn() in calculations.py had nothing
+        # downstream of it.) ────────────────────────────────────────────
+        elif "chain sf" in ml:
+            sf_deficit_pct = (chain_sf_req - chain_SF_actual) / max(chain_sf_req, 0.1) * 100
+            drivers = [
+                _driver("chain_series", "Chain series", chain_sel.get("name", "auto"), "—",
+                    f"SF = WL / chain pull; a heavier-rated chain series directly raises SF", 1),
+                _driver("chain_n_strands", "Chain strand count",
+                    int(_s(inp.get("chain_n_strands"), 1)), "—",
+                    "Adding a strand roughly doubles working load capacity (2-strand SC option)", 2),
+                _driver("n_rpm", "Shaft speed", n_rpm, "rpm",
+                    "Lower speed reduces chain pull force proportionally", 3),
+            ]
+            corrections = [
+                _correction("chain_n_strands", "Add a chain strand",
+                    int(_s(inp.get("chain_n_strands"), 1)),
+                    min(int(_s(inp.get("chain_n_strands"), 1)) + 1, 2), "—",
+                    f"SF deficit is {sf_deficit_pct:.0f}% -- an additional strand is the most direct fix "
+                    f"if the bucket style/sprocket support multi-strand mounting.", 1),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"Chain SF = {chain_SF_actual:.2f} < required {chain_sf_req:.1f}",
+                drivers, corrections,
+                f"Chain safety factor {chain_SF_actual:.2f} is below the required {chain_sf_req:.1f} "
+                f"for {chain_sel.get('name', 'the selected chain')}. Upgrade to a heavier chain series, "
+                f"add a strand, or reduce chain pull by lowering speed or fill."))
+
+        # ─── 9d. Chain Speed Exceeded (new this round, same reasoning as
+        # 9c -- chain_v_ok is real but had no root-cause finding) ────────
+        elif "chain speed" in ml and "exceeds" in ml:
+            v_max_chain = _s(chain_sel.get("v_max_ms"), 1.0)
+            n_for_vmax = n_rpm * (v_max_chain / max(v, 0.01))
+            n_std_vmax = max(int(n_for_vmax // 5) * 5, 10)
+            drivers = [
+                _driver("n_rpm", "Shaft speed", n_rpm, "rpm",
+                    f"v ∝ n; reduce to {n_std_vmax} rpm to bring chain speed within "
+                    f"{chain_sel.get('name', 'rated')} limit of {v_max_chain:.2f} m/s", 1),
+                _driver("chain_series", "Chain series", chain_sel.get("name", "auto"), "—",
+                    "A chain series rated for higher speed avoids reducing RPM at all", 2),
+            ]
+            corrections = [
+                _correction("n_rpm", "Reduce shaft speed",
+                    n_rpm, float(n_std_vmax), "rpm",
+                    f"Brings chain speed to ≈{v_max_chain:.2f} m/s. Verify capacity ≥ Q_req after change.", 1),
+            ]
+            findings.append(_finding(i, msg, sev,
+                f"Chain speed {v:.2f} m/s > rated {v_max_chain:.2f} m/s",
+                drivers, corrections,
+                f"Chain speed {v:.2f} m/s exceeds {chain_sel.get('name', 'the selected chain')}'s rated "
+                f"maximum {v_max_chain:.2f} m/s. Reduce shaft speed or specify a chain series rated for "
+                f"higher speed."))
 
         # ─── 10. Bolt fatigue (Goodman) ───────────────────────────────────────
         elif "bolt" in ml and ("fatigue" in ml or "goodman" in ml):

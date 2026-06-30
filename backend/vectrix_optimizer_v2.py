@@ -120,7 +120,7 @@ class ElevatorOptProblem(ElementwiseProblem):
             "head_teeth":  Choice(options=SPROCKET_TEETH_OPTIONS),
             "boot_teeth":  Choice(options=SPROCKET_TEETH_OPTIONS),
         }
-        super().__init__(vars=variables, n_obj=4, n_ieq_constr=4)
+        super().__init__(vars=variables, n_obj=4, n_ieq_constr=6)
         self.base_input = base_input
         self.mat = mat
 
@@ -181,6 +181,34 @@ class ElevatorOptProblem(ElementwiseProblem):
         L10 = float(r.get("L10") or 0.0)
         l10_violation = max(0.0, L10_FLOOR_H - L10)
 
+        # FIX (found during a backend-sync review, not previously flagged):
+        # D_mm and boot_D_mm became independent search variables this
+        # round, but only the HEAD shaft's L10 was ever floor-constrained.
+        # The boot bearing has its own real, computed life (boot_pulley.
+        # L10_boot_h) -- confirmed directly it only ever produces a warn()
+        # in calculations.py, never a fail(), so it was invisible to the
+        # fail_count constraint below too. A Pareto point could pick a
+        # boot diameter that tanks boot bearing life with nothing to catch
+        # it. Same floor, same violation-magnitude pattern as the head
+        # shaft's l10_violation just above -- not a new mechanism.
+        boot_pulley = r.get("boot_pulley") or {}
+        L10_boot = float(boot_pulley.get("L10_boot_h") or 0.0)
+        l10_boot_violation = max(0.0, L10_FLOOR_H - L10_boot)
+
+        # FIX (same review): startup_margin/belt_rated_N (belt mode only)
+        # are real computed quantities (calculations.py, startup_dyn dict)
+        # but confirmed they never get a fail()/warn() appended to checks[]
+        # anywhere -- so this safety margin was invisible to fail_count
+        # too. Chain mode doesn't compute these fields at all (confirmed:
+        # only set `if not is_chain`), so this constraint is a no-op
+        # (violation=0) for chain runs rather than penalising them for a
+        # quantity that doesn't apply.
+        startup_dyn = r.get("startup_dynamic") or {}
+        startup_margin = startup_dyn.get("startup_margin")
+        startup_margin_violation = (
+            max(0.0, 1.0 - float(startup_margin)) if startup_margin is not None else 0.0
+        )
+
         cr = float(r.get("cr") or 0.0)
         lo, hi = self.mat["pref_cr_min"], self.mat["pref_cr_max"]
         cr_dev = 0.0 if lo <= cr <= hi else min(abs(cr - lo), abs(cr - hi))
@@ -189,7 +217,8 @@ class ElevatorOptProblem(ElementwiseProblem):
         R_head   = float(r.get("R_headshaft") or _CRASH_PENALTY)
 
         out["F"] = [motor_kw, R_head, -L10, cr_dev]
-        out["G"] = [fail_count, sc_belt_violation, l10_violation, boot_diameter_violation]
+        out["G"] = [fail_count, sc_belt_violation, l10_violation, boot_diameter_violation,
+                    l10_boot_violation, startup_margin_violation]
 
 
 def _to_native(x):
@@ -282,6 +311,7 @@ def run_nsga2_optimizer(
                 # more robust than threading extra state through pymoo's
                 # internal Result object, which only tracks X/F/G.
                 "cr": None, "Q_th": None, "v_ms": None,
+                "L10_boot_h": None, "startup_margin": None,
             }
             try:
                 _payload = dict(base_input)
@@ -300,6 +330,17 @@ def run_nsga2_optimizer(
                 point["cr"]    = round(float(_r.get("cr") or 0), 3)
                 point["Q_th"]  = round(float(_r.get("Q") or 0), 1)
                 point["v_ms"]  = round(float(_r.get("v") or 0), 2)
+                # Same display-only reasoning as cr/Q_th/v_ms above -- these
+                # are the two quantities newly added as hard constraints
+                # (see l10_boot_violation / startup_margin_violation), so
+                # showing the actual number alongside is what makes a
+                # "feasible: false" row legible rather than a black box.
+                _boot = _r.get("boot_pulley") or {}
+                if _boot.get("L10_boot_h") is not None:
+                    point["L10_boot_h"] = round(float(_boot["L10_boot_h"]), 0)
+                _sd = _r.get("startup_dynamic") or {}
+                if _sd.get("startup_margin") is not None:
+                    point["startup_margin"] = round(float(_sd["startup_margin"]), 2)
             except Exception:
                 pass   # display-only -- leave as None rather than fail the point
             pareto_front.append(point)
