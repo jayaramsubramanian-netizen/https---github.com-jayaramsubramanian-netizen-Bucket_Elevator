@@ -300,6 +300,53 @@ class BucketElevatorInput(BaseModel):
         ),
     )
 
+    # ── Boot (tail) shaft -- v1.10.0. Previously this quadrant was
+    # genuinely read-only: no override, no hollow/solid option, even
+    # though shaft_diameter_governing_hollow() (the same function the
+    # head shaft already uses) was being called for the boot shaft too,
+    # just with bore_ratio hardcoded to 0.0 -- the parameter existed,
+    # nothing exposed it. Material grade is NOT duplicated here: the
+    # boot shaft is sized using the same _tau_allow_Pa as the head shaft
+    # (one material grade governs both, by design -- a bucket elevator
+    # doesn't mix shaft material grades within one machine), so
+    # shaft_material above already covers it. No hub-connection field
+    # either: the boot pulley is free-running with no drive torque, so
+    # there's no keyway/weld decision to make -- confirmed directly in
+    # calculations.py (boot_shaft computed with T_Nm=0, "No keyway
+    # required" is a structural fact, not a missing feature).
+    boot_shaft_section: Literal["solid", "hollow"] = Field(
+        "solid",
+        description=(
+            "Boot (tail) shaft cross-section. Same hollow/solid trade-off as "
+            "the head shaft (shaft_section above) -- weight reduction at the "
+            "cost of a larger outer diameter for the same bending load. The "
+            "boot shaft carries no torque (free-running, not driven), so "
+            "this only affects the bending/deflection sizing, never a "
+            "torsion check."
+        ),
+    )
+
+    boot_shaft_bore_ratio: float = Field(
+        0.0, ge=0.0, le=0.85,
+        description=(
+            "Boot shaft bore ratio d_inner/d_outer. Only used when "
+            "boot_shaft_section='hollow'. 0 = solid (no effect). Same "
+            "typical practice range as the head shaft (0.4-0.7) -- "
+            "CEMA does not publish a standard ratio for this either."
+        ),
+    )
+
+    boot_shaft_d_override_mm: float = Field(
+        0.0, ge=0.0, le=500.0,
+        description=(
+            "Boot (tail) shaft diameter override [mm]. "
+            "0 = auto-calculate from bending/deflection (the boot shaft is "
+            "free-running with no drive torque, so torsion never governs). "
+            "Set to a preferred commercial bar diameter — solver reports "
+            "whether the specified diameter meets the calculated minimum."
+        ),
+    )
+
     # Belt width
     belt_width_override_mm: float = Field(
         0.0, ge=0.0, le=1200.0,

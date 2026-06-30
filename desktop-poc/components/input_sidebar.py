@@ -35,21 +35,24 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QAbstractSpinBox, QComboBox, QGridLayout,
 )
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF, QTimer, QThread
-from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QPalette
+from PySide6.QtGui import QPainter, QColor, QBrush, QPen
 
 from theme import BG, PANEL, PANEL2, BORDER, TEXT, TEXT2, TEXT3, MUTED, PRIMARY, SUCCESS, WARNING, DANGER
 from api_client import search_materials, get_material, fetch_components, fetch_design
+from .dialog_helpers import (
+    fmt, section_head, field_row, styled_spinbox, modal_header, modal_footer,
+    stat_box, ToggleButton, toggle_pair, status_badge, flag_note, ComponentPickerWidget,
+)
+from .takeup_edit import TakeupEditDialog
+from .feed_edit import FeedEditDialog
+from .discharge_edit import DischargeEditDialog
+from .casing_edit import CasingEditDialog
+from .service_edit import ServiceEditDialog
+from .power_edit import PowerEditDialog
 
 # Sections not yet ported -- listed explicitly so the gap is named, not
 # silently absent. (id, label)
-NOT_YET_PORTED = [
-    ("takeup",    "Take-Up Selection"),
-    ("discharge", "Discharge Section"),
-    ("feed",      "Feed Design"),
-    ("casing",    "Casing Design"),
-    ("service",   "Service Conditions"),
-    ("power",     "Power Transmission"),
-]
+NOT_YET_PORTED = []
 
 ABR_HINT = {1: "Low", 2: "Low", 3: "Med", 4: "Med", 5: "High", 6: "High", 7: "V.High"}
 FLOW_HINT = {1: "Free", 2: "Free", 3: "Average", 4: "Sluggish"}
@@ -87,15 +90,6 @@ CHAIN_OPTIONS = [
     ("C6102", '6102-1/2 — 12" SC   WL=27,215kg 2 strands'),
     ("C9124", '9124    — 9" SC    WL=38,100kg 2 strands'),
 ]
-
-
-def fmt(v, dp=1, fb="—"):
-    if v is None:
-        return fb
-    try:
-        return f"{float(v):.{dp}f}"
-    except (TypeError, ValueError):
-        return fb
 
 
 class SectionRow(QFrame):
@@ -168,122 +162,6 @@ def quadrant_title(text):
     lbl = QLabel(text)
     lbl.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700;")
     return lbl
-
-
-def field_row(label, widget, unit=None, note=None):
-    box = QVBoxLayout()
-    box.setSpacing(3)
-    lbl = QLabel(label)
-    lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px; font-weight: 600;")
-    box.addWidget(lbl)
-    row = QHBoxLayout()
-    row.addWidget(widget)
-    if unit:
-        unit_lbl = QLabel(unit)
-        unit_lbl.setStyleSheet(f"color: {MUTED}; font-size: 10.5px;")
-        row.addWidget(unit_lbl)
-    box.addLayout(row)
-    if note:
-        note_lbl = QLabel(note)
-        note_lbl.setStyleSheet(f"color: {MUTED}; font-size: 9.5px;")
-        note_lbl.setWordWrap(True)
-        box.addWidget(note_lbl)
-    return box
-
-
-def styled_spinbox(spinbox):
-    # FIX: the real bug here wasn't a font fallback issue (that was a
-    # red herring I ruled out by checking .value()/.text() against the
-    # rendered pixels, and by testing the same font-family string in
-    # isolation, where it rendered fine). The actual cause: this widget
-    # had no minimum height, so when the right column's combined content
-    # (search box, chips, 6 override fields, notes) needed more vertical
-    # space than the dialog's natural height gave it, Qt's layout engine
-    # compressed individual spinboxes down to as little as 17px tall --
-    # confirmed directly via .size(). 17px isn't enough room for a 12px
-    # font plus 5px top/bottom padding to render without visually
-    # overlapping. Setting an explicit minimum height makes this a hard
-    # floor the layout can't shrink past.
-    spinbox.setMinimumHeight(28)
-    # FIX (Jay: "lost silver color in the arrows" + "overlapping numbers"):
-    # both trace back to the same cause. Switching the app to
-    # app.setStyle("Fusion") (main.py, to fix the tab-pill rendering)
-    # changed how QAbstractSpinBox's up/down sub-controls get laid out --
-    # Fusion doesn't reserve the same implicit right-hand gap the native
-    # Windows style did, so without an explicit padding-right the value
-    # text and the arrow buttons started overlapping. And Fusion draws
-    # the small arrow glyphs using the widget's ButtonText palette role,
-    # not the QSS `color` property -- nothing was setting that role
-    # explicitly, so the arrows defaulted to a near-invisible dark tone
-    # against this dark theme once Fusion took over the rendering.
-    # Fixed both together: explicit subcontrol geometry for the up/down
-    # buttons (with real padding-right reserved so text can't run under
-    # them) and a direct QPalette.ButtonText override so the arrows are
-    # visibly silver-blue (TEXT2) again, matching how they looked under
-    # the native style before Fusion was introduced.
-    spinbox.setStyleSheet(f"""
-        QAbstractSpinBox {{
-            background-color: {PANEL2}; color: {TEXT}; border: 1px solid {BORDER};
-            border-radius: 4px; padding: 5px 22px 5px 8px; font-size: 12px;
-        }}
-        QAbstractSpinBox::up-button {{
-            subcontrol-origin: border; subcontrol-position: top right;
-            width: 18px; height: 13px;
-            border-left: 1px solid {BORDER}; border-bottom: 1px solid {BORDER};
-            border-top-right-radius: 4px;
-            background-color: {PANEL2};
-        }}
-        QAbstractSpinBox::down-button {{
-            subcontrol-origin: border; subcontrol-position: bottom right;
-            width: 18px; height: 13px;
-            border-left: 1px solid {BORDER};
-            border-bottom-right-radius: 4px;
-            background-color: {PANEL2};
-        }}
-        QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{
-            background-color: {BORDER};
-        }}
-    """)
-    pal = spinbox.palette()
-    pal.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT2))
-    spinbox.setPalette(pal)
-    return spinbox
-
-
-def modal_header(title, cema=None):
-    """The ONE place CEMA reference text now lives -- once per modal,
-    under its title, not repeated per sidebar row."""
-    header = QFrame()
-    header.setStyleSheet(f"background-color: {PANEL2}; border-bottom: 1px solid {BORDER};")
-    hl = QVBoxLayout(header)
-    hl.setContentsMargins(16, 12, 16, 12)
-    title_lbl = QLabel(title)
-    title_lbl.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700;")
-    hl.addWidget(title_lbl)
-    if cema:
-        sub = QLabel(cema)
-        sub.setStyleSheet(f"color: {TEXT3}; font-size: 10px;")
-        hl.addWidget(sub)
-    return header
-
-
-def modal_footer(dialog):
-    footer = QFrame()
-    layout = QHBoxLayout(footer)
-    layout.setContentsMargins(12, 8, 12, 8)
-    layout.addStretch()
-    cancel = QPushButton("Cancel")
-    cancel.setStyleSheet(f"background-color: transparent; color: {TEXT3}; border: none; padding: 6px 14px;")
-    cancel.clicked.connect(dialog.reject)
-    apply_btn = QPushButton("Apply")
-    apply_btn.setStyleSheet(
-        f"background-color: {PRIMARY}; color: white; border: none; "
-        f"border-radius: 5px; padding: 6px 18px; font-size: 11.5px; font-weight: 600;"
-    )
-    apply_btn.clicked.connect(dialog.accept)
-    layout.addWidget(cancel)
-    layout.addWidget(apply_btn)
-    return footer
 
 
 class DynamicFillBarWidget(QWidget):
@@ -704,38 +582,6 @@ class OverridableSpinBox(QWidget):
         self._update_note(False)
 
 
-class NotYetPortedDialog(QDialog):
-    """Honest placeholder modal -- same spirit as the Placeholder widget
-    used throughout main.py."""
-
-    def __init__(self, label, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(label)
-        self.setStyleSheet(f"background-color: {PANEL};")
-        self.setMinimumWidth(360)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon = QLabel("○")
-        icon.setStyleSheet(f"color: {BORDER}; font-size: 28px;")
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title = QLabel(label)
-        title.setStyleSheet(f"color: {TEXT2}; font-size: 13px; font-weight: 600;")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sub = QLabel("Not yet ported -- still a summary-only row for now.")
-        sub.setStyleSheet(f"color: {MUTED}; font-size: 10.5px;")
-        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        for w in (icon, title, sub):
-            layout.addWidget(w)
-        close_btn = QPushButton("Close")
-        close_btn.setStyleSheet(
-            f"background-color: {PANEL2}; color: {TEXT2}; border: 1px solid {BORDER}; "
-            f"border-radius: 5px; padding: 6px 16px; font-size: 11px; margin-top: 12px;"
-        )
-        close_btn.clicked.connect(self.accept)
-        layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignCenter)
-
-
 class ProcessEditDialog(QDialog):
     """Expanded to two columns, per direct feedback that the material
     section was missing entirely: LEFT keeps drive type / Q_req / H_m /
@@ -805,9 +651,8 @@ class ProcessEditDialog(QDialog):
         # is static guidance text. This is dynamic: it reflects the
         # actual database value for whichever material is currently
         # selected, and updates live in _on_material_selected() below.
-        self.temp_advisory = QLabel()
-        self.temp_advisory.setWordWrap(True)
-        left.addWidget(self.temp_advisory)
+        self.temp_advisory_box = QVBoxLayout()
+        left.addLayout(self.temp_advisory_box)
         db_init = self.results.get("mat_db_defaults") or {}
         self._update_temp_advisory(db_init.get("temp_max"), db_init.get("name"))
 
@@ -958,19 +803,25 @@ class ProcessEditDialog(QDialog):
         letting the unlabeled 20°C starting value imply a default that
         doesn't actually exist for that material."""
         name = material_name or "this material"
+        # FIX (Jay: small/illegible grey text): rebuilt as a flag_note
+        # row (status badge + 11px TEXT2) instead of a bare 9.5px TEXT3
+        # QLabel with an emoji prefix -- same legibility/icon pass
+        # applied across every modal this round.
+        while self.temp_advisory_box.count():
+            item = self.temp_advisory_box.takeAt(0)
+            w = item.widget() if item else None
+            if w:
+                w.setParent(None)
+                w.deleteLater()
         if temp_max is not None:
-            self.temp_advisory.setText(
-                f"ℹ Typical max on file for {name}: {fmt(temp_max, 0)}°C. "
-                f"Adjust the field above if your process conditions differ."
-            )
-            self.temp_advisory.setStyleSheet(f"color: {TEXT3}; font-size: 9.5px;")
+            flag_note("info", f"Typical max on file for {name}: {fmt(temp_max, 0)}°C. "
+                               f"Adjust the field above if your process conditions differ.",
+                      parent_layout=self.temp_advisory_box)
         else:
-            self.temp_advisory.setText(
-                f"⚠ No typical temperature on file for {name} — CEMA 375/550 per-material "
-                f"temperature data isn't integrated yet. Enter a value above based on your "
-                f"actual process conditions."
-            )
-            self.temp_advisory.setStyleSheet(f"color: {WARNING}; font-size: 9.5px;")
+            flag_note("warn", f"No typical temperature on file for {name} — CEMA 375/550 "
+                              f"per-material temperature data isn't integrated yet. Enter a "
+                              f"value above based on your actual process conditions.",
+                      parent_layout=self.temp_advisory_box)
 
     def _rebuild_advisory(self):
         while self.advisory_box.count():
@@ -1000,38 +851,34 @@ class ProcessEditDialog(QDialog):
         current_drive = self.inputs.get("conveyor_type", "belt")
         recommended_drive = rec.get("recommended_drive_type", "belt")
         mismatch = current_drive != recommended_drive
-        accent = DANGER if mismatch else SUCCESS
 
-        # FIX (Jay: "too cramped, text sizing too small, make it more
-        # professional looking"): rebuilt with real card proportions
-        # instead of the previous compressed info-strip treatment --
-        # larger type throughout (11-13px body instead of 9-10px), a
-        # colored left accent bar so the pass/fail state reads at a
-        # glance without needing to parse the text first, generous
-        # padding, and a real divider between the drive-type verdict and
-        # the discharge-character section rather than running them
-        # together with no visual break.
+        # FIX (Jay: "green and red borders... very cheesy and 1960s"):
+        # this used to wrap the whole card in a colored background/
+        # border with a 4px colored accent bar. Now neutral throughout,
+        # with a small status_badge() carrying the match/mismatch state
+        # next to the headline instead.
         outer = QFrame()
-        outer.setStyleSheet(
-            f"background-color: {'rgba(224,82,82,.07)' if mismatch else 'rgba(31,184,110,.06)'}; "
-            f"border: 1px solid {'rgba(224,82,82,.28)' if mismatch else 'rgba(31,184,110,.22)'}; "
-            f"border-left: 4px solid {accent}; border-radius: 7px;"
-        )
+        outer.setStyleSheet(f"background-color: {PANEL2}; border: 1px solid {BORDER}; border-radius: 7px;")
         bl = QVBoxLayout(outer)
         bl.setContentsMargins(14, 12, 14, 12)
         bl.setSpacing(8)
 
+        head_row = QHBoxLayout()
+        head_row.setSpacing(8)
+        head_row.addWidget(status_badge("fail" if mismatch else "ok", size=16))
         head = QLabel("MATERIAL-BASED DESIGN GUIDANCE")
-        head.setStyleSheet(f"color: {PRIMARY}; font-size: 11px; font-weight: 700; letter-spacing: .6px;")
-        bl.addWidget(head)
+        head.setStyleSheet(f"color: {TEXT2}; font-size: 11px; font-weight: 700; letter-spacing: .6px;")
+        head_row.addWidget(head)
+        head_row.addStretch()
+        bl.addLayout(head_row)
 
         drive_line = QLabel(
-            f"⚠  You've selected {current_drive.upper()}, but material temperature suggests {recommended_drive.upper()}"
+            f"You've selected {current_drive.upper()}, but material temperature suggests {recommended_drive.upper()}"
             if mismatch else
-            f"✓  {current_drive.capitalize()} matches the material-temperature recommendation"
+            f"{current_drive.capitalize()} matches the material-temperature recommendation"
         )
         drive_line.setWordWrap(True)
-        drive_line.setStyleSheet(f"color: {accent}; font-size: 13px; font-weight: 700;")
+        drive_line.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 700;")
         bl.addWidget(drive_line)
 
         reason1 = QLabel(rec.get("drive_type_reasoning", ""))
@@ -1173,54 +1020,37 @@ class ProcessEditDialog(QDialog):
         return self.inputs
 
 
-class ToggleButton(QPushButton):
-    """A real toggle control (✓ ON / OFF) matching the reference
-    rendering, not a plain checkbox."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setCheckable(True)
-        self.setFixedWidth(90)
-        self.toggled.connect(self._restyle)
-        self._restyle(False)
-
-    def _restyle(self, checked):
-        self.setText("✓ ON" if checked else "OFF")
-        if checked:
-            self.setStyleSheet(
-                f"background-color: rgba(74,158,255,.15); color: {PRIMARY}; "
-                f"border: 1px solid {PRIMARY}; border-radius: 5px; padding: 6px 16px; font-weight: 600;"
-            )
-        else:
-            self.setStyleSheet(
-                f"background-color: {PANEL2}; color: {TEXT3}; border: 1px solid {BORDER}; "
-                f"border-radius: 5px; padding: 6px 16px;"
-            )
-
-
 class StatusCard(QFrame):
-    """Green/amber card with a title + a row of labeled stats -- port of
-    PulleyEdit's "Wrap Angle Adequate"/"Wrap Angle — Slip Risk" block."""
+    """Status badge + title + a row of labeled stats -- port of
+    PulleyEdit's "Wrap Angle Adequate"/"Wrap Angle — Slip Risk" block.
+
+    FIX (Jay: "green and red borders... very cheesy and 1960s"): this
+    used to wrap the entire card in a colored background/border (green
+    or amber). Now a neutral box throughout, with a small status_badge()
+    next to the headline carrying the color -- same visual language
+    every other modal uses now."""
 
     def __init__(self, adequate, title_ok, title_warn, stats, note=None, parent=None):
         super().__init__(parent)
-        color = SUCCESS if adequate else WARNING
-        bg = "rgba(31,184,110,.07)" if adequate else "rgba(217,142,0,.10)"
-        border = "rgba(31,184,110,.25)" if adequate else "rgba(217,142,0,.35)"
-        self.setStyleSheet(f"background-color: {bg}; border: 1px solid {border}; border-radius: 5px;")
+        self.setStyleSheet(f"background-color: {PANEL2}; border: 1px solid {BORDER}; border-radius: 5px;")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(4)
+        layout.setSpacing(6)
+        head_row = QHBoxLayout()
+        head_row.setSpacing(8)
+        head_row.addWidget(status_badge("ok" if adequate else "warn", size=16))
         head = QLabel(title_ok if adequate else title_warn)
-        head.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: 700; letter-spacing: .5px;")
-        layout.addWidget(head)
+        head.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px; font-weight: 700; letter-spacing: .5px;")
+        head_row.addWidget(head)
+        head_row.addStretch()
+        layout.addLayout(head_row)
         row = QHBoxLayout()
         row.setSpacing(16)
         for label, value in stats:
             col = QVBoxLayout()
             col.setSpacing(1)
             l = QLabel(label)
-            l.setStyleSheet(f"color: {TEXT3}; font-size: 9px;")
+            l.setStyleSheet(f"color: {TEXT2}; font-size: 9.5px;")
             v = QLabel(str(value))
             v.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 700; font-family: 'JetBrains Mono', monospace;")
             col.addWidget(l); col.addWidget(v)
@@ -1230,7 +1060,7 @@ class StatusCard(QFrame):
         if note and not adequate:
             note_lbl = QLabel(note)
             note_lbl.setWordWrap(True)
-            note_lbl.setStyleSheet(f"color: {WARNING}; font-size: 10px;")
+            note_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
             layout.addWidget(note_lbl)
 
 
@@ -1379,13 +1209,15 @@ class PulleyEditDialog(QDialog):
         override = styled_spinbox(QDoubleSpinBox())
         override.setRange(0, 50); override.setSingleStep(1)
         override.setValue(float(current_override))
+        status = None
         if shell.get("override_applied"):
-            note = (f"✓ {fmt(shell.get('t_use_mm'),0)}mm meets calculated minimum {fmt(shell.get('t_calc_mm'),0)}mm"
+            status = "ok" if shell.get("override_pass") else "fail"
+            note = (f"{fmt(shell.get('t_use_mm'),0)}mm meets calculated minimum {fmt(shell.get('t_calc_mm'),0)}mm"
                     if shell.get("override_pass") else
-                    f"⚠ {fmt(shell.get('t_use_mm'),0)}mm is BELOW calculated minimum {fmt(shell.get('t_calc_mm'),0)}mm")
+                    f"{fmt(shell.get('t_use_mm'),0)}mm is BELOW calculated minimum {fmt(shell.get('t_calc_mm'),0)}mm")
         else:
             note = "0 = auto from CEMA Pulley Standard minimum + belt-pressure check. Specify to verify a standard plate gauge."
-        bl.addLayout(field_row("Shell Thickness Override", override, "mm", note=note))
+        bl.addLayout(field_row("Shell Thickness Override", override, "mm", note=note, status=status))
         return override
 
     def _rebuild_wrap_card(self):
@@ -1570,15 +1402,15 @@ class BeltChainEditDialog(QDialog):
         if tp.get("T_max_N") is not None:
             note = None
             if margin_bad:
-                note = ("⚠ Ply count above is sized for effective tension only — peak tension "
+                note = ("Ply count above is sized for effective tension only — peak tension "
                         "(including empty-leg self-weight) exceeds belt rating. Increase belt "
                         "width, or set Belt Ply Override below to a higher count.")
             bl.addWidget(stat_box(
                 [("Peak Tension (actual max, full loop)", f"{fmt(tp.get('T_max_N', 0) / 1000, 1)} kN"),
                  ("Belt Rated", f"{fmt((tp.get('belt_rated_N') or 0) / 1000, 1)} kN"),
                  ("Margin", fmt(tp.get("rating_margin"), 2))],
-                border_color=DANGER if margin_bad else None,
-                note=note, note_color=DANGER,
+                status="warn" if margin_bad else None,
+                note=note,
             ))
 
         self.belt_ply_override = styled_spinbox(QSpinBox())
@@ -1716,9 +1548,9 @@ class BeltChainEditDialog(QDialog):
         if sp:
             bl.addWidget(stat_box(
                 [("PD", f"{fmt(sp.get('PD_mm'), 0)} mm"), ("Teeth", str(sp.get("n_teeth", "—"))),
-                 ("Smooth", "✓ Yes" if sp.get("smooth") else "⚠ No")],
-                border_color=None if sp.get("smooth") else WARNING,
-                note=sp.get("note") if not sp.get("smooth") else None, note_color=WARNING,
+                 ("Smooth", "Yes" if sp.get("smooth") else "No")],
+                status=None if sp.get("smooth") else "warn",
+                note=sp.get("note") if not sp.get("smooth") else None,
             ))
 
         bl.addWidget(section_head("Boot Sprocket"))
@@ -1733,28 +1565,18 @@ class BeltChainEditDialog(QDialog):
         if bsp:
             bl.addWidget(stat_box(
                 [("PD", f"{fmt(bsp.get('PD_mm'), 0)} mm"), ("Teeth", str(bsp.get("n_teeth", "—"))),
-                 ("Smooth", "✓ Yes" if bsp.get("smooth") else "⚠ No")],
-                border_color=None if bsp.get("smooth") else WARNING,
-                note=bsp.get("note") if not bsp.get("smooth") else None, note_color=WARNING,
+                 ("Smooth", "Yes" if bsp.get("smooth") else "No")],
+                status=None if bsp.get("smooth") else "warn",
+                note=bsp.get("note") if not bsp.get("smooth") else None,
             ))
 
         if r.get("chain_v_ok") is not None:
             bl.addWidget(section_head("Chain Speed Check"))
             ok = r["chain_v_ok"]
             v_max = (cs or {}).get("v_max_ms", "—")
-            speed_note = QFrame()
-            speed_note.setStyleSheet(
-                f"background-color: {'rgba(31,184,110,.08)' if ok else 'rgba(224,82,82,.10)'}; "
-                f"border: 1px solid {'rgba(31,184,110,.3)' if ok else 'rgba(224,82,82,.3)'}; border-radius: 5px;"
-            )
-            sl = QVBoxLayout(speed_note)
-            sl.setContentsMargins(10, 6, 10, 6)
-            text = (f"✓ Speed {fmt(r.get('v'), 2)} m/s ≤ chain rated {v_max} m/s" if ok else
-                    f"⚠ Speed {fmt(r.get('v'), 2)} m/s EXCEEDS chain rated {v_max} m/s")
-            lbl = QLabel(text)
-            lbl.setStyleSheet(f"color: {SUCCESS if ok else DANGER}; font-size: 11px;")
-            sl.addWidget(lbl)
-            bl.addWidget(speed_note)
+            text = (f"Speed {fmt(r.get('v'), 2)} m/s ≤ chain rated {v_max} m/s" if ok else
+                    f"Speed {fmt(r.get('v'), 2)} m/s EXCEEDS chain rated {v_max} m/s")
+            bl.addWidget(flag_note("ok" if ok else "fail", text))
 
     def updated_inputs(self):
         if self.is_chain:
@@ -1830,29 +1652,28 @@ class BucketEditDialog(QDialog):
             current_style = (self.inputs.get("bucket_id", "") or "").split("_")[0]
             is_current = current_style == rec.get("recommended_style")
             card = QFrame()
-            card.setStyleSheet(
-                f"background-color: {'rgba(31,184,110,.08)' if is_current else 'rgba(74,158,255,.07)'}; "
-                f"border: 1px solid {'rgba(31,184,110,.3)' if is_current else 'rgba(74,158,255,.3)'}; border-radius: 5px;"
-            )
+            card.setStyleSheet(f"background-color: {PANEL2}; border: 1px solid {BORDER}; border-radius: 5px;")
             cl = QVBoxLayout(card)
             cl.setContentsMargins(10, 8, 10, 8)
-            cl.setSpacing(4)
-            head = QLabel("✓ CURRENT STYLE MATCHES RECOMMENDATION" if is_current else "●  RECOMMENDATION FOR THIS MATERIAL")
-            head.setStyleSheet(f"color: {SUCCESS if is_current else PRIMARY}; font-size: 10px; font-weight: 700;")
-            cl.addWidget(head)
+            cl.setSpacing(6)
+            head_row = QHBoxLayout()
+            head_row.setSpacing(8)
+            head_row.addWidget(status_badge("ok" if is_current else "info", size=15))
+            head = QLabel("CURRENT STYLE MATCHES RECOMMENDATION" if is_current else "RECOMMENDATION FOR THIS MATERIAL")
+            head.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px; font-weight: 700;")
+            head_row.addWidget(head)
+            head_row.addStretch()
+            cl.addLayout(head_row)
             style_lbl = QLabel(f"{rec.get('recommended_style')} style" +
                                 (f"   (alt: {rec.get('alternative_style')})" if rec.get("alternative_style") != rec.get("recommended_style") else ""))
             style_lbl.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700;")
             cl.addWidget(style_lbl)
             reasoning = QLabel(rec.get("reasoning", ""))
             reasoning.setWordWrap(True)
-            reasoning.setStyleSheet(f"color: {TEXT3}; font-size: 11px;")
+            reasoning.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
             cl.addWidget(reasoning)
             for note in rec.get("notes") or []:
-                note_lbl = QLabel(f"⚠ {note}")
-                note_lbl.setWordWrap(True)
-                note_lbl.setStyleSheet(f"color: {WARNING}; font-size: 10px;")
-                cl.addWidget(note_lbl)
+                flag_note("warn", note, parent_layout=cl)
             bl.addWidget(card)
 
         bl.addWidget(section_head("Bucket Style"))
@@ -2030,126 +1851,6 @@ class BucketEditDialog(QDialog):
         return self.inputs
 
 
-class ComponentPickerWidget(QWidget):
-    """Real port of ComponentPicker.jsx: fetches a catalog list from a
-    given API path + query params, shows it as a dropdown with "Auto
-    (solver default)" as the first option. If the catalog is empty (e.g.
-    bearings -- confirmed directly: /components/bearings currently
-    returns zero rows, a pre-existing gap, not something this round
-    broke), this honestly shows "0 options available" rather than
-    fabricating entries."""
-
-    def __init__(self, path, params, format_label, current_value, auto_label, label, note=None, parent=None):
-        super().__init__(parent)
-        self.path, self.params, self.format_label = path, params, format_label
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(3)
-        layout.addWidget(section_head(label))
-
-        try:
-            self.options = fetch_components(path, params)
-        except Exception:
-            self.options = []
-
-        self.combo = QComboBox()
-        self.combo.setStyleSheet(
-            f"background-color: {PANEL2}; color: {TEXT}; border: 1px solid {BORDER}; "
-            f"border-radius: 4px; padding: 5px 8px; font-size: 12px;"
-        )
-        self.combo.setMinimumHeight(28)
-        auto_text = f"— Auto (solver default) —" + (f": {auto_label}" if auto_label else "")
-        self.combo.addItem(auto_text, "")
-        selected_index = 0
-        for i, row in enumerate(self.options):
-            text = format_label(row)
-            self.combo.addItem(text, row.get("name", text))
-            if current_value and row.get("name") == current_value:
-                selected_index = i + 1
-        self.combo.setCurrentIndex(selected_index)
-        layout.addWidget(self.combo)
-
-        count_text = f"{len(self.options)} options available" if self.options else "0 options available — catalog not yet populated for this component"
-        count_lbl = QLabel(count_text)
-        count_lbl.setStyleSheet(f"color: {MUTED if self.options else WARNING}; font-size: 9.5px;")
-        layout.addWidget(count_lbl)
-        if note:
-            note_lbl = QLabel(note)
-            note_lbl.setWordWrap(True)
-            note_lbl.setStyleSheet(f"color: {MUTED}; font-size: 9.5px;")
-            layout.addWidget(note_lbl)
-
-    def value(self):
-        return self.combo.currentData()
-
-
-def stat_box(stats, border_color=None, note=None, note_color=None):
-    """Neutral info box: a row of labeled stats, optionally tinted by
-    border_color, with an optional note line. Used for Shaft Sizing
-    (border color reflects fail/warn/ok), Head Shaft Bearing, and Pulley
-    Shell Thickness (neutral, no fail/warn logic of their own)."""
-    box = QFrame()
-    color = border_color or BORDER
-    box.setStyleSheet(f"background-color: {PANEL2}; border: 1px solid {color}; border-radius: 5px;")
-    layout = QVBoxLayout(box)
-    layout.setContentsMargins(10, 8, 10, 8)
-    layout.setSpacing(4)
-    row = QHBoxLayout()
-    row.setSpacing(16)
-    for label, value in stats:
-        col = QVBoxLayout()
-        col.setSpacing(1)
-        l = QLabel(label)
-        l.setStyleSheet(f"color: {TEXT3}; font-size: 9px;")
-        v = QLabel(str(value))
-        v.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 700; font-family: 'JetBrains Mono', monospace;")
-        col.addWidget(l); col.addWidget(v)
-        row.addLayout(col)
-    row.addStretch()
-    layout.addLayout(row)
-    if note:
-        note_lbl = QLabel(note)
-        note_lbl.setWordWrap(True)
-        note_lbl.setStyleSheet(f"color: {note_color or TEXT3}; font-size: 10px; margin-top: 2px;")
-        layout.addWidget(note_lbl)
-    return box
-
-
-def toggle_pair(options, current_value, on_change):
-    """Port of the solid/hollow and keyed/welded button pairs -- two
-    equal-width buttons, the active one filled, the other neutral."""
-    row = QHBoxLayout()
-    row.setSpacing(8)
-    buttons = {}
-
-    def restyle():
-        for val, btn in buttons.items():
-            active = val == current_value[0]
-            if active:
-                btn.setStyleSheet(
-                    f"background-color: rgba(74,158,255,.15); color: {PRIMARY}; "
-                    f"border: 1px solid {PRIMARY}; border-radius: 5px; padding: 8px 4px; font-weight: 600;"
-                )
-            else:
-                btn.setStyleSheet(
-                    f"background-color: {PANEL2}; color: {TEXT3}; border: 1px solid {BORDER}; "
-                    f"border-radius: 5px; padding: 8px 4px;"
-                )
-
-    for val in options:
-        btn = QPushButton(val.capitalize())
-
-        def clicked(checked, v=val):
-            current_value[0] = v
-            restyle()
-            on_change(v)
-        btn.clicked.connect(clicked)
-        row.addWidget(btn)
-        buttons[val] = btn
-    restyle()
-    return row
-
-
 class ShaftEditDialog(QDialog):
     """Shaft Design -- 4-quadrant grid: Head Shaft (top-left), Boot Shaft
     (bottom-left), Head Shaft Bearing (top-right), Boot Shaft Bearing
@@ -2219,25 +1920,60 @@ class ShaftEditDialog(QDialog):
         frame, bl = quadrant_frame()
         bl.addWidget(quadrant_title("Head Shaft"))
 
+        # FIX (Jay: "why circle the shaft size based on stress, deflection
+        # etc because those values are not the ones being flagged"):
+        # confirmed directly -- the seal/bearing-grease temperature checks
+        # ARE genuinely tagged subsystem="shaft" in the backend (correct
+        # categorization: they're shaft-bearing concerns), but this
+        # quadrant was treating ANY shaft-subsystem fail/warn as a reason
+        # to put a red border around the Stress/Deflection/Governing
+        # numbers specifically -- conflating "something in the shaft
+        # subsystem needs attention" with "the diameter sizing itself is
+        # wrong". Same lesson already applied elsewhere in this codebase
+        # (EquipmentTree's nodeStatus() filters by subsystem tag first,
+        # THEN by keyword scoped within that subsystem, rather than
+        # whole-array matching): only checks whose message is actually
+        # about diameter governing/critical speed colorize the dimensions
+        # box now. Everything else shaft-subsystem (seals, bearing
+        # grease, keyway, material) still gets shown -- just as its own
+        # separate note below, not wrapped around numbers it has nothing
+        # to do with.
         shaft_checks = [c for c in (r.get("checks") or []) if c.get("subsystem") == "shaft"]
-        shaft_fail = any(c.get("type") == "fail" for c in shaft_checks)
-        shaft_warn = any(c.get("type") == "warn" for c in shaft_checks)
-        border_color = DANGER if shaft_fail else WARNING if shaft_warn else None
-        note, note_color = None, None
-        if shaft_fail or shaft_warn:
-            msg_type = "fail" if shaft_fail else "warn"
-            match = next((c.get("msg") for c in shaft_checks if c.get("type") == msg_type), None)
+        SIZING_KEYWORDS = ("governed by", "critical speed")
+        sizing_checks = [c for c in shaft_checks
+                          if any(k in (c.get("msg") or "").lower() for k in SIZING_KEYWORDS)]
+        other_checks = [c for c in shaft_checks if c not in sizing_checks]
+
+        sizing_fail = any(c.get("type") == "fail" for c in sizing_checks)
+        sizing_warn = any(c.get("type") == "warn" for c in sizing_checks)
+        sizing_status = "fail" if sizing_fail else "warn" if sizing_warn else None
+        note = None
+        if sizing_status:
+            match = next((c.get("msg") for c in sizing_checks if c.get("type") == sizing_status), None)
             if match:
-                note = ("⚠ " if shaft_fail else "ℹ ") + match
-                note_color = DANGER if shaft_fail else WARNING
+                note = match
         if r.get("d_mm") is not None:
             bl.addWidget(stat_box(
                 [("Stress", f"{fmt(r.get('d_stress_mm'), 1)} mm"),
                  ("Deflection", f"{fmt(r.get('d_deflect_mm'), 1)} mm"),
                  ("Governing", f"{fmt(r.get('d_mm'), 1)} mm"),
                  ("Governed by", r.get("governed_by", "—"))],
-                border_color=border_color, note=note, note_color=note_color,
+                status=sizing_status, note=note,
             ))
+
+        # Other shaft-subsystem concerns (seals, bearing grease/lubrication,
+        # keyway, material) -- real and worth showing, just not as a false
+        # accusation against the dimension numbers above. Only fail/warn
+        # ones are surfaced here; "ok"/"info" shaft-subsystem checks are
+        # already represented elsewhere in this quadrant (material note,
+        # keyway check via Hub Connection section below).
+        other_flags = [c for c in other_checks if c.get("type") in ("fail", "warn")]
+        if other_flags:
+            flags_box = QVBoxLayout()
+            flags_box.setSpacing(6)
+            for c in other_flags:
+                flag_note(c.get("type"), c.get("msg", ""), parent_layout=flags_box)
+            bl.addLayout(flags_box)
 
         bl.addWidget(section_head("Shaft Material"))
         self.material_combo = QComboBox()
@@ -2265,7 +2001,11 @@ class ShaftEditDialog(QDialog):
             "Higher grades permit a smaller shaft diameter for the same load, at higher material cost."
         )
         mat_note.setWordWrap(True)
-        mat_note.setStyleSheet(f"color: {MUTED}; font-size: 9.5px;")
+        # FIX (Jay: "image 2 text illegible"): 9.5px note text was too
+        # small to read clearly at normal screen scaling -- bumped to
+        # 11px, matching the legibility pass already done on the
+        # Material-Based Design Guidance card.
+        mat_note.setStyleSheet(f"color: {TEXT3}; font-size: 11px;")
         bl.addWidget(mat_note)
 
         bl.addWidget(section_head("Shaft Section"))
@@ -2313,20 +2053,95 @@ class ShaftEditDialog(QDialog):
         )
         note = QLabel(note_text)
         note.setWordWrap(True)
-        note.setStyleSheet(f"color: {TEXT3}; font-size: 10px;")
+        # FIX (Jay: "image 2 text illegible"): 9.5-10px throughout this
+        # quadrant was too small -- bumped to 11px, same pass applied to
+        # the Head Shaft quadrant's material note.
+        note.setStyleSheet(f"color: {TEXT3}; font-size: 11px;")
         bl.addWidget(note)
         span_note = QLabel(f"Span: {fmt(boot_shaft.get('span_mm'), 0)} mm.")
-        span_note.setStyleSheet(f"color: {MUTED}; font-size: 9.5px;")
+        span_note.setStyleSheet(f"color: {MUTED}; font-size: 10px;")
         bl.addWidget(span_note)
-        gap_note = QLabel(
-            "No diameter override for the boot shaft yet -- this quadrant is read-only "
-            "for now. Say if you'd like one added, mirroring shaft_d_override_mm above."
+
+        # FIX (Jay: "boot shaft section does not have override or hollow
+        # vs solid... or material grade selection"): backend now supports
+        # boot_shaft_section/boot_shaft_bore_ratio/boot_shaft_d_override_mm
+        # (calculations.py v1.10.0 -- previously bore_ratio was hardcoded
+        # to 0.0 with no override path at all, even though the same
+        # shaft_diameter_governing_hollow() function the head shaft uses
+        # already accepted these parameters). Material grade is NOT
+        # duplicated here -- confirmed directly in calculations.py: the
+        # boot shaft is sized using the same _tau_allow_Pa as the head
+        # shaft, one grade governs both by design (a bucket elevator
+        # doesn't mix shaft material grades within one machine). No hub
+        # connection control either: the boot pulley is free-running with
+        # zero drive torque (T_Nm=0 in the actual sizing call), so there
+        # genuinely is no keyed-vs-welded decision to make -- explained
+        # here rather than offering a control that wouldn't do anything.
+        mat_share_note = QLabel(
+            "Uses the same material grade as Head Shaft (above) — one grade governs both."
         )
-        gap_note.setWordWrap(True)
-        gap_note.setStyleSheet(f"color: {MUTED}; font-size: 9.5px; font-style: italic; margin-top: 4px;")
-        bl.addWidget(gap_note)
+        mat_share_note.setWordWrap(True)
+        mat_share_note.setStyleSheet(f"color: {MUTED}; font-size: 10px; font-style: italic;")
+        bl.addWidget(mat_share_note)
+
+        bl.addWidget(section_head("Boot Shaft Section"))
+        self._boot_section_val = [self.inputs.get("boot_shaft_section", "solid")]
+        bl.addLayout(toggle_pair(["solid", "hollow"], self._boot_section_val, self._on_boot_section_change))
+        self.boot_bore_box = QVBoxLayout()
+        bl.addLayout(self.boot_bore_box)
+        self.boot_bore_ratio = styled_spinbox(QDoubleSpinBox())
+        self.boot_bore_ratio.setRange(0.1, 0.85); self.boot_bore_ratio.setSingleStep(0.05)
+        self.boot_bore_ratio.setValue(float(self.inputs.get("boot_shaft_bore_ratio", 0.5)))
+        self._rebuild_boot_bore_field(boot_shaft)
+
+        bl.addWidget(section_head("No Hub Connection — Free-Running"))
+        no_hub_note = QLabel(
+            "Boot pulley carries zero drive torque, so there's no keyed-vs-welded "
+            "decision here — that control only applies to the driven (head) shaft."
+        )
+        no_hub_note.setWordWrap(True)
+        no_hub_note.setStyleSheet(f"color: {MUTED}; font-size: 10px;")
+        bl.addWidget(no_hub_note)
+
+        bl.addWidget(section_head("Boot Shaft Diameter Override"))
+        self.boot_shaft_override = styled_spinbox(QDoubleSpinBox())
+        self.boot_shaft_override.setRange(0, 500); self.boot_shaft_override.setSingleStep(5)
+        self.boot_shaft_override.setValue(float(self.inputs.get("boot_shaft_d_override_mm", 0)))
+        bl.addLayout(field_row("Boot Shaft Dia. Override", self.boot_shaft_override, "mm",
+                                note="0 = auto from bending/deflection check. Specify to force a standard bar size."))
         bl.addStretch()
         return frame
+
+    def _on_boot_section_change(self, value):
+        self._boot_section_val[0] = value
+        self._rebuild_boot_bore_field(self._last_boot_shaft_results)
+
+    def _rebuild_boot_bore_field(self, boot_shaft):
+        self._last_boot_shaft_results = boot_shaft
+        while self.boot_bore_box.count():
+            item = self.boot_bore_box.takeAt(0)
+            w = item.widget() if item else None
+            if w:
+                w.setParent(None)
+                w.deleteLater()
+            elif item is not None:
+                sub = item.layout()
+                if sub:
+                    while sub.count():
+                        sub_item = sub.takeAt(0)
+                        sub_w = sub_item.widget() if sub_item else None
+                        if sub_w:
+                            sub_w.setParent(None)
+                            sub_w.deleteLater()
+        if self._boot_section_val[0] == "hollow":
+            bs = boot_shaft or {}
+            note = (
+                f"OD {fmt(bs.get('d_mm'),0)}mm · ID≈{fmt(bs.get('d_inner_mm'),0)}mm · "
+                f"~{fmt(bs.get('mass_saving_pct'),0)}% mass reduction vs equivalent solid shaft."
+                if bs.get("bore_ratio") else
+                "Typical hollow shaft practice: 0.4-0.7. Same fabrication/weight trade-off as the head shaft."
+            )
+            self.boot_bore_box.addLayout(field_row("Boot Bore Ratio (ID/OD)", self.boot_bore_ratio, note=note))
 
     # ── Top-right ─────────────────────────────────────────────────────
     def _build_head_bearing_quadrant(self, r):
@@ -2446,6 +2261,9 @@ class ShaftEditDialog(QDialog):
         self.inputs["shaft_d_override_mm"] = self.shaft_override.value()
         self.inputs["bearing_name"] = self.bearing_picker.value()
         self.inputs["boot_bearing_name"] = self.boot_bearing_picker.value()
+        self.inputs["boot_shaft_section"] = self._boot_section_val[0]
+        self.inputs["boot_shaft_bore_ratio"] = self.boot_bore_ratio.value()
+        self.inputs["boot_shaft_d_override_mm"] = self.boot_shaft_override.value()
         return self.inputs
 
 
@@ -2535,12 +2353,76 @@ class InputSidebarPanel(QWidget):
         shaft_row.clicked = lambda: self._open_shaft_dialog()
         self.list_layout.addWidget(shaft_row)
 
-        for sid, label in NOT_YET_PORTED:
-            row = SectionRow(label, self._summary_for(sid))
-            row.clicked = lambda l=label: self._open_not_yet_ported(l)
-            self.list_layout.addWidget(row)
+        takeup_row = SectionRow("Take-Up Selection", self._takeup_summary())
+        takeup_row.clicked = lambda: self._open_takeup_dialog()
+        self.list_layout.addWidget(takeup_row)
+
+        discharge_row = SectionRow("Discharge Section", self._discharge_summary())
+        discharge_row.clicked = lambda: self._open_discharge_dialog()
+        self.list_layout.addWidget(discharge_row)
+
+        feed_row = SectionRow("Feed Design", self._feed_summary())
+        feed_row.clicked = lambda: self._open_feed_dialog()
+        self.list_layout.addWidget(feed_row)
+
+        casing_row = SectionRow("Casing Design", self._casing_summary())
+        casing_row.clicked = lambda: self._open_casing_dialog()
+        self.list_layout.addWidget(casing_row)
+
+        service_row = SectionRow("Service Conditions", self._service_summary())
+        service_row.clicked = lambda: self._open_service_dialog()
+        self.list_layout.addWidget(service_row)
+
+        power_row = SectionRow("Power Transmission", self._power_summary())
+        power_row.clicked = lambda: self._open_power_dialog()
+        self.list_layout.addWidget(power_row)
 
         self.list_layout.addStretch()
+
+    def _discharge_summary(self):
+        r = self.results
+        dc = r.get("discharge_chute") or {}
+        perf = dc.get("performance") or {}
+        dtype = r.get("discharge_type", "—")
+        liner = self.inputs.get("chute_liner_id", "auto")
+        return f"{str(dtype).capitalize()} · {liner} liner · {fmt(perf.get('chute_angle_deg'), 0)}°"
+
+    def _feed_summary(self):
+        fd = self.results.get("feed_design") or {}
+        if fd:
+            return f"{fd.get('loading_type', '—')} · Surge {fmt(fd.get('V_surge_litres'), 0)}L"
+        return "Run calculation to see boot feed geometry"
+
+    def _casing_summary(self):
+        cp = self.results.get("casing_panel") or {}
+        t_use = cp.get("t_use_mm")
+        if t_use is not None:
+            return f"{fmt(t_use, 1)}mm plate · {cp.get('status', '—')}"
+        return "Run calculation to see casing sizing"
+
+    def _service_summary(self):
+        env = self.inputs.get("environment", "dry")
+        return f"{env.capitalize()} · μ={fmt(self.inputs.get('mu', 0.35), 2)}"
+
+    def _power_summary(self):
+        r = self.results
+        if r.get("motor_kw") is not None:
+            return f"{fmt(r.get('motor_kw'), 0)}kW · {self.inputs.get('drive_start_type', 'soft_start')}"
+        return "Run calculation to see motor sizing"
+
+    def _takeup_summary(self):
+        takeup_type = self.inputs.get("takeup_type", "gravity")
+        tg = self.results.get("takeup_gravity") or {}
+        ts = self.results.get("takeup_screw") or {}
+        th = self.results.get("takeup_hydraulic") or {}
+        primary = next((d for d in (tg, ts, th) if d.get("primary")), None)
+        if primary is tg and tg:
+            return f"{takeup_type} · {fmt(tg.get('W_counterweight_kg_gross'), 0)}kg counterweight"
+        if primary is ts and ts:
+            return f"{takeup_type} · {fmt(ts.get('d_core_min_mm'), 0)}mm core · SF={fmt(ts.get('SF_buckling'), 1)}"
+        if primary is th and th:
+            return f"{takeup_type} · {fmt(th.get('d_bore_min_mm'), 0)}mm bore @ {fmt(th.get('operating_bar'), 0)}bar"
+        return f"{takeup_type} take-up"
 
     def _belt_summary(self):
         r = self.results
@@ -2550,23 +2432,6 @@ class InputSidebarPanel(QWidget):
         r = self.results
         cs = r.get("chain_selected") or {}
         return f"{cs.get('name', 'auto')} · SF={fmt(r.get('chain_SF_actual'), 2)}"
-
-    def _summary_for(self, section_id):
-        r = self.results
-        if section_id == "takeup":
-            return f"{self.inputs.get('takeup_type', 'gravity')} take-up"
-        if section_id == "discharge":
-            return f"{'HF continuous' if r.get('is_continuous') else 'Centrifugal'} · CR={fmt(r.get('cr'), 3)}"
-        if section_id == "feed":
-            fd = r.get("feed_design")
-            return f"{fd.get('loading_type')} · Surge {fd.get('V_surge_litres')}L" if fd else "Run calculation to see boot feed geometry"
-        if section_id == "casing":
-            return f"{self.inputs.get('casing_t_override_mm', 'auto')} mm plate"
-        if section_id == "service":
-            return f"{self.inputs.get('environment', 'dry')} · μ={self.inputs.get('mu', '—')}"
-        if section_id == "power":
-            return f"SF {self.inputs.get('sf', '—')} · K {self.inputs.get('K_takeup', '—')}"
-        return ""
 
     def _open_process_dialog(self):
         dlg = ProcessEditDialog(self.inputs, self.results, self)
@@ -2593,5 +2458,32 @@ class InputSidebarPanel(QWidget):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.inputsChanged.emit(dlg.updated_inputs())
 
-    def _open_not_yet_ported(self, label):
-        NotYetPortedDialog(label, self).exec()
+    def _open_takeup_dialog(self):
+        dlg = TakeupEditDialog(self.inputs, self.results, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.inputsChanged.emit(dlg.updated_inputs())
+
+    def _open_discharge_dialog(self):
+        dlg = DischargeEditDialog(self.inputs, self.results, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.inputsChanged.emit(dlg.updated_inputs())
+
+    def _open_feed_dialog(self):
+        dlg = FeedEditDialog(self.inputs, self.results, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.inputsChanged.emit(dlg.updated_inputs())
+
+    def _open_casing_dialog(self):
+        dlg = CasingEditDialog(self.inputs, self.results, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.inputsChanged.emit(dlg.updated_inputs())
+
+    def _open_service_dialog(self):
+        dlg = ServiceEditDialog(self.inputs, self.results, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.inputsChanged.emit(dlg.updated_inputs())
+
+    def _open_power_dialog(self):
+        dlg = PowerEditDialog(self.inputs, self.results, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.inputsChanged.emit(dlg.updated_inputs())

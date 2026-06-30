@@ -2718,17 +2718,42 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     #     as the head pulley, with boot-specific diameter and load
     _boot_span_m, _boot_A_m, _boot_B_m = _shaft_geometry(BW_mm)
     _boot_M_Nm = _bending_moment(_R_boot_N, _boot_A_m, _boot_B_m)
+    # v1.10.0 — boot_shaft_section/boot_shaft_bore_ratio now actually read
+    # (previously hardcoded bore_ratio=0.0 even though the function below
+    # always accepted the parameter -- it just wasn't exposed). Same
+    # degenerate-to-solid behavior as the head shaft: bore_ratio=0 makes
+    # shaft_diameter_governing_hollow() compute the plain solid case.
+    _boot_shaft_section = getattr(inp, "boot_shaft_section", "solid") or "solid"
+    _boot_shaft_bore_ratio = (
+        float(getattr(inp, "boot_shaft_bore_ratio", 0) or 0)
+        if _boot_shaft_section == "hollow" else 0.0
+    )
     _boot_gov = StructuralStressEngine.shaft_diameter_governing_hollow(
         _boot_M_Nm, 0.0, _R_boot_N,
-        bore_ratio=0.0, overhang_A_m=_boot_A_m, span_B_m=_boot_B_m,
+        bore_ratio=_boot_shaft_bore_ratio, overhang_A_m=_boot_A_m, span_B_m=_boot_B_m,
         allowable=_tau_allow_Pa,
     )
+    _boot_d_mm_calc = _boot_gov["d_governing_mm"]
+    # v1.10.0 — boot_shaft_d_override_mm: same override pattern as the
+    # head shaft (shaft_d_override_mm above) -- previously this quadrant
+    # was genuinely read-only, no override path existed at all.
+    _boot_shaft_override = getattr(inp, "boot_shaft_d_override_mm", 0) or 0
+    if _boot_shaft_override > 0:
+        _boot_d_mm = float(_boot_shaft_override)
+        _boot_governed_by = f"user override ({_boot_shaft_override:.0f}mm, calc min {_boot_d_mm_calc:.1f}mm)"
+    else:
+        _boot_d_mm = _boot_d_mm_calc
+        _boot_governed_by = _boot_gov["governed_by"]
     boot_shaft = {
-        "d_mm":         _boot_gov["d_governing_mm"],
+        "d_mm":         round(_boot_d_mm, 1),
         "d_stress_mm":  _boot_gov["d_stress_mm"],
         "d_deflect_mm": _boot_gov["d_deflect_mm"],
-        "governed_by":  _boot_gov["governed_by"],
+        "governed_by":  _boot_governed_by,
         "span_mm":      round(_boot_span_m * 1000.0, 0),
+        "section":      _boot_shaft_section,
+        "bore_ratio":   _boot_gov.get("bore_ratio", 0.0),
+        "d_inner_mm":   _boot_gov.get("d_inner_mm", 0.0),
+        "mass_saving_pct": _boot_gov.get("mass_saving_pct", 0.0),
         "note": "Free-running shaft (no drive torque) — bending/deflection governs, not torsion. No keyway required.",
     }
 

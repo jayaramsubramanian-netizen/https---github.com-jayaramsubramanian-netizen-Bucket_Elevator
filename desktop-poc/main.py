@@ -27,8 +27,8 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFrame, QStackedWidget, QMenu, QSplitter,
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtCore import Qt, QRectF
+from PySide6.QtGui import QAction, QPainter, QColor, QBrush, QPen, QFont
 
 from theme import (
     BG, PANEL, PANEL2, BORDER, TEXT, TEXT2, TEXT3, MUTED, PRIMARY,
@@ -288,6 +288,94 @@ class NavTabButton(QPushButton):
             """)
 
 
+class KPIChip(QWidget):
+    """One performance indicator (Q / P / v) -- single bordered box, no
+    nested box-in-a-box. The label (e.g. "Q") sits as a small mark in the
+    top-left corner, the unit (e.g. "t/h") as a small mark in the
+    bottom-right corner, and the value fills the rest of the box, large
+    and centered -- exactly the layout asked for, corner labels acting
+    as superscript/subscript reference points around one real value.
+
+    FIX (4th attempt at this -- a real Windows screenshot showed the
+    digits themselves rendering garbled/doubled, not just small): the
+    likely cause was never spacing or color, it was font rendering --
+    QLabel's QSS `font-weight: 700` on a font with no real bold variant
+    forces Qt to synthesize bold by drawing the glyph outline twice with
+    a slight offset, which can look smeared or doubled at small pixel
+    sizes, especially under Fusion's text rendering path on Windows.
+    Rather than keep guessing at QSS properties, this draws everything
+    directly with QPainter -- the same proven approach already used for
+    DynamicFillBarWidget elsewhere in this app -- with an explicit QFont
+    or Weight.Bold (Qt's real bold mechanism, not a CSS string Qt has to
+    interpret and possibly synthesize), removing the QSS/QLabel layer
+    that was the actual suspect, not just removing visual clutter.
+    """
+
+    def __init__(self, label, unit, parent=None):
+        super().__init__(parent)
+        self.label_text = label.upper()
+        self.unit_text = unit
+        self.value_text = "—"
+        self.accent_color = QColor(TEXT3)
+        self.setMinimumSize(80, 56)
+
+    def set_value(self, text, color_hex):
+        self.value_text = text
+        self.accent_color = QColor(color_hex)
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        w, h = self.width(), self.height()
+
+        # Single box -- border tinted by status, no second nested frame.
+        p.setPen(QPen(self.accent_color, 1.4))
+        p.setBrush(QBrush(QColor(PANEL2)))
+        p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), 8, 8)
+
+        margin = 7
+
+        # Label -- top-left corner.
+        label_font = QFont()
+        label_font.setPixelSize(9)
+        label_font.setWeight(QFont.Weight.DemiBold)
+        p.setFont(label_font)
+        p.setPen(QColor(TEXT2))
+        p.drawText(
+            QRectF(margin, margin - 1, w - 2 * margin, 12),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            self.label_text,
+        )
+
+        # Unit -- bottom-right corner.
+        unit_font = QFont()
+        unit_font.setPixelSize(9)
+        unit_font.setWeight(QFont.Weight.DemiBold)
+        p.setFont(unit_font)
+        p.setPen(QColor(TEXT2))
+        p.drawText(
+            QRectF(margin, h - margin - 11, w - 2 * margin, 12),
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            self.unit_text,
+        )
+
+        # Value -- fills the box, large and centered. Qt's real
+        # Weight.Bold, not a QSS string Qt has to interpret.
+        value_font = QFont()
+        value_font.setPixelSize(24)
+        value_font.setWeight(QFont.Weight.Bold)
+        p.setFont(value_font)
+        p.setPen(self.accent_color)
+        p.drawText(
+            QRectF(0, 0, w, h),
+            Qt.AlignmentFlag.AlignCenter,
+            self.value_text,
+        )
+        p.end()
+
+
 class TopNav(QFrame):
     """Page-level bar: a "Bucket Elevator" dropdown with standard window
     functions, the tab pills, plus Q/P/v KPI chips.
@@ -308,10 +396,10 @@ class TopNav(QFrame):
     def __init__(self, on_tab_changed, parent=None):
         super().__init__(parent)
         self.on_tab_changed = on_tab_changed
-        self.setFixedHeight(56)
+        self.setFixedHeight(76)
         self.setStyleSheet(f"background-color: {PANEL}; border-bottom: 1px solid {BORDER};")
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(2)
 
         menu_qss = f"""
@@ -382,27 +470,24 @@ class TopNav(QFrame):
 
         layout.addStretch()
 
+        # FIX (Jay, third pass on this specific complaint): previous
+        # rounds increased padding/spacing but kept the same basic chip
+        # proportions -- confirmed against a real screenshot that 279 /
+        # 25.0 / 1.83 were still hard to read at a glance. This is a
+        # genuinely bigger change, not an incremental nudge: value text
+        # nearly 50% larger (22px vs 15px) and bold, a fixed minimum
+        # FIX (this round, see KPIChip class above for the full reasoning):
+        # replaced the QFrame + 3-stacked-QLabel chip with a single
+        # custom-painted widget -- no box-in-a-box, label and unit are
+        # small corner marks around one large centered value, drawn
+        # directly with QPainter instead of QSS-styled QLabels.
         kpi_row = QHBoxLayout()
-        kpi_row.setSpacing(8)
-        self.kpi_labels = {}
+        kpi_row.setSpacing(10)
+        self.kpi_chips = {}
         for label, unit in (("Q", "t/h"), ("P", "kW"), ("v", "m/s")):
-            chip = QFrame()
-            chip.setStyleSheet(f"background-color: {PANEL2}; border: 1px solid {BORDER}; border-radius: 7px;")
-            chip_layout = QVBoxLayout(chip)
-            chip_layout.setContentsMargins(12, 5, 12, 5)
-            chip_layout.setSpacing(1)
-            lbl = QLabel(label.upper())
-            lbl.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 600;")
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            val = QLabel("—")
-            val.setStyleSheet(f"color: {TEXT3}; font-size: 15px; font-weight: 700;")
-            val.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            unit_lbl = QLabel(unit)
-            unit_lbl.setStyleSheet(f"color: {MUTED}; font-size: 9px;")
-            unit_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            chip_layout.addWidget(lbl); chip_layout.addWidget(val); chip_layout.addWidget(unit_lbl)
+            chip = KPIChip(label, unit)
             kpi_row.addWidget(chip)
-            self.kpi_labels[label] = val
+            self.kpi_chips[label] = chip
         layout.addLayout(kpi_row)
 
     def _toggle_maximize(self):
@@ -428,20 +513,18 @@ class TopNav(QFrame):
         calculations.py) -- per the architecture rule that the frontend
         never duplicates engineering checks. P and v don't have an
         equivalent required-vs-actual concept in the backend, so they
-        keep their original fixed categorical colors."""
+        keep their original fixed categorical colors. set_value() handles
+        both the text and the border/value color in one call now -- no
+        separate accent step needed since KPIChip paints its own border."""
         r = results or {}
-        self.kpi_labels["Q"].setText(fmt_kpi(r.get("Q"), 0))
-        self.kpi_labels["P"].setText(fmt_kpi(r.get("P_total"), 1))
-        self.kpi_labels["v"].setText(fmt_kpi(r.get("v"), 2))
-
         if r.get("Q") is not None:
             cap_ok = r.get("cap_ok")
             q_color = SUCCESS if cap_ok else (DANGER if cap_ok is False else TEXT3)
-            self.kpi_labels["Q"].setStyleSheet(f"color: {q_color}; font-size: 15px; font-weight: 700;")
+            self.kpi_chips["Q"].set_value(fmt_kpi(r.get("Q"), 0), q_color)
         if r.get("P_total") is not None:
-            self.kpi_labels["P"].setStyleSheet(f"color: {WARNING}; font-size: 15px; font-weight: 700;")
+            self.kpi_chips["P"].set_value(fmt_kpi(r.get("P_total"), 1), WARNING)
         if r.get("v") is not None:
-            self.kpi_labels["v"].setStyleSheet(f"color: {PRIMARY}; font-size: 15px; font-weight: 700;")
+            self.kpi_chips["v"].set_value(fmt_kpi(r.get("v"), 2), PRIMARY)
 
     def update_fail_badge(self, n_fail):
         base = TABS[4]["label"]
