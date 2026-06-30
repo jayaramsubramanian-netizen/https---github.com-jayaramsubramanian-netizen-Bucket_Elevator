@@ -35,10 +35,10 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QAbstractSpinBox, QComboBox, QGridLayout,
 )
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF, QTimer, QThread
-from PySide6.QtGui import QPainter, QColor, QBrush, QPen
+from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QPalette
 
 from theme import BG, PANEL, PANEL2, BORDER, TEXT, TEXT2, TEXT3, MUTED, PRIMARY, SUCCESS, WARNING, DANGER
-from api_client import search_materials, get_material, fetch_components
+from api_client import search_materials, get_material, fetch_components, fetch_design
 
 # Sections not yet ported -- listed explicitly so the gap is named, not
 # silently absent. (id, label)
@@ -205,10 +205,48 @@ def styled_spinbox(spinbox):
     # overlapping. Setting an explicit minimum height makes this a hard
     # floor the layout can't shrink past.
     spinbox.setMinimumHeight(28)
-    spinbox.setStyleSheet(
-        f"background-color: {PANEL2}; color: {TEXT}; border: 1px solid {BORDER}; "
-        f"border-radius: 4px; padding: 5px 8px; font-size: 12px;"
-    )
+    # FIX (Jay: "lost silver color in the arrows" + "overlapping numbers"):
+    # both trace back to the same cause. Switching the app to
+    # app.setStyle("Fusion") (main.py, to fix the tab-pill rendering)
+    # changed how QAbstractSpinBox's up/down sub-controls get laid out --
+    # Fusion doesn't reserve the same implicit right-hand gap the native
+    # Windows style did, so without an explicit padding-right the value
+    # text and the arrow buttons started overlapping. And Fusion draws
+    # the small arrow glyphs using the widget's ButtonText palette role,
+    # not the QSS `color` property -- nothing was setting that role
+    # explicitly, so the arrows defaulted to a near-invisible dark tone
+    # against this dark theme once Fusion took over the rendering.
+    # Fixed both together: explicit subcontrol geometry for the up/down
+    # buttons (with real padding-right reserved so text can't run under
+    # them) and a direct QPalette.ButtonText override so the arrows are
+    # visibly silver-blue (TEXT2) again, matching how they looked under
+    # the native style before Fusion was introduced.
+    spinbox.setStyleSheet(f"""
+        QAbstractSpinBox {{
+            background-color: {PANEL2}; color: {TEXT}; border: 1px solid {BORDER};
+            border-radius: 4px; padding: 5px 22px 5px 8px; font-size: 12px;
+        }}
+        QAbstractSpinBox::up-button {{
+            subcontrol-origin: border; subcontrol-position: top right;
+            width: 18px; height: 13px;
+            border-left: 1px solid {BORDER}; border-bottom: 1px solid {BORDER};
+            border-top-right-radius: 4px;
+            background-color: {PANEL2};
+        }}
+        QAbstractSpinBox::down-button {{
+            subcontrol-origin: border; subcontrol-position: bottom right;
+            width: 18px; height: 13px;
+            border-left: 1px solid {BORDER};
+            border-bottom-right-radius: 4px;
+            background-color: {PANEL2};
+        }}
+        QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{
+            background-color: {BORDER};
+        }}
+    """)
+    pal = spinbox.palette()
+    pal.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT2))
+    spinbox.setPalette(pal)
     return spinbox
 
 
@@ -394,6 +432,42 @@ class MaterialSearchWorker(QThread):
             results = search_materials(self.query, limit=self.limit)
         except Exception:
             results = []
+        self.resultsReady.emit(results)
+
+
+class GuidancePreviewWorker(QThread):
+    """Runs a full /calculate request in the background so the Material-
+    Based Design Guidance card can react live to in-dialog edits --
+    material temperature, required capacity, or material selection --
+    without the user needing to Apply, close, and reopen the dialog to
+    see whether their change pushed the recommendation into mismatch.
+
+    FIX (Jay: "response to changing temperature above the belt range
+    does not give an immediate red flag... I have to apply and close the
+    modal and reopen"): confirmed the cause directly -- the guidance card
+    only ever read self.results, a snapshot taken when the dialog opened
+    that never updated again until a real Apply triggered main.py's
+    run_calculation() and the dialog was reopened against the new
+    results. The fix is NOT to recompute the temperature-vs-belt-limit
+    logic here in the frontend (that would be exactly the kind of
+    duplicated physics the architecture forbids, and a second copy of
+    that threshold could drift from BELT_TEMP_LIMITS in calculations.py).
+    Instead, this calls the exact same backend endpoint main.py's
+    run_calculation() uses, just triggered eagerly on a debounce while
+    the dialog is still open, and discarded (never applied to the real
+    payload) unless the user clicks Apply for real. No new engineering
+    logic exists anywhere that didn't already exist in the backend."""
+    resultsReady = Signal(dict)
+
+    def __init__(self, payload, parent=None):
+        super().__init__(parent)
+        self.payload = payload
+
+    def run(self):
+        try:
+            results = fetch_design(self.payload)
+        except Exception:
+            results = {}
         self.resultsReady.emit(results)
 
 
@@ -750,6 +824,21 @@ class ProcessEditDialog(QDialog):
         left.addLayout(self.guidance_box)
         self._rebuild_guidance()
 
+        # FIX (Jay: guidance card needed Apply+close+reopen to reflect a
+        # temperature change): debounced live preview, NOT a client-side
+        # threshold check -- see GuidancePreviewWorker above for why this
+        # is the architecturally correct fix rather than a shortcut.
+        # Q_req is included as a trigger too since bucket_recommendation()
+        # takes Q_req as a real parameter (not just material_temp_c) on
+        # the backend, confirmed directly in calculations.py.
+        self._guidance_debounce = QTimer(self)
+        self._guidance_debounce.setSingleShot(True)
+        self._guidance_debounce.setInterval(450)
+        self._guidance_debounce.timeout.connect(self._refresh_guidance_preview)
+        self._guidance_worker = None
+        self.material_temp.valueChanged.connect(lambda _v: self._guidance_debounce.start())
+        self.q_req.valueChanged.connect(lambda _v: self._guidance_debounce.start())
+
         left.addWidget(section_head("Drive Type"))
         drive_row = QHBoxLayout()
         self.belt_btn = QPushButton("🔵 Belt Drive")
@@ -911,52 +1000,112 @@ class ProcessEditDialog(QDialog):
         current_drive = self.inputs.get("conveyor_type", "belt")
         recommended_drive = rec.get("recommended_drive_type", "belt")
         mismatch = current_drive != recommended_drive
+        accent = DANGER if mismatch else SUCCESS
 
-        box = QFrame()
-        box.setStyleSheet(
-            f"background-color: {'rgba(224,82,82,.08)' if mismatch else 'rgba(31,184,110,.07)'}; "
-            f"border: 1px solid {'rgba(224,82,82,.3)' if mismatch else 'rgba(31,184,110,.25)'}; border-radius: 5px;"
+        # FIX (Jay: "too cramped, text sizing too small, make it more
+        # professional looking"): rebuilt with real card proportions
+        # instead of the previous compressed info-strip treatment --
+        # larger type throughout (11-13px body instead of 9-10px), a
+        # colored left accent bar so the pass/fail state reads at a
+        # glance without needing to parse the text first, generous
+        # padding, and a real divider between the drive-type verdict and
+        # the discharge-character section rather than running them
+        # together with no visual break.
+        outer = QFrame()
+        outer.setStyleSheet(
+            f"background-color: {'rgba(224,82,82,.07)' if mismatch else 'rgba(31,184,110,.06)'}; "
+            f"border: 1px solid {'rgba(224,82,82,.28)' if mismatch else 'rgba(31,184,110,.22)'}; "
+            f"border-left: 4px solid {accent}; border-radius: 7px;"
         )
-        bl = QVBoxLayout(box)
-        bl.setContentsMargins(10, 8, 10, 8)
-        bl.setSpacing(4)
-        head = QLabel("●  MATERIAL-BASED DESIGN GUIDANCE")
-        head.setStyleSheet(f"color: {PRIMARY}; font-size: 10px; font-weight: 700; letter-spacing: .5px;")
+        bl = QVBoxLayout(outer)
+        bl.setContentsMargins(14, 12, 14, 12)
+        bl.setSpacing(8)
+
+        head = QLabel("MATERIAL-BASED DESIGN GUIDANCE")
+        head.setStyleSheet(f"color: {PRIMARY}; font-size: 11px; font-weight: 700; letter-spacing: .6px;")
         bl.addWidget(head)
 
         drive_line = QLabel(
-            f"⚠ You've selected {current_drive.upper()}, but material temperature suggests {recommended_drive.upper()}"
+            f"⚠  You've selected {current_drive.upper()}, but material temperature suggests {recommended_drive.upper()}"
             if mismatch else
-            f"✓ {current_drive.capitalize()} matches the material-temperature recommendation"
+            f"✓  {current_drive.capitalize()} matches the material-temperature recommendation"
         )
         drive_line.setWordWrap(True)
-        drive_line.setStyleSheet(f"color: {DANGER if mismatch else SUCCESS}; font-size: 11px; font-weight: 700;")
+        drive_line.setStyleSheet(f"color: {accent}; font-size: 13px; font-weight: 700;")
         bl.addWidget(drive_line)
 
         reason1 = QLabel(rec.get("drive_type_reasoning", ""))
         reason1.setWordWrap(True)
-        reason1.setStyleSheet(f"color: {TEXT3}; font-size: 10px;")
+        reason1.setStyleSheet(f"color: {TEXT2}; font-size: 11.5px; line-height: 140%;")
         bl.addWidget(reason1)
 
+        divider = QFrame()
+        divider.setFixedHeight(1)
+        divider.setStyleSheet(f"background-color: {BORDER}; margin-top: 2px; margin-bottom: 2px;")
+        bl.addWidget(divider)
+
         discharge_line = QLabel(
-            f"Discharge character: {rec.get('discharge_type', '—').capitalize()} ({rec.get('recommended_style', '—')} style)"
+            f"Discharge character: {rec.get('discharge_type', '—').capitalize()} "
+            f"({rec.get('recommended_style', '—')} style)"
         )
-        discharge_line.setStyleSheet(f"color: {TEXT2}; font-size: 11px; font-weight: 600;")
-        discharge_line.setContentsMargins(0, 4, 0, 0)
+        discharge_line.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700;")
         bl.addWidget(discharge_line)
 
         reason2 = QLabel(rec.get("reasoning", ""))
         reason2.setWordWrap(True)
-        reason2.setStyleSheet(f"color: {TEXT3}; font-size: 10px;")
+        reason2.setStyleSheet(f"color: {TEXT2}; font-size: 11.5px; line-height: 140%;")
         bl.addWidget(reason2)
 
-        stale_note = QLabel("Based on the last calculated result — click Apply after changing "
-                             "material or temperature to refresh this guidance.")
-        stale_note.setWordWrap(True)
-        stale_note.setStyleSheet(f"color: {MUTED}; font-size: 9px; margin-top: 2px;")
-        bl.addWidget(stale_note)
+        # FIX (Jay: "does not give immediate red flag... have to apply
+        # and close the modal and reopen"): this note used to say
+        # "Based on the last calculated result -- click Apply..." -- now
+        # genuinely false, since _refresh_guidance_preview() below keeps
+        # this card current as the user types. Replaced with an honest
+        # description of what IS still true: this is a live preview, not
+        # the calculation that will actually be saved until Apply.
+        live_note = QLabel(
+            "Live preview — updates automatically as you edit material, temperature, or "
+            "capacity above. Click Apply to save these changes to the design."
+        )
+        live_note.setWordWrap(True)
+        live_note.setStyleSheet(f"color: {MUTED}; font-size: 10px; margin-top: 2px;")
+        bl.addWidget(live_note)
 
-        self.guidance_box.addWidget(box)
+        self.guidance_box.addWidget(outer)
+
+    def _preview_payload(self):
+        """Build a full calculation payload reflecting the dialog's
+        CURRENT (possibly unapplied) field values, for the live guidance
+        preview only -- this is never what gets sent on Apply (that's
+        still updated_inputs(), built fresh from final widget state when
+        the user actually clicks Apply)."""
+        payload = dict(self.inputs)
+        payload["Q_req"] = self.q_req.value()
+        payload["H_m"] = self.h_m.value()
+        payload["material_temperature_c"] = self.material_temp.value()
+        payload["mat_id"] = self.material_search.current_mat_id
+        payload["fill_pct"] = self.fill_pct.value()
+        return payload
+
+    def _refresh_guidance_preview(self):
+        if self._guidance_worker is not None and self._guidance_worker.isRunning():
+            self._guidance_worker.resultsReady.disconnect()
+            self._guidance_worker.quit()
+            self._guidance_worker.wait()
+        self._guidance_worker = GuidancePreviewWorker(self._preview_payload(), parent=self)
+        self._guidance_worker.resultsReady.connect(self._on_guidance_preview_ready)
+        self._guidance_worker.start()
+
+    def _on_guidance_preview_ready(self, results):
+        if not results:
+            return
+        # Only refresh the guidance-relevant field -- not the entire
+        # results dict -- so a background preview calculation can't
+        # silently overwrite other fields (e.g. wrap angle, shaft sizing)
+        # the rest of this dialog or other open dialogs might still be
+        # showing from the actual last-Applied calculation.
+        self.results["bucket_recommendation"] = results.get("bucket_recommendation")
+        self._rebuild_guidance()
 
     def _on_material_selected(self, mat_id):
         self.inputs["mat_id"] = mat_id
@@ -984,6 +1133,11 @@ class ProcessEditDialog(QDialog):
             # not a second parallel code path that could drift out of
             # sync with it.
             self._update_temp_advisory(mat.get("temp_max"), mat.get("name"))
+        # Material selection affects the drive-type/discharge recommendation
+        # just as much as temperature does (bucket_recommendation() takes
+        # the material dict directly) -- same debounced live-preview path,
+        # not a separate one-off fetch that could drift out of sync.
+        self._guidance_debounce.start()
 
     def _set_drive_type(self, value, restyle_only=False):
         if not restyle_only:
@@ -1249,11 +1403,40 @@ class PulleyEditDialog(QDialog):
         wr = self.results.get("wrap_recommendation")
         if not wr:
             return
-        effective = self.results.get("wrap_effective_deg", self.inputs.get("wrap_deg", 180))
-        adequate = effective >= wr.get("required_deg", 0)
+        required_deg = wr.get("required_deg")
+        if required_deg is None:
+            # FIX (crash: "'>=' not supported between instances of
+            # 'float' and 'NoneType'"): required_deg isn't a missing-key
+            # case `wr.get("required_deg", 0)` was meant to guard against
+            # -- it's a key that's PRESENT with value None, by design, for
+            # chain drives (confirmed directly in calculations.py: chain
+            # mode returns required_deg=None, config="N/A (chain drive)").
+            # Wrap-angle adequacy is a belt-friction concept (Euler/
+            # Eytelwein slip check) -- it doesn't apply when a chain
+            # positively engages a sprocket instead of relying on
+            # friction wrap. Rather than forcing a fake ADEQUATE/
+            # INADEQUATE verdict onto a value that was never computed,
+            # show the honest reason this card doesn't apply right now.
+            note = QFrame()
+            note.setStyleSheet(f"background-color: {PANEL2}; border: 1px solid {BORDER}; border-radius: 5px;")
+            nl = QVBoxLayout(note)
+            nl.setContentsMargins(10, 8, 10, 8)
+            lbl = QLabel(
+                "Wrap angle adequacy doesn't apply to chain drives — chain positively "
+                "engages the sprocket rather than relying on belt-friction wrap."
+            )
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet(f"color: {TEXT3}; font-size: 10px;")
+            nl.addWidget(lbl)
+            self.wrap_card_box.addWidget(note)
+            return
+        effective = self.results.get("wrap_effective_deg")
+        if effective is None:
+            effective = self.inputs.get("wrap_deg", 180)
+        adequate = effective >= required_deg
         card = StatusCard(
             adequate, "✓ WRAP ANGLE ADEQUATE", "⚠ WRAP ANGLE — SLIP RISK",
-            [("Required", f"{fmt(wr.get('required_deg'), 1)}°"),
+            [("Required", f"{fmt(required_deg, 1)}°"),
              ("Current", f"{fmt(effective, 1)}°"),
              ("Config", wr.get("config", "—"))],
             note=wr.get("recommendation"),
