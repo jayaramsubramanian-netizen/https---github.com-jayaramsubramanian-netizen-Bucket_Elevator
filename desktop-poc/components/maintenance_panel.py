@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from theme import PANEL, PANEL2, BORDER, TEXT, TEXT2, TEXT3, MUTED, PRIMARY, SUCCESS, WARNING, DANGER
-from .dialog_helpers import status_badge
+from .dialog_helpers import status_badge, KPIChip
 
 # Mirrors MaintenanceCard.jsx's PRIORITY_STYLE -- CRITICAL/ROUTINE/ADVISORY,
 # mapped onto the app's existing status_badge vocabulary (fail/info/none)
@@ -41,27 +41,6 @@ def fmt(v, dp=0, fb="—"):
         return fb
 
 
-class _KpiTile(QFrame):
-    def __init__(self, label, value, unit, color, parent=None):
-        super().__init__(parent)
-        self.setStyleSheet(f"background-color: {PANEL2}; border: 1px solid {BORDER}; border-radius: 6px;")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(3)
-        lbl = QLabel(label.upper())
-        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl.setStyleSheet(f"color: {TEXT3}; font-size: 9px; font-weight: 600; letter-spacing: .06em;")
-        layout.addWidget(lbl)
-        val = QLabel(value)
-        val.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        val.setStyleSheet(f"color: {color}; font-size: 17px; font-weight: 700; font-family: 'JetBrains Mono', monospace;")
-        layout.addWidget(val)
-        u = QLabel(unit)
-        u.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        u.setStyleSheet(f"color: {TEXT2}; font-size: 10px; font-family: 'JetBrains Mono', monospace;")
-        layout.addWidget(u)
-
-
 def _schedule_row(item, alt_bg):
     row = QFrame()
     row.setStyleSheet(f"background-color: {PANEL2 if alt_bg else 'transparent'}; border-bottom: 1px solid {BORDER};")
@@ -71,29 +50,22 @@ def _schedule_row(item, alt_bg):
 
     priority = item.get("priority", "ROUTINE")
     badge_color = DANGER if priority == "CRITICAL" else (PRIMARY if priority == "ADVISORY" else TEXT3)
-    interval_box = QFrame()
-    interval_box.setFixedWidth(64)
-    interval_box.setStyleSheet(
-        f"background-color: rgba(224,82,82,.06); border: 1px solid {badge_color}; border-radius: 6px;"
-        if priority == "CRITICAL" else
-        f"background-color: transparent; border: 1px solid {BORDER}; border-radius: 6px;"
-    )
-    ib = QVBoxLayout(interval_box)
-    ib.setContentsMargins(4, 8, 4, 8)
-    ib.setSpacing(1)
-    hrs = QLabel(fmt(item.get("interval_h")))
-    hrs.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    hrs.setStyleSheet(f"color: {badge_color}; font-size: 15px; font-weight: 700; font-family: 'JetBrains Mono', monospace;")
-    ib.addWidget(hrs)
-    hrs_unit = QLabel("hours")
-    hrs_unit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    hrs_unit.setStyleSheet(f"color: {TEXT3}; font-size: 9px;")
-    ib.addWidget(hrs_unit)
+
+    # FIX (Jay: "rework the badges in the maintenance section to look
+    # like the badges for the performance kpis"): replaced the QFrame +
+    # 3-stacked-QLabel interval box with KPIChip -- the exact same
+    # custom-painted widget TopNav's Q/P/v chips use, reused rather than
+    # a second hand-rolled lookalike that could drift out of sync.
+    interval_chip_box = QVBoxLayout()
+    interval_chip_box.setSpacing(2)
+    interval_chip = KPIChip("", "hrs", min_size=(64, 50), value_pixel_size=15)
+    interval_chip.set_value(fmt(item.get("interval_h")), badge_color)
+    interval_chip_box.addWidget(interval_chip)
     wk = QLabel(f"~{item.get('interval_wk', '—')}wk")
     wk.setAlignment(Qt.AlignmentFlag.AlignCenter)
     wk.setStyleSheet(f"color: {TEXT3}; font-size: 9px;")
-    ib.addWidget(wk)
-    layout.addWidget(interval_box)
+    interval_chip_box.addWidget(wk)
+    layout.addLayout(interval_chip_box)
 
     content = QVBoxLayout()
     content.setSpacing(3)
@@ -134,21 +106,17 @@ def _replacement_row(item, alt_bg):
     comp.setWordWrap(True)
     comp.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700;")
     head_row.addWidget(comp, 1)
-    life_box = QVBoxLayout()
-    life_box.setSpacing(0)
     is_critical = item.get("priority") == "CRITICAL"
-    life = QLabel(f"{fmt(item.get('estimated_life_h'))}h")
-    life.setAlignment(Qt.AlignmentFlag.AlignRight)
-    life.setStyleSheet(
-        f"color: {DANGER if is_critical else WARNING}; font-size: 15px; font-weight: 700; "
-        f"font-family: 'JetBrains Mono', monospace;"
-    )
-    life_box.addWidget(life)
+    life_chip_box = QVBoxLayout()
+    life_chip_box.setSpacing(2)
+    life_chip = KPIChip("", "hrs", min_size=(74, 50), value_pixel_size=15)
+    life_chip.set_value(fmt(item.get("estimated_life_h")), DANGER if is_critical else WARNING)
+    life_chip_box.addWidget(life_chip)
     yrs = QLabel(f"≈ {item.get('estimated_life_yr', '—')} yr")
-    yrs.setAlignment(Qt.AlignmentFlag.AlignRight)
-    yrs.setStyleSheet(f"color: {TEXT3}; font-size: 10px;")
-    life_box.addWidget(yrs)
-    head_row.addLayout(life_box)
+    yrs.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    yrs.setStyleSheet(f"color: {TEXT3}; font-size: 9px;")
+    life_chip_box.addWidget(yrs)
+    head_row.addLayout(life_chip_box)
     layout.addLayout(head_row)
 
     action = QLabel(item.get("action", ""))
@@ -255,13 +223,15 @@ class MaintenancePanel(QWidget):
         mtbf = kpis.get("mtbf_h")
         mtbf_color = DANGER if (mtbf is not None and mtbf < 8000) else TEXT2
         tiles = [
-            ("Bearing L10", fmt(kpis.get("L10_hours")), "hours", PRIMARY),
-            ("Belt Life Est.", fmt(kpis.get("belt_life_h")), "hours", WARNING),
-            ("Grease Interval", fmt(kpis.get("grease_interval_h")), "hours", SUCCESS),
-            ("Min Repl. Interval", fmt(mtbf), "hours", mtbf_color),
+            ("Bearing L10", fmt(kpis.get("L10_hours")), "hrs", PRIMARY),
+            ("Belt Life Est.", fmt(kpis.get("belt_life_h")), "hrs", WARNING),
+            ("Grease Interval", fmt(kpis.get("grease_interval_h")), "hrs", SUCCESS),
+            ("Min Repl. Interval", fmt(mtbf), "hrs", mtbf_color),
         ]
         for i, (label, value, unit, color) in enumerate(tiles):
-            grid.addWidget(_KpiTile(label, value, unit, color), i // 2, i % 2)
+            chip = KPIChip(label, unit, min_size=(140, 62), value_pixel_size=19)
+            chip.set_value(value, color)
+            grid.addWidget(chip, i // 2, i % 2)
         self.body_layout.addWidget(kpi_frame)
 
         sub_tabs = QFrame()
