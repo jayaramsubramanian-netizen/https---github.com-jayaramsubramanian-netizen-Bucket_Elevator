@@ -26,7 +26,7 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFrame, QStackedWidget, QMenu, QSplitter,
-    QFileDialog, QMessageBox,
+    QFileDialog, QMessageBox, QScrollArea,
 )
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QAction
@@ -314,10 +314,9 @@ class TopNav(QFrame):
     the one real dropdown, plain QPushButtons for everything else.
     """
 
-    def __init__(self, on_tab_changed, on_pdf_clicked=None, parent=None):
+    def __init__(self, on_tab_changed, parent=None):
         super().__init__(parent)
         self.on_tab_changed = on_tab_changed
-        self.on_pdf_clicked = on_pdf_clicked
         self.setFixedHeight(76)
         self.setStyleSheet(f"background-color: {PANEL}; border-bottom: 1px solid {BORDER};")
         layout = QHBoxLayout(self)
@@ -479,8 +478,8 @@ class ShellWindow(QMainWindow):
         self.resize(1400, 860)
         self.setStyleSheet(f"background-color: {BG};")
 
-        self.app_title_bar = AppTitleBar()
-        self.top_nav = TopNav(on_tab_changed=self._on_tab_changed, on_pdf_clicked=self._on_pdf_clicked)
+        self.app_title_bar = AppTitleBar(on_pdf_clicked=self._on_pdf_clicked)
+        self.top_nav = TopNav(on_tab_changed=self._on_tab_changed)
 
         col1 = QWidget()
         col1_layout = QVBoxLayout(col1)
@@ -508,25 +507,42 @@ class ShellWindow(QMainWindow):
         col3_layout.addWidget(self.col3_header)
         self.middle_stack = QStackedWidget()
 
-        # Results tab: elevation view + charts panel in a vertical splitter
-        results_widget = QWidget()
-        results_layout = QVBoxLayout(results_widget)
-        results_layout.setContentsMargins(0, 0, 0, 0)
-        results_layout.setSpacing(0)
+        # Results tab: elevation view + charts panel.
+        # Wrapped in a QScrollArea so neither the elevation schematic nor the
+        # charts are clipped when the window height is short -- direct user
+        # feedback: "elevator schematic section does not scroll, making this
+        # section be at the very bottom of the page". The internal splitter
+        # remains flexible so the user can still resize the elevation/chart
+        # proportion. The scroll area only activates when content overflows.
+        results_scroll = QScrollArea()
+        results_scroll.setWidgetResizable(True)
+        results_scroll.setStyleSheet("QScrollArea{border:none;}")
+        results_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        results_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        results_inner = QWidget()
+        results_inner_layout = QVBoxLayout(results_inner)
+        results_inner_layout.setContentsMargins(0, 0, 0, 0)
+        results_inner_layout.setSpacing(0)
+
         results_splitter = QSplitter(Qt.Orientation.Vertical)
         results_splitter.setStyleSheet(
-            f"QSplitter::handle{{background:{BORDER};height:3px;}}"
+            f"QSplitter::handle{{background:{BORDER};height:4px;}}"
             f"QSplitter::handle:hover{{background:{PRIMARY};}}"
         )
         self.elevation = ElevationView()
+        self.elevation.setMinimumHeight(300)
         results_splitter.addWidget(self.elevation)
         self.charts_panel = ChartsPanel()
-        self.charts_panel.setMinimumHeight(260)
+        self.charts_panel.setMinimumHeight(300)
         results_splitter.addWidget(self.charts_panel)
-        results_splitter.setStretchFactor(0, 65)
-        results_splitter.setStretchFactor(1, 35)
-        results_layout.addWidget(results_splitter)
-        self.middle_stack.addWidget(results_widget)
+        results_splitter.setStretchFactor(0, 55)
+        results_splitter.setStretchFactor(1, 45)
+        results_splitter.setSizes([420, 340])
+
+        results_inner_layout.addWidget(results_splitter)
+        results_scroll.setWidget(results_inner)
+        self.middle_stack.addWidget(results_scroll)
         self.optimizer_panel = OptimizerPanel(on_apply=self._on_optimizer_apply)
         self.middle_stack.addWidget(self.optimizer_panel)
         self.checks_panel = ChecksPanel(on_apply_correction=self._on_apply_correction)
@@ -614,24 +630,67 @@ class ShellWindow(QMainWindow):
         return n_fail, n_warn
 
     def run_calculation(self, payload=None):
+        """Run a full recalculation and push results to every panel.
+
+        Wrapped in try/except -- any error (HTTP 4xx from invalid inputs,
+        backend 5xx, network drop, or a panel set_data crash) is caught here
+        and shown to the user as a non-fatal error banner instead of killing
+        the window. The previous result is kept so the user can still read
+        what they last successfully calculated.
+
+        The specific crash that prompted this fix: bucket_gap spinbox emitting
+        an intermediate value mid-edit sent a 422 Unprocessable Entity from
+        Pydantic validation, fetch_design() called resp.raise_for_status(),
+        the resulting HTTPError propagated through the call stack with no
+        catch, and Qt terminated the main window's event loop on the unhandled
+        exception. The backend was healthy (200 OK logged for other requests);
+        the crash was entirely in the client-side exception path."""
         if payload is None:
             payload = self._default_payload
-        results = fetch_design(payload)
+        try:
+            results = fetch_design(payload)
+        except Exception as e:
+            # Show the error in the col3 header area and return early,
+            # keeping _last_results / _default_payload from the previous
+            # successful calculation so the user can still read the UI.
+            err_msg = str(e)
+            if "422" in err_msg or "Unprocessable" in err_msg:
+                user_msg = f"Validation error — check input values ({err_msg[:120]})"
+            elif "ConnectionError" in type(e).__name__ or "Connection" in err_msg:
+                user_msg = "Cannot reach backend — is the server running on port 8000?"
+            else:
+                user_msg = f"Calculation error: {err_msg[:200]}"
+            # Replace the col3 header temporarily with an error notice
+            err_header = ColHeader(f"⚠  {user_msg[:80]}")
+            err_header.setStyleSheet(
+                f"background-color: rgba(224,82,82,.12); border-bottom: 1px solid rgba(224,82,82,.35);"
+                f"color: #e05252;"
+            )
+            self.col3_layout.replaceWidget(self.col3_header, err_header)
+            self.col3_header.deleteLater()
+            self.col3_header = err_header
+            return
+
         self._last_results = results
         self._default_payload = payload
-        self.top_nav.update_kpis(results)
-        self.elevation.set_data(payload, results)
-        self.charts_panel.set_data(payload, results)
-        self.tree_panel.set_data(payload, results)
-        self.input_sidebar.set_data(payload, results)
-        self.bom_panel.set_data(payload, results)
-        self.status_panel.set_data(payload, results)
-        self.status_leaves.set_data(payload, results)
-        self.maintenance_panel.set_data(payload, results)
-        self.checks_panel.set_data(payload, results)
-        self.design_review_panel.set_data(payload, results)
-        self.material_library_panel.set_data(payload, results)
-        self.optimizer_panel.set_data(payload, results)
+        try:
+            self.top_nav.update_kpis(results)
+            self.elevation.set_data(payload, results)
+            self.charts_panel.set_data(payload, results)
+            self.tree_panel.set_data(payload, results)
+            self.input_sidebar.set_data(payload, results)
+            self.bom_panel.set_data(payload, results)
+            self.status_panel.set_data(payload, results)
+            self.status_leaves.set_data(payload, results)
+            self.maintenance_panel.set_data(payload, results)
+            self.checks_panel.set_data(payload, results)
+            self.design_review_panel.set_data(payload, results)
+            self.material_library_panel.set_data(payload, results)
+            self.optimizer_panel.set_data(payload, results)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()   # visible in the terminal for debugging
+            # Non-fatal: results were saved, some panels may not have updated
 
         n_fail, n_warn = self._fail_warn(results)
         self.top_nav.update_fail_badge(n_fail)
@@ -680,9 +739,8 @@ class ShellWindow(QMainWindow):
         self._pdf_worker.done.connect(self._on_pdf_done)
         self._pdf_worker.errorOccurred.connect(self._on_pdf_error)
         self._pdf_worker.start()
-        # Update the version label to show progress (it's the nearest
-        # visible status text that doesn't need a new UI element)
-        for lbl in self.top_nav.findChildren(QLabel):
+        # Update the version label to show progress
+        for lbl in self.app_title_bar.findChildren(QLabel):
             if "EL-MEC" in (lbl.text() or ""):
                 lbl.setText("Generating PDF…")
                 self._pdf_version_lbl = lbl
