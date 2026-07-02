@@ -92,3 +92,57 @@ def download_variant_report(candidates: list, inputs: dict, save_path: str) -> s
     with open(save_path, "wb") as f:
         f.write(resp.content)
     return save_path
+
+
+# ── Materials Library CRUD ────────────────────────────────────────────────────
+def fetch_all_materials() -> list:
+    """GET /materials -- all built-in materials (full detail, not search-compressed).
+    Confirmed response shape: {"materials": [400 items]}."""
+    resp = requests.get(f"{API_BASE_V1}/materials", timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, list):
+        return data
+    return data.get("materials", [])
+
+
+def list_custom_materials_api() -> list:
+    """GET /materials/custom -- custom materials only."""
+    resp = requests.get(f"{API_BASE_V1}/materials/custom", timeout=15)
+    resp.raise_for_status()
+    return resp.json().get("materials", [])
+
+
+def create_custom_material(payload: dict) -> dict:
+    """POST /materials/custom."""
+    resp = requests.post(f"{API_BASE_V1}/materials/custom", json=payload, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def update_custom_material(mat_id: str, payload: dict) -> dict:
+    """PUT /materials/custom/{mat_id}."""
+    resp = requests.put(f"{API_BASE_V1}/materials/custom/{mat_id}", json=payload, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def delete_custom_material(mat_id: str) -> bool:
+    """DELETE /materials/custom/{mat_id}. Returns True if deleted."""
+    resp = requests.delete(f"{API_BASE_V1}/materials/custom/{mat_id}", timeout=15)
+    resp.raise_for_status()
+    return resp.json().get("deleted", True)
+
+
+def download_pdf_report(results: dict, inputs: dict, save_path: str,
+                         project: str = "", ref: str = "") -> str:
+    """POST to /bucket-elevator/report and write the returned PDF to save_path."""
+    resp = requests.post(
+        f"{API_BASE_V1}/bucket-elevator/report",
+        json={"results": results, "inputs": inputs, "project": project, "ref": ref},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    with open(save_path, "wb") as f:
+        f.write(resp.content)
+    return save_path

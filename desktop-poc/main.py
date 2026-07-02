@@ -26,19 +26,21 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFrame, QStackedWidget, QMenu, QSplitter,
+    QFileDialog, QMessageBox,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QAction
 
 from theme import (
     BG, PANEL, PANEL2, BORDER, TEXT, TEXT2, TEXT3, MUTED, PRIMARY,
     SUCCESS, WARNING, DANGER, BRAND_RED,
 )
-from api_client import fetch_design
+from api_client import fetch_design, download_pdf_report
 from components.dialog_helpers import KPIChip
 from components import (
     ElevationView, EquipmentTreePanel, InputSidebarPanel, StatusPanel, OptimizerPanel,
     BomPanel, StatusDesignLeaves, MaintenancePanel, ChecksPanel, DesignReviewPanel,
+    MaterialLibraryPanel, ChartsPanel,
 )
 
 TABS = [
@@ -186,8 +188,9 @@ class AppTitleBar(QFrame):
     """Platform-level title bar -- VECTRIX™ branding + module switcher
     (Bucket Elevator / Screw Conveyor) + PDF Report + version."""
 
-    def __init__(self, parent=None):
+    def __init__(self, on_tab_changed=None, on_pdf_clicked=None, parent=None):
         super().__init__(parent)
+        self.on_pdf_clicked = on_pdf_clicked
         self.setFixedHeight(48)
         self.setStyleSheet(f"background-color: {PANEL}; border-bottom: 1px solid {BORDER};")
         layout = QHBoxLayout(self)
@@ -238,6 +241,7 @@ class AppTitleBar(QFrame):
             f"border-style: solid; border-width: 1px; border-color: {BORDER}; "
             f"border-radius: {MODULE_PILL_RADIUS}px; padding: 0px 14px; font-size: 11.5px; font-weight: 600;"
         )
+        pdf_btn.clicked.connect(lambda: self.on_pdf_clicked() if self.on_pdf_clicked else None)
         layout.addWidget(pdf_btn)
 
         version_lbl = QLabel("AKSHAYVIPRA EL-MEC · V1.0")
@@ -310,9 +314,10 @@ class TopNav(QFrame):
     the one real dropdown, plain QPushButtons for everything else.
     """
 
-    def __init__(self, on_tab_changed, parent=None):
+    def __init__(self, on_tab_changed, on_pdf_clicked=None, parent=None):
         super().__init__(parent)
         self.on_tab_changed = on_tab_changed
+        self.on_pdf_clicked = on_pdf_clicked
         self.setFixedHeight(76)
         self.setStyleSheet(f"background-color: {PANEL}; border-bottom: 1px solid {BORDER};")
         layout = QHBoxLayout(self)
@@ -450,6 +455,23 @@ class TopNav(QFrame):
         self.tab_buttons["checks"]._apply_style()
 
 
+class _PdfReportWorker(QThread):
+    """Background thread for the PDF report endpoint -- confirmed ~1-3s
+    real call, not instant, so runs off the GUI thread same as every other
+    network call in this codebase."""
+    done = Signal(str)
+    errorOccurred = Signal(str)
+    def __init__(self, results, inputs, save_path, parent=None):
+        super().__init__(parent)
+        self.results, self.inputs, self.save_path = results, inputs, save_path
+    def run(self):
+        try:
+            path = download_pdf_report(self.results, self.inputs, self.save_path)
+            self.done.emit(path)
+        except Exception as e:
+            self.errorOccurred.emit(str(e))
+
+
 class ShellWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -458,7 +480,7 @@ class ShellWindow(QMainWindow):
         self.setStyleSheet(f"background-color: {BG};")
 
         self.app_title_bar = AppTitleBar()
-        self.top_nav = TopNav(on_tab_changed=self._on_tab_changed)
+        self.top_nav = TopNav(on_tab_changed=self._on_tab_changed, on_pdf_clicked=self._on_pdf_clicked)
 
         col1 = QWidget()
         col1_layout = QVBoxLayout(col1)
@@ -485,8 +507,26 @@ class ShellWindow(QMainWindow):
         self.col3_header = ColHeader("Results")
         col3_layout.addWidget(self.col3_header)
         self.middle_stack = QStackedWidget()
+
+        # Results tab: elevation view + charts panel in a vertical splitter
+        results_widget = QWidget()
+        results_layout = QVBoxLayout(results_widget)
+        results_layout.setContentsMargins(0, 0, 0, 0)
+        results_layout.setSpacing(0)
+        results_splitter = QSplitter(Qt.Orientation.Vertical)
+        results_splitter.setStyleSheet(
+            f"QSplitter::handle{{background:{BORDER};height:3px;}}"
+            f"QSplitter::handle:hover{{background:{PRIMARY};}}"
+        )
         self.elevation = ElevationView()
-        self.middle_stack.addWidget(self.elevation)
+        results_splitter.addWidget(self.elevation)
+        self.charts_panel = ChartsPanel()
+        self.charts_panel.setMinimumHeight(260)
+        results_splitter.addWidget(self.charts_panel)
+        results_splitter.setStretchFactor(0, 65)
+        results_splitter.setStretchFactor(1, 35)
+        results_layout.addWidget(results_splitter)
+        self.middle_stack.addWidget(results_widget)
         self.optimizer_panel = OptimizerPanel(on_apply=self._on_optimizer_apply)
         self.middle_stack.addWidget(self.optimizer_panel)
         self.checks_panel = ChecksPanel(on_apply_correction=self._on_apply_correction)
@@ -495,7 +535,8 @@ class ShellWindow(QMainWindow):
         self.middle_stack.addWidget(self.bom_panel)
         self.maintenance_panel = MaintenancePanel()
         self.middle_stack.addWidget(self.maintenance_panel)
-        self.middle_stack.addWidget(Placeholder("Materials", "MaterialLibraryPanel.jsx"))
+        self.material_library_panel = MaterialLibraryPanel()
+        self.middle_stack.addWidget(self.material_library_panel)
         col3_layout.addWidget(self.middle_stack)
 
         col4 = QWidget()
@@ -580,6 +621,7 @@ class ShellWindow(QMainWindow):
         self._default_payload = payload
         self.top_nav.update_kpis(results)
         self.elevation.set_data(payload, results)
+        self.charts_panel.set_data(payload, results)
         self.tree_panel.set_data(payload, results)
         self.input_sidebar.set_data(payload, results)
         self.bom_panel.set_data(payload, results)
@@ -588,6 +630,7 @@ class ShellWindow(QMainWindow):
         self.maintenance_panel.set_data(payload, results)
         self.checks_panel.set_data(payload, results)
         self.design_review_panel.set_data(payload, results)
+        self.material_library_panel.set_data(payload, results)
         self.optimizer_panel.set_data(payload, results)
 
         n_fail, n_warn = self._fail_warn(results)
@@ -617,6 +660,43 @@ class ShellWindow(QMainWindow):
             if variant.get(key) is not None:
                 payload[key] = variant[key]
         self.run_calculation(payload)
+
+    def _on_pdf_clicked(self):
+        """PDF Report button handler. Opens a save dialog, spins up a
+        background worker, and updates the TopNav's version label with
+        progress feedback while it runs -- same pattern as every other
+        network-call button in this codebase."""
+        if not self._last_results:
+            QMessageBox.information(self, "No Results", "Run a calculation first.")
+            return
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "Save PDF Report", "VECTOMEC_Report.pdf", "PDF Files (*.pdf)"
+        )
+        if not save_path:
+            return
+        self._pdf_worker = _PdfReportWorker(
+            self._last_results, self._default_payload, save_path, parent=self
+        )
+        self._pdf_worker.done.connect(self._on_pdf_done)
+        self._pdf_worker.errorOccurred.connect(self._on_pdf_error)
+        self._pdf_worker.start()
+        # Update the version label to show progress (it's the nearest
+        # visible status text that doesn't need a new UI element)
+        for lbl in self.top_nav.findChildren(QLabel):
+            if "EL-MEC" in (lbl.text() or ""):
+                lbl.setText("Generating PDF…")
+                self._pdf_version_lbl = lbl
+                break
+
+    def _on_pdf_done(self, path):
+        if hasattr(self, "_pdf_version_lbl"):
+            self._pdf_version_lbl.setText("AKSHAYVIPRA EL-MEC · V1.0")
+        QMessageBox.information(self, "Report Saved", f"PDF saved to:\n{path}")
+
+    def _on_pdf_error(self, msg):
+        if hasattr(self, "_pdf_version_lbl"):
+            self._pdf_version_lbl.setText("AKSHAYVIPRA EL-MEC · V1.0")
+        QMessageBox.critical(self, "Report Failed", f"PDF generation failed:\n{msg}")
 
     def _on_apply_correction(self, param, value):
         """Mirrors RootCausePanel.jsx's setField(param, target) -- a

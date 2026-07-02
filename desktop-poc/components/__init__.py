@@ -29,10 +29,13 @@ from .status_design_leaves import StatusDesignLeaves
 from .maintenance_panel import MaintenancePanel
 from .checks_panel import ChecksPanel
 from .design_review_panel import DesignReviewPanel
+from .material_library_panel import MaterialLibraryPanel
+from .charts_panel import ChartsPanel
 
 __all__ = [
     "ElevationView", "EquipmentTreePanel", "InputSidebarPanel",
     "TakeupEditDialog", "FeedEditDialog", "DischargeEditDialog", "CasingEditDialog",
     "ServiceEditDialog", "PowerEditDialog", "StatusPanel", "OptimizerPanel",
-    "BomPanel", "StatusDesignLeaves", "MaintenancePanel", "ChecksPanel", "DesignReviewPanel",
+    "BomPanel", "StatusDesignLeaves", "MaintenancePanel", "ChecksPanel",
+    "DesignReviewPanel", "MaterialLibraryPanel", "ChartsPanel",
 ]

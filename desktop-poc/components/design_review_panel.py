@@ -181,12 +181,18 @@ class DesignReviewPanel(QWidget):
         self._rebuild()
 
     def _rebuild(self):
-        while self.body_layout.count():
-            item = self.body_layout.takeAt(0)
-            w = item.widget() if item else None
-            if w:
-                w.setParent(None)
-                w.deleteLater()
+        def _clear(layout):
+            while layout.count():
+                item = layout.takeAt(0)
+                w = item.widget() if item else None
+                if w:
+                    w.setParent(None)
+                    w.deleteLater()
+                elif item:
+                    sub = item.layout()
+                    if sub:
+                        _clear(sub)
+        _clear(self.body_layout)
 
         r = self._results
         checks = r.get("checks") or []
