@@ -36,6 +36,7 @@ from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QColor
 
 from theme import PANEL, PANEL2, BORDER, TEXT, TEXT2, TEXT3, MUTED, PRIMARY, SUCCESS, WARNING, DANGER, TEAL, PURPLE
+from .dialog_helpers import styled_message_box
 from api_client import (
     fetch_all_materials, list_custom_materials_api,
     create_custom_material, update_custom_material, delete_custom_material,
@@ -721,18 +722,20 @@ class MaterialLibraryPanel(QWidget):
         self._open_form({**BLANK_FORM, **mat}, "edit")
 
     def _confirm_delete(self, mat):
-        reply = QMessageBox.question(
-            self,
-            "Delete Custom Material",
+        box = styled_message_box(
+            QMessageBox.Icon.Question, "Delete Custom Material",
             f"Delete \"{mat.get('name')}\"?\n\nThis cannot be undone. Any saved design still "
             f"referencing it will fall back to safe defaults.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            self, buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
+        reply = box.exec()
         if reply != QMessageBox.StandardButton.Yes:
             return
         self._delete_worker = _DeleteWorker(mat.get("id"), parent=self)
         self._delete_worker.done.connect(self._load)
         self._delete_worker.error.connect(
-            lambda msg: QMessageBox.warning(self, "Delete failed", msg)
+            lambda msg: styled_message_box(
+                QMessageBox.Icon.Warning, "Delete failed", msg, self
+            ).exec()
         )
         self._delete_worker.start()

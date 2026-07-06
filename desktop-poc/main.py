@@ -36,7 +36,7 @@ from theme import (
     SUCCESS, WARNING, DANGER, BRAND_RED,
 )
 from api_client import fetch_design, download_pdf_report
-from components.dialog_helpers import KPIChip
+from components.dialog_helpers import KPIChip, styled_message_box
 from components import (
     ElevationView, EquipmentTreePanel, InputSidebarPanel, StatusPanel, OptimizerPanel,
     BomPanel, StatusDesignLeaves, MaintenancePanel, ChecksPanel, DesignReviewPanel,
@@ -720,16 +720,41 @@ class ShellWindow(QMainWindow):
                 payload[key] = variant[key]
         self.run_calculation(payload)
 
+    def _auto_pdf_filename(self):
+        """Build a descriptive default filename from the actual design
+        parameters -- material, capacity, height, bucket series -- since
+        there's no formal "model number" field in this backend (checked:
+        only design_id exists, and that's a saved-design database key, not
+        a per-calculation designation). This is the closest equivalent,
+        built the same way the BOM's own tag prefixes identify a design."""
+        r = self._last_results or {}
+        inp = self._default_payload or {}
+        mat = str(inp.get("mat_id", "material")).replace(" ", "")
+        Q = inp.get("Q_req", "")
+        H = inp.get("H_m", "")
+        bkt = (r.get("bucket") or {}).get("id", "")
+        parts = [p for p in ["VECTOMEC", mat.capitalize(), f"{Q}tph" if Q else "",
+                              f"H{H}m" if H else "", bkt] if p]
+        from datetime import datetime
+        stamp = datetime.now().strftime("%Y%m%d_%H%M")
+        return "_".join(parts + [stamp]) + ".pdf"
+
+    @staticmethod
+    def _styled_message_box(icon, title, text, parent):
+        return styled_message_box(icon, title, text, parent)
+
     def _on_pdf_clicked(self):
         """PDF Report button handler. Opens a save dialog, spins up a
         background worker, and updates the TopNav's version label with
         progress feedback while it runs -- same pattern as every other
         network-call button in this codebase."""
         if not self._last_results:
-            QMessageBox.information(self, "No Results", "Run a calculation first.")
+            self._styled_message_box(
+                QMessageBox.Icon.Information, "No Results", "Run a calculation first.", self
+            ).exec()
             return
         save_path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF Report", "VECTOMEC_Report.pdf", "PDF Files (*.pdf)"
+            self, "Save PDF Report", self._auto_pdf_filename(), "PDF Files (*.pdf)"
         )
         if not save_path:
             return
@@ -749,12 +774,16 @@ class ShellWindow(QMainWindow):
     def _on_pdf_done(self, path):
         if hasattr(self, "_pdf_version_lbl"):
             self._pdf_version_lbl.setText("AKSHAYVIPRA EL-MEC · V1.0")
-        QMessageBox.information(self, "Report Saved", f"PDF saved to:\n{path}")
+        self._styled_message_box(
+            QMessageBox.Icon.Information, "Report Saved", f"PDF saved to:\n{path}", self
+        ).exec()
 
     def _on_pdf_error(self, msg):
         if hasattr(self, "_pdf_version_lbl"):
             self._pdf_version_lbl.setText("AKSHAYVIPRA EL-MEC · V1.0")
-        QMessageBox.critical(self, "Report Failed", f"PDF generation failed:\n{msg}")
+        self._styled_message_box(
+            QMessageBox.Icon.Critical, "Report Failed", f"PDF generation failed:\n{msg}", self
+        ).exec()
 
     def _on_apply_correction(self, param, value):
         """Mirrors RootCausePanel.jsx's setField(param, target) -- a

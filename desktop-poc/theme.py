@@ -41,6 +41,9 @@ DRAWING = {
     "belt": "#14b8a6", "beltRtn": "#0d9488", "bucket": "#3b82f6",
     "pulley": "#3b82f6", "lagging": "#f59e0b", "hub": "#0f172a",
     "motor": "#10b981", "gearbox": "#059669", "coupling": "#6b7280",
-    "dim": "#3d536b", "label": "#475569", "labelBr": "#94a3b8",
+    "dim": "#3d536b", "dimTxt": "#64748b", "label": "#475569", "labelBr": "#94a3b8",
     "feed": "#f59e0b", "chute": "#f59e0b", "text": "#f1f5f9", "text3": "#64748b",
+    "traj": "#ef4444", "border": "#243247", "panel": "#162032",
+    "success": "#10b981", "warning": "#f59e0b", "danger": "#ef4444",
+    "primary": "#3b82f6", "grid": "rgba(59,130,246,.04)", "leg": "#1e3a5a",
 }

@@ -518,3 +518,27 @@ class KPIChip(QWidget):
             self.value_text,
         )
         p.end()
+
+
+def styled_message_box(icon, title, text, parent, buttons=None):
+    """Shared QMessageBox factory -- default Qt message boxes render black
+    text on this app's dark background (confirmed illegible from a real
+    screenshot). Explicit stylesheet forces light text/buttons consistent
+    with the rest of the dark theme. Used by main.py (PDF save/error) and
+    material_library_panel.py (delete confirm/error)."""
+    from PySide6.QtWidgets import QMessageBox
+    box = QMessageBox(parent)
+    box.setIcon(icon)
+    box.setWindowTitle(title)
+    box.setText(text)
+    if buttons is not None:
+        box.setStandardButtons(buttons)
+    box.setStyleSheet(
+        f"QMessageBox {{ background-color: {PANEL}; }}"
+        f"QMessageBox QLabel {{ color: {TEXT}; font-size: 12px; }}"
+        f"QPushButton {{ background-color: {PANEL2}; color: {TEXT}; "
+        f"border: 1px solid {BORDER}; border-radius: 5px; padding: 6px 16px; "
+        f"font-size: 11.5px; min-width: 70px; }}"
+        f"QPushButton:hover {{ background-color: {BORDER}; }}"
+    )
+    return box
