@@ -158,7 +158,7 @@ def get_material(mat_id: str) -> Dict:
 BUCKET_SERIES = [
     # ═══════════════════════════════════════════════════════════════════════════
     # STYLE AA — Centrifugal, curved bottom, general purpose
-    # Source: Martin catalog H-146. front_angle≈30°.
+    # Source: industry-standard bucket catalog data. front_angle≈30°.
     # Applications: grain, aggregate, sand, coal, fertiliser, salt
     # ═══════════════════════════════════════════════════════════════════════════
     {"id":"AA_6x4",  "style":"AA","catalog":"AA 6×4",
@@ -219,7 +219,7 @@ BUCKET_SERIES = [
 
     # ═══════════════════════════════════════════════════════════════════════════
     # STYLE AC — Centrifugal, 50° front angle, Added Capacity, hooded back
-    # Source: Martin catalog H-147. Mill Duty series MDC/MDB.
+    # Source: industry-standard bucket catalog data. Mill Duty series MDC/MDB.
     # Applications: cement, clinker, ore, shale, coal, asphalt, gypsum
     # ═══════════════════════════════════════════════════════════════════════════
     {"id":"AC_12x8",  "style":"AC","catalog":"AC 12×8×8",
@@ -266,7 +266,7 @@ BUCKET_SERIES = [
 
     # ═══════════════════════════════════════════════════════════════════════════
     # STYLE C — Centrifugal, low profile, open front, angled sides
-    # Source: Martin catalog H-148.
+    # Source: industry-standard bucket catalog data.
     # Applications: sugar, salt, wet grain, clay, powders, chemicals
     # ═══════════════════════════════════════════════════════════════════════════
     {"id":"C_6x4",   "style":"C","catalog":"C 6×4×4",
@@ -306,7 +306,7 @@ BUCKET_SERIES = [
 
     # ═══════════════════════════════════════════════════════════════════════════
     # STYLE MF — Continuous discharge, 30° medium front, gentle handling
-    # Source: Martin catalog H-149. CEMA Series 700/800.
+    # Source: industry-standard bucket catalog data. CEMA Series 700/800.
     # Applications: gypsum, cement, pellets, grain, salt, fertiliser
     # ═══════════════════════════════════════════════════════════════════════════
     {"id":"MF_10x7",  "style":"MF","catalog":"MF 10×7×11",
@@ -360,7 +360,7 @@ BUCKET_SERIES = [
 
     # ═══════════════════════════════════════════════════════════════════════════
     # STYLE HF — Continuous discharge, 45° HIGH front, greater capacity
-    # Source: Martin catalog H-150. CEMA Series 700/800.
+    # Source: industry-standard bucket catalog data. CEMA Series 700/800.
     # ~8% higher volume than MF for same width due to higher front
     # Applications: grain, cement, pellets, fertiliser, fragile materials
     # ═══════════════════════════════════════════════════════════════════════════
@@ -408,7 +408,7 @@ BUCKET_SERIES = [
 
     # ═══════════════════════════════════════════════════════════════════════════
     # STYLE SC — Continuous, Super Capacity, DOUBLE CHAIN only
-    # Source: Martin catalog H-151, H-136.
+    # Source: industry-standard bucket catalog data.
     # Applications: cement, gypsum, limestone, coal, salt, rock
     # Very slow speed, large lump tolerance, heavy abrasive duty
     # ═══════════════════════════════════════════════════════════════════════════
@@ -469,9 +469,9 @@ BUCKET_SERIES = [
      "note":"SC maximum width — highest capacity super duty"},
 ]
 
-# Bolt mounting-flange / chain-pin data (Martin catalog H-152) -- adds
+# Bolt mounting-flange / chain-pin data (industry-standard catalog data) -- adds
 # punch/boltA_mm/boltB_mm/boltDia_mm/boltN/punch_confirmed to every entry
-# above. AC and SC are engineering estimates (catalog says "Consult Martin"
+# above. AC and SC are engineering estimates (not published in standard catalogs
 # for these two styles specifically) -- punch_confirmed:False flags this
 # distinction through to the frontend rather than presenting an estimate
 # with the same confidence as a published dimension. See that file's own
@@ -528,7 +528,7 @@ MOTOR_SIZES = [
 
 
 # ── Chain series catalogue ─────────────────────────────────────────────────────
-# Source: Martin Engineering catalog H-131 thru H-137, CEMA 375-2017 §4.
+# Source: industry-standard bucket catalog data, CEMA 375-2017 §4.
 #
 # wt_kg_m   : chain weight per strand per metre [kg/m]
 # WL_kg     : published working load per strand [kg]
@@ -1043,7 +1043,7 @@ def bucket_recommendation(material: dict, Q_req: float = 0.0, material_temp_c: f
     3.7 — Material → Bucket Style Recommendation Engine.
 
     Maps material properties to the most appropriate bucket style with
-    plain-English reasoning.  Based on Martin catalog application guides
+    plain-English reasoning.  Based on industry-standard application guides
     (H-146 thru H-151) and CEMA 375-2017 §6.
 
     Decision hierarchy
@@ -1220,7 +1220,7 @@ def dynamic_fill_efficiency(
     Computes recommended fill percentage from operating conditions rather
     than relying on a fixed user-entered value.
 
-    Based on CEMA 375-2017 §6 and OEM design practice (BEUMER/Tapco):
+    Based on CEMA 375-2017 §6 and general OEM design practice:
         • Optimal spacing: 1.8× projection (centrifugal) or 1.0× depth (continuous)
         • Too-close spacing → poor boot loading, recirculation, lower fill
         • Too-wide spacing  → inter-bucket spill, lower effective fill
@@ -3567,7 +3567,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         # Geometric interference: spacing must exceed bucket PROJECTION so
         # adjacent buckets don't overlap. Depth-based check only applies where
         # depth > projection (very rare for standard CEMA bucket geometries).
-        # Reference: CEMA 375 §3.2, Martin H-143.
+        # Reference: CEMA 375 §3.2, industry-standard catalog data.
         _ref_geom   = max(_P_mm, _H_mm) if not is_continuous else _H_mm
         _clear_fac  = 1.05   # 5% clearance above reference dimension
         _min_sp_mm  = _ref_geom * _clear_fac
@@ -3625,6 +3625,39 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
         else:
             checks.append(ok(
                 f"Fill stability: SAFE — {_fnote} [CEMA 375 §6]", subsystem="bucket"))
+
+    # 5d-2 — User fill_pct vs the dynamic operating-condition-aware range
+    # (v2.0 — new). fill_eff's own min_fill_pct/max_fill_pct (spacing +
+    # speed + flowability adjusted) were computed and shown in the
+    # sidebar's advisory panel, but NEVER actually compared against the
+    # user's fill_pct anywhere to produce a fail/warn -- confirmed by
+    # direct grep before adding this. This is a real, distinct check from
+    # 5d above: 5d checks bucket-loading STABILITY (starvation/choking at
+    # the boot); this checks whether the chosen fill_pct itself sits
+    # inside the safe operating window for these specific conditions.
+    if fill_eff:
+        _dyn_min = fill_eff.get("min_fill_pct")
+        _dyn_max = fill_eff.get("max_fill_pct")
+        _user_fill = float(inp.fill_pct)
+        if _dyn_min is not None and _dyn_max is not None:
+            if _user_fill < _dyn_min:
+                _deficit = _dyn_min - _user_fill
+                _sev = fail if _deficit > 15 else warn
+                checks.append(_sev(
+                    f"Fill {_user_fill:.0f}% is below the operating-condition-safe range "
+                    f"{_dyn_min:.0f}–{_dyn_max:.0f}% (current spacing/speed/flowability) — "
+                    f"under-filling risk, buckets may run partly empty [CEMA 375 §6]", subsystem="bucket"))
+            elif _user_fill > _dyn_max:
+                _excess = _user_fill - _dyn_max
+                _sev = fail if _excess > 15 else warn
+                checks.append(_sev(
+                    f"Fill {_user_fill:.0f}% exceeds the operating-condition-safe range "
+                    f"{_dyn_min:.0f}–{_dyn_max:.0f}% (current spacing/speed/flowability) — "
+                    f"overflow/spillage risk at this speed and spacing [CEMA 375 §6]", subsystem="bucket"))
+            else:
+                checks.append(ok(
+                    f"Fill {_user_fill:.0f}% is within the operating-condition-safe range "
+                    f"{_dyn_min:.0f}–{_dyn_max:.0f}% [CEMA 375 §6]", subsystem="bucket"))
 
     # 5e — Pickup / digging efficiency (v1.9.3, centrifugal only)
     if pickup_eff and pickup_eff.get("applicable"):

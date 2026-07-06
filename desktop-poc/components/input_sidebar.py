@@ -660,10 +660,10 @@ class ProcessEditDialog(QDialog):
         # temperature and character now advise drive type and discharge
         # style HERE, before the Drive Type decision below, instead of
         # only ever surfacing as a fail/warn check after a belt was
-        # already chosen and a full calculation run. Mirrors the BEUMER
-        # reference chart's structure: temperature gates belt feasibility,
-        # material character gates continuous vs centrifugal -- both
-        # checked against the backend's actual bucket_recommendation()
+        # already chosen and a full calculation run. Mirrors standard
+        # industry reference chart structure: temperature gates belt
+        # feasibility, material character gates continuous vs centrifugal
+        # -- both checked against the backend's actual bucket_recommendation()
         # output, not a second copy of that logic living here.
         self.guidance_box = QVBoxLayout()
         left.addLayout(self.guidance_box)

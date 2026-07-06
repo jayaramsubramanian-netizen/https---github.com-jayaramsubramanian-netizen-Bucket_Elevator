@@ -40,6 +40,26 @@ from theme import PANEL, PANEL2, BORDER, TEXT, TEXT2, TEXT3, MUTED, PRIMARY, SUC
 from .dialog_helpers import status_badge, flag_note
 
 
+def clear_layout(layout):
+    """Recursively clears a layout -- fixes the confirmed bug where all
+    three set_data() methods below only removed item.widget() items and
+    silently left every addLayout() sub-layout (driver rows, correction
+    rows, action rows) in place across repeated recalculations, causing
+    the Checks tab to visibly accumulate duplicate/overlapping content on
+    every design change. Same fix already applied to design_review_panel.py
+    and charts_panel.py -- this file was the one left unpatched."""
+    while layout.count():
+        item = layout.takeAt(0)
+        w = item.widget() if item else None
+        if w:
+            w.setParent(None)
+            w.deleteLater()
+        elif item:
+            sub = item.layout()
+            if sub:
+                clear_layout(sub)
+
+
 def fmt(v, dp=2, fb="—"):
     if v is None:
         return fb
@@ -254,12 +274,7 @@ class RootCauseSection(QWidget):
         self.layout_.setSpacing(10)
 
     def set_data(self, results, on_apply):
-        while self.layout_.count():
-            item = self.layout_.takeAt(0)
-            w = item.widget() if item else None
-            if w:
-                w.setParent(None)
-                w.deleteLater()
+        clear_layout(self.layout_)
 
         findings = (results or {}).get("root_cause") or []
         checks = (results or {}).get("checks") or []
@@ -354,12 +369,7 @@ class DesignRecommendationsSection(QWidget):
         self.layout_.setSpacing(8)
 
     def set_data(self, results):
-        while self.layout_.count():
-            item = self.layout_.takeAt(0)
-            w = item.widget() if item else None
-            if w:
-                w.setParent(None)
-                w.deleteLater()
+        clear_layout(self.layout_)
 
         results = results or {}
         recs = results.get("design_recommendations") or []
@@ -456,12 +466,7 @@ class FlatChecksSection(QWidget):
         self.layout_.setSpacing(8)
 
     def set_data(self, inputs, results):
-        while self.layout_.count():
-            item = self.layout_.takeAt(0)
-            w = item.widget() if item else None
-            if w:
-                w.setParent(None)
-                w.deleteLater()
+        clear_layout(self.layout_)
 
         inputs = inputs or {}
         results = results or {}

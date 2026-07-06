@@ -1166,7 +1166,7 @@ class StructuralStressEngine:
             euler   = math.exp(mu_op * theta)
             safe    = ratio <= euler
             if lagging_type == "ceramic_embedded_rubber":
-                cover = "Ceramic tile in rubber matrix (Rulmeca HiCer, Martin Engineering, or equiv.)"
+                cover = "Ceramic tile in rubber matrix (high-abrasion-grade lagging)"
             elif lagging_type == "rubber_diamond_groove":
                 cover = "Diamond groove NR rubber, Shore 60-65A"
             else:

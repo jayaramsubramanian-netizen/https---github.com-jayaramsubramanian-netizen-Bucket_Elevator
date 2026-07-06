@@ -391,7 +391,7 @@ class DynamicLoadEngine:
         rating verification at the correct location (not just at the head),
         and a tension-diagram visual for the report. For most CEMA bucket
         elevator designs the all-up linear assumption matches commercial
-        OEM practice (Bossert/Martin/4B preliminary tension diagrams).
+        general OEM practice (preliminary tension diagram methodology).
 
         Parameters
         ----------

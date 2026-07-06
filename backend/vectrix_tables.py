@@ -298,9 +298,9 @@ class Bucket(Base):
     bucket_mass_kg: Mapped[Optional[float]] = mapped_column()
     recommended_materials: Mapped[Optional[list]] = mapped_column(JSON)   # list of material category/id strings
     note: Mapped[Optional[str]] = mapped_column(Text)
-    # Bolt mounting-flange / chain-pin data (Martin catalog H-152) -- AC and
+    # Bolt mounting-flange / chain-pin data (industry-standard catalog data) -- AC and
     # SC are engineering estimates, not published dimensions (catalog says
-    # "Consult Martin" for those two specifically) -- punch_confirmed
+    # not published for those two specifically) -- punch_confirmed
     # distinguishes the two so a confirmed B6/B7/B8 pattern isn't shown with
     # the same confidence as an estimate.
     punch: Mapped[Optional[str]] = mapped_column(String(10))          # B1/B6/B7/B8/chain

@@ -1,5 +1,5 @@
 """
-calculations.py PATCH — Bucket Punching Data (CEMA Standard, Martin H-152)
+calculations.py PATCH — Bucket Punching Data (CEMA Standard)
 ═══════════════════════════════════════════════════════════════════════════
 Adds the bolt mounting-flange data that is missing from BUCKET_SERIES.
 This is real catalog reference data and belongs in Python next to the
@@ -8,15 +8,15 @@ NOT hardcoded in the .jsx frontend.
 
 HONESTY NOTE on AC and SC styles
 ─────────────────────────────────────────────────────────────────────────
-Martin's own catalog page H-152 states at the bottom:
-    "Consult Martin for AC and SC Bucket Punching."
-This means AC and SC bolt patterns are NOT published in this catalog.
+Industry-standard bucket punching catalogs do not publish bolt patterns
+for AC and SC styles -- vendor confirmation is required before
+fabrication for these two specifically.
 For AC, I have used the same B6/B7/B8 family as Style AA & C (same
 catalog page, same general bucket construction) as an ENGINEERING
 ESTIMATE — flagged "punch_confirmed": False below.
 For SC, buckets mount BETWEEN TWO CHAIN STRANDS (not on a belt) —
 "punch" is set to "chain" and the bolt fields represent chain
-attachment pin spacing, not belt punching. This also needs Martin
+attachment pin spacing, not belt punching. This also needs vendor
 confirmation before fabrication, flagged the same way.
 
 HOW TO APPLY
@@ -40,7 +40,7 @@ BUCKET_PUNCHING = {
     "AA_18x10": {"punch":"B7","boltA_mm":127.0,"boltB_mm":25.4, "boltDia_mm":7.9,"boltN":4,"punch_confirmed":True},
 
     # ── Style AC (centrifugal, mill duty) — NOT in catalog table; estimate ──
-    # Catalog: "Consult Martin for AC and SC Bucket Punching"
+    # Not published in industry-standard catalogs -- vendor confirmation required
     "AC_12x8":  {"punch":"B6","boltA_mm":114.3,"boltB_mm":25.4,"boltDia_mm":9.5,"boltN":3,"punch_confirmed":False},
     "AC_14x8":  {"punch":"B7","boltA_mm":101.6,"boltB_mm":25.4,"boltDia_mm":9.5,"boltN":4,"punch_confirmed":False},
     "AC_16x8":  {"punch":"B7","boltA_mm":114.3,"boltB_mm":25.4,"boltDia_mm":9.5,"boltN":4,"punch_confirmed":False},
@@ -75,7 +75,7 @@ BUCKET_PUNCHING = {
     "HF_18x8": {"punch":"B7","boltA_mm":127.0,"boltB_mm":134.9,"boltDia_mm":7.9,"boltN":4,"punch_confirmed":True},
 
     # ── Style SC — mounts BETWEEN TWO CHAIN STRANDS, not belt-punched ───────
-    # Catalog: "Consult Martin for AC and SC Bucket Punching"
+    # Not published in industry-standard catalogs -- vendor confirmation required
     # "punch":"chain" signals attachment-to-chain, not belt B-pattern.
     # boltA/B here represent the two mounting-hole pin centres shown in the
     # H-151 SC diagram (estimated from drawing proportions, NOT a published

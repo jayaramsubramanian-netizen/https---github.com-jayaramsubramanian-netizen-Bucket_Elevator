@@ -33,6 +33,7 @@ from PySide6.QtCore import Qt, QRectF, QPointF, QTimer
 from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QPainterPath, QPolygonF, QTransform, QCursor
 
 from theme import DRAWING as C, PANEL, PANEL2, BORDER, TEXT, TEXT2, TEXT3, PRIMARY, SUCCESS, WARNING, DANGER
+from .dialog_helpers import KPIChip
 
 
 def f(v, dp=1, fb="—"):
@@ -707,6 +708,52 @@ class _SchematicCanvas(QWidget):
     # ═══════════════════════════════════════════════════════════════
     # BUCKET DETAIL VIEW -- port of BucketDetailView()
     # ═══════════════════════════════════════════════════════════════
+    @staticmethod
+    def _polygon_area(poly):
+        """Shoelace formula. Works on any QPolygonF, including ones
+        produced by QPainterPath.toFillPolygon() from a path built with
+        curves -- Qt flattens beziers into line segments automatically,
+        so this is exact for the polygon Qt actually renders, not an
+        approximation of the true curve."""
+        pts = list(poly)
+        if len(pts) < 3:
+            return 0.0
+        area = 0.0
+        for i in range(len(pts)):
+            x1, y1 = pts[i].x(), pts[i].y()
+            x2, y2 = pts[(i + 1) % len(pts)].x(), pts[(i + 1) % len(pts)].y()
+            area += x1 * y2 - x2 * y1
+        return abs(area) / 2.0
+
+    def _solve_fill_height(self, side_path, y_top, y_bottom, x_min, x_max, target_frac):
+        """Numerically finds the screen-y of the horizontal line such that
+        the area of side_path BELOW that line equals target_frac of the
+        path's total area. General-purpose: works identically for the
+        rounded centrifugal scoop (bezier curves) and the straight-edged
+        continuous wedge, since it operates on the actual rendered
+        polygon rather than a shape-specific closed-form formula.
+        Returns None if the path has no area (shouldn't happen for a
+        real bucket, but guards against a degenerate case)."""
+        total_area = self._polygon_area(side_path.toFillPolygon())
+        if total_area <= 0:
+            return None
+
+        def area_below(y):
+            clip = QPainterPath()
+            clip.addRect(QRectF(x_min - 10, y, (x_max - x_min) + 20, (y_bottom - y) + 10))
+            clipped = side_path.intersected(clip)
+            return self._polygon_area(clipped.toFillPolygon())
+
+        lo, hi = y_top, y_bottom   # lo = 0% filled, hi = 100% filled
+        for _ in range(28):        # binary search, well past float precision needed for a schematic
+            mid = (lo + hi) / 2
+            frac = area_below(mid) / total_area
+            if frac < target_frac:
+                hi = mid
+            else:
+                lo = mid
+        return (lo + hi) / 2
+
     def _paint_bucket_detail(self, p):
         W, H = SVG_W, SVG_H
         r = self.results
@@ -741,29 +788,49 @@ class _SchematicCanvas(QWidget):
         sX, sY = sCx - bPs / 2, midY - bHs / 2
 
         fillPct = float(inp.get("fill_pct") or 75) / 100
-        fillY = fY + bHs * (1 - fillPct * 0.72)
+        # FIX (Jay: found the front elevation and side profile fill lines
+        # didn't align -- confirmed why: this line used an arbitrary 0.72
+        # scaling factor that was never actually tied to any real
+        # calculation. Corrected to a plain linear height fraction, which
+        # is the mathematically correct assumption for a UNIFORM
+        # rectangular cross-section (what this simplified front-elevation
+        # rectangle represents). This is explicitly NOT the same
+        # computation as the Side Profile's fill line below, which
+        # accounts for the bucket's actual tapered/lip shape -- the two
+        # views use different simplifying assumptions about the bucket's
+        # 3D form, so they will legitimately show different heights even
+        # both being "correct" for what each view represents. Labelled
+        # accordingly rather than silently implying agreement.
+        fillY = fY + bHs * (1 - fillPct)
 
-        # FIX (Jay: "no warnings or fails when the user picks a fill capacity
-        # greater than the bucket's capacity, silently allowing undetected
-        # failure"): the backend already computes this exact check --
-        # mat_behavior.recommended_fill_pct, warned when user fill_pct
-        # exceeds it by more than 10 points (calculations.py's own
-        # threshold, matched here exactly rather than inventing a new one)
-        # -- but the schematic never reflected it. An unsafe fill_pct used
-        # to render in the same neutral teal as a safe one.
-        mat_behavior = r.get("mat_behavior") or {}
-        rec_fill = mat_behavior.get("recommended_fill_pct")
-        fill_unsafe = rec_fill is not None and float(inp.get("fill_pct") or 75) > rec_fill + 10.0
+        # FIX (Jay: "bucket fill changes you made do not seem to work"):
+        # confirmed by reading the real InputSidebar.jsx source -- the
+        # authoritative range is dynamic_fill.min_fill_pct/max_fill_pct
+        # (spacing + speed + flowability adjusted, same fields the
+        # sidebar's own "DYNAMIC FILL ADVISORY" panel displays), NOT the
+        # static mat_behavior.recommended_fill_pct ± 10 rule used here
+        # previously. The backend itself never compared fill_pct against
+        # this dynamic range either (confirmed via direct grep) -- fixed
+        # in calculations.py alongside this (new 5d-2 check).
+        dynamic_fill = r.get("dynamic_fill") or {}
+        dyn_min = dynamic_fill.get("min_fill_pct")
+        dyn_max = dynamic_fill.get("max_fill_pct")
+        user_fill = float(inp.get("fill_pct") or 75)
+        fill_unsafe = (dyn_min is not None and dyn_max is not None
+                       and (user_fill < dyn_min or user_fill > dyn_max))
         fill_color = C["danger"] if fill_unsafe else C["belt"]
 
         self._text(p, W / 2, 18, f"STYLE {seriesId} — {styleLabel.upper()} DISCHARGE", 10, C["text3"], bold=True, center=True)
         self._text(p, W / 2, 30, f"Front Elevation (left) · Side Profile (right) · Punching: {punch}", 7.5, C["label"], center=True)
+        disclaimers = []
         if not punchConfirmed:
-            self._text(p, W / 2, 41, f"⚠ Bolt pattern is an estimate — consult Martin for {seriesId.split('_')[0]} style", 6.5, C["warning"], center=True)
+            disclaimers.append(f"⚠ Bolt pattern is an estimate for {seriesId.split('_')[0]} style — confirm against approved manufacturing drawing")
+        if discType != "centrifugal":
+            disclaimers.append("ⓘ Lip height shown is illustrative, pending confirmed bucket profile dimensions")
         if fill_unsafe:
-            self._text(p, W / 2, 41 if punchConfirmed else 52,
-                        f"⚠ Fill {inp.get('fill_pct',75):.0f}% exceeds material-recommended {rec_fill:.0f}% — overflow/spillage risk",
-                        6.5, C["danger"], center=True)
+            disclaimers.append(f"⚠ Fill {user_fill:.0f}% is outside the safe range {dyn_min:.0f}–{dyn_max:.0f}% for this spacing/speed — overflow or under-fill risk")
+        for i, d in enumerate(disclaimers):
+            self._text(p, W / 2, 41 + i * 11, d, 6.5, C["danger"] if d.startswith("⚠") else C["warning"], center=True)
 
         # Front elevation
         front_path = QPainterPath()
@@ -776,7 +843,7 @@ class _SchematicCanvas(QWidget):
         p.drawRect(QRectF(fX + 1, fillY, bWs - 2, fY + bHs - fillY - 1))
         p.setPen(QPen(qc(fill_color, 178), 1, Qt.PenStyle.DashLine))
         p.drawLine(QPointF(fX + 1, fillY), QPointF(fX + bWs - 1, fillY))
-        fill_label = f"{inp.get('fill_pct', 75)}%" + ("  ⚠" if fill_unsafe else "")
+        fill_label = f"{inp.get('fill_pct', 75)}% (rect. approx.)" + (" ⚠" if fill_unsafe else "")
         self._text(p, fX + bWs + 4, fillY, fill_label, 7, fill_color)
 
         hasBolts = boltN > 0 and boltA_mm > 0
@@ -817,6 +884,7 @@ class _SchematicCanvas(QWidget):
 
         # Side profile
         side_path = QPainterPath()
+        tipYFrac = None
         if discType == "centrifugal" and (frontAngle is None or frontAngle <= 35):
             side_path.moveTo(sX, sY)
             side_path.lineTo(sX, sY + bHs * 0.55)
@@ -841,10 +909,40 @@ class _SchematicCanvas(QWidget):
         p.setBrush(QBrush(qc(C["casFill"])))
         p.drawPath(side_path)
 
-        if discType == "centrifugal":
-            p.setPen(QPen(qc(C["dimTxt"], 153), 0.7, Qt.PenStyle.DashLine))
-            p.drawLine(QPointF(sX - 6, sY + bHs * 0.62), QPointF(sX + bPs + 6, sY + bHs * 0.62))
-            self._text(p, sX - 8, sY + bHs * 0.62 + 3, "X-X", 6, C["dimTxt"], right=True)
+        # FIX (Jay: confirmed by direct geometric calculation that fill
+        # level can sit above the front lip for continuous buckets at
+        # high fill% -- no view previously showed this at all). General
+        # numerical solve against whichever shape variant was just built
+        # above, so this works identically for the centrifugal scoop and
+        # the continuous wedge without a separate formula per case.
+        fill_frac = float(inp.get("fill_pct") or 75) / 100.0
+        fill_y = self._solve_fill_height(side_path, sY, sY + bHs, sX, sX + bPs, fill_frac)
+        lip_y = None
+        if tipYFrac is not None:
+            # The lip is the drawn front vertex -- same point used for the
+            # "FRONT"/"LIP" label below, at height (1-tipYFrac) from the top.
+            # Only ever set for the continuous wedge shape (see side_path
+            # construction above) -- the centrifugal scoop cases don't have
+            # a comparable "short front wall" lip, so no comparison is drawn
+            # for those.
+            lip_y = sY + bHs * (1 - tipYFrac)
+
+        if fill_y is not None:
+            fill_over_lip = lip_y is not None and fill_y < lip_y   # screen-y: smaller y = higher
+            line_color = C["danger"] if fill_over_lip else C["belt"]
+            p.setPen(QPen(qc(line_color), 1.6, Qt.PenStyle.DashLine))
+            p.drawLine(QPointF(sX - 4, fill_y), QPointF(sX + bPs + 4, fill_y))
+            fill_pct_label = f"{inp.get('fill_pct', 75):.0f}% fill"
+            if fill_over_lip:
+                fill_pct_label += "  ⚠ above lip"
+            self._text(p, sX - 8, fill_y - 3, fill_pct_label, 6.5, line_color, right=True)
+
+        if lip_y is not None:
+            note_color = C["danger"] if (fill_y is not None and fill_y < lip_y) else C["dimTxt"]
+            p.setPen(QPen(qc(note_color, 140), 0.6, Qt.PenStyle.DotLine))
+            p.drawLine(QPointF(sX + bPs - 3, lip_y), QPointF(sX + bPs + 14, lip_y))
+            self._text(p, sX + bPs + 16, lip_y + 2, "lip height", 6, note_color)
+
         if frontAngle is not None:
             self._text(p, sX + bPs * 0.5, sY + bHs * 0.85, f"{frontAngle:.0f}°", 6.5, C["primary"], center=True)
 
@@ -865,7 +963,7 @@ class _SchematicCanvas(QWidget):
             ("Active volume", f"{activeVol_text} ({inp.get('fill_pct', 75)}% fill)"),
             ("Bucket mass", f"{float(bkt['bucket_mass_kg']):.1f} kg" if bkt.get("bucket_mass_kg") is not None else "— kg"),
             ("Total buckets", str(nBuckets)),
-            ("Belt punching", f"{punch}  (CEMA standard)" if hasBolts else "chain mount / consult Martin"),
+            ("Belt punching", f"{punch}  (CEMA standard)" if hasBolts else "chain mount — see manufacturing drawing"),
             ("Bolt holes", f"{boltN} × Ø{boltDia_mm:.1f}mm" if hasBolts else "—"),
             ("Hole spacing (A)", f"{boltA_mm:.1f} mm" if hasBolts and punch != "chain" else "—"),
             ("Edge inset (B)", f"{boltB_mm:.1f} mm" if hasBolts and punch != "chain" else "—"),
@@ -993,34 +1091,16 @@ class ElevationView(QWidget):
         self._stat_overlay.setStyleSheet("background: transparent;")
         stat_layout = QVBoxLayout(self._stat_overlay)
         stat_layout.setContentsMargins(0, 0, 0, 0)
-        stat_layout.setSpacing(5)
+        stat_layout.setSpacing(6)
         self._stat_chips = {}
         for key, label, unit in [
             ("v", "BELT SPEED", "m/s"), ("Q", "CAPACITY", "t/h"),
-            ("motor_kw", "MOTOR", "kW"), ("theta_rel", "DISCHARGE θ", "° from vert"),
+            ("motor_kw", "MOTOR", "kW"), ("theta_rel", "DISCHARGE θ", "° vert"),
             ("cr", "CR", ""),
         ]:
-            chip = QFrame()
-            chip.setStyleSheet(
-                f"background: rgba(15,23,42,.92); border: 1px solid {BORDER}; border-radius: 5px;"
-            )
-            cl = QVBoxLayout(chip)
-            cl.setContentsMargins(10, 4, 10, 4)
-            cl.setSpacing(0)
-            lbl = QLabel(label)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-            lbl.setStyleSheet(f"color:{TEXT3};font-size:7.5px;letter-spacing:.06em;")
-            cl.addWidget(lbl)
-            val = QLabel("—")
-            val.setAlignment(Qt.AlignmentFlag.AlignRight)
-            val.setStyleSheet(f"color:{TEXT3};font-size:16px;font-weight:700;font-family:'JetBrains Mono',monospace;")
-            cl.addWidget(val)
-            unit_lbl = QLabel(unit)
-            unit_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-            unit_lbl.setStyleSheet(f"color:{TEXT3};font-size:7.5px;font-family:'JetBrains Mono',monospace;")
-            cl.addWidget(unit_lbl)
+            chip = KPIChip(label, unit, min_size=(100, 56), value_pixel_size=17)
             stat_layout.addWidget(chip)
-            self._stat_chips[key] = (val, unit_lbl)
+            self._stat_chips[key] = chip
         stat_layout.addStretch()
         self._stat_overlay.setFixedWidth(110)
 
@@ -1097,6 +1177,4 @@ class ElevationView(QWidget):
             "cr": (f(cr, 3), SUCCESS if (cr is not None and 1.0 <= cr <= 1.8) else WARNING),
         }
         for key, (text, color) in stats.items():
-            val_lbl, _ = self._stat_chips[key]
-            val_lbl.setText(text)
-            val_lbl.setStyleSheet(f"color:{color};font-size:16px;font-weight:700;font-family:'JetBrains Mono',monospace;")
+            self._stat_chips[key].set_value(text, color)

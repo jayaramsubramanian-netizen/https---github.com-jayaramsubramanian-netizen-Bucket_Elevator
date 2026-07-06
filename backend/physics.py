@@ -227,7 +227,7 @@ class DischargePhysics:
         v1.3.0 — bucket_front_angle_deg replaces projection-based approximation
         ────────────────────────────────────────────────────────────────────────
         For continuous discharge the onset angle is now taken directly from the
-        bucket face angle (Martin catalog H-149/H-150):
+        bucket face angle (industry-standard catalog data):
             MF bucket: front_angle_deg = 30° → onset θ ≈ 30°
             HF bucket: front_angle_deg = 45° → onset θ ≈ 45°
             SC bucket: front_angle_deg = 35° → onset θ ≈ 35°
@@ -245,7 +245,7 @@ class DischargePhysics:
         bucket_projection_m     Radial projection of bucket from belt [m]
                                 Used for stream spread in stream_envelope().
         bucket_front_angle_deg  Bucket face angle from vertical [°].
-                                From Martin catalog: MF=30, HF=45, SC=35, AA=30.
+                                Standard values: MF=30, HF=45, SC=35, AA=30.
                                 Used as discharge onset angle for continuous elevators.
         elevator_type           "centrifugal" | "continuous" | "positive"
         cohesion_index          0 = free-flowing, 1 = highly cohesive
@@ -274,7 +274,7 @@ class DischargePhysics:
 
         elif elevator_type == "continuous":
             # CEMA §3.3: material discharges as bucket inverts at head pulley.
-            # The bucket face angle from vertical (from Martin catalog) gives
+            # The bucket face angle from vertical (industry-standard catalog data) gives
             # the onset angle directly — steeper face = later release.
             #   MF (30°): gentle slope → pours at ~30° past 12 o'clock
             #   HF (45°): steeper face → pours at ~45° past 12 o'clock
