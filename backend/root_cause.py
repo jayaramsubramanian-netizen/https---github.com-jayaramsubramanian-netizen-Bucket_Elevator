@@ -846,6 +846,42 @@ def analyse(results: dict, inputs: dict) -> list[dict]:
             n_safe = _rpm_from_v(v_safe, D_mm)
             n_std  = max(int(n_safe // 5) * 5, 10)
 
+            # FIX (Jay: reported being "sent in a loop" -- CR<1 correction
+            # wants higher speed, this casing-clearance correction wants
+            # lower speed, and for some designs there's genuinely no
+            # single speed that satisfies both at the current casing
+            # width). Reuses the exact same v-to-max_x linear scaling the
+            # speed correction above already trusts (max_x ~= v * t_flight
+            # + x0, flight time roughly constant) -- not a new physics
+            # assumption, just applying it in the other direction to find
+            # the speed CEILING casing clearance allows, then comparing it
+            # against the speed FLOOR centrifugal discharge (CR>=1)
+            # requires. Only applies to centrifugal-style buckets --
+            # HF/continuous buckets have no CR>=1 requirement to conflict
+            # with in the first place.
+            bkt_style = (bucket.get("style") or bucket.get("type") or "").upper()
+            if bkt_style not in ("HF", "MF") and max_x > 0:
+                v_ceiling_casing = v * (wall_x / max_x)          # speed casing allows, no margin
+                v_floor_cr1 = math.sqrt(9.81 * r_pulley)          # speed CR=1.0 requires
+                if v_floor_cr1 > v_ceiling_casing:
+                    n_ceiling = _rpm_from_v(v_ceiling_casing, D_mm)
+                    n_floor = _rpm_from_v(v_floor_cr1, D_mm)
+                    findings.append(_finding(i, msg, "fail",
+                        "No single speed satisfies both centrifugal discharge and casing clearance",
+                        [
+                            _driver("n_rpm", "Speed ceiling (casing clearance)", round(n_ceiling), "rpm",
+                                f"Above {n_ceiling:.0f} rpm the discharge stream strikes the casing wall", 1),
+                            _driver("n_rpm", "Speed floor (CR ≥ 1.0)", round(n_floor), "rpm",
+                                f"Below {n_floor:.0f} rpm, centrifugal discharge fails (CR < 1.0)", 1),
+                        ],
+                        [],   # no single-param correction is possible here -- that's the whole point
+                        f"At the current head pulley diameter ({D_mm:.0f}mm) and casing width ({belt_w:.0f}mm), "
+                        f"centrifugal discharge requires ≥{n_floor:.0f} rpm (CR≥1.0) but casing clearance requires "
+                        f"≤{n_ceiling:.0f} rpm — these do not overlap. Adjusting shaft speed alone cannot resolve "
+                        f"this design; you need to either widen the casing/belt so a higher speed clears the wall, "
+                        f"increase head pulley diameter (raises CR at the same speed), or switch to a "
+                        f"continuous-discharge bucket style (HF/MF), which has no CR≥1.0 requirement."))
+
             # ── Belt/casing width correction ──────────────────────────────────
             # Casing inner wall must be beyond max_x with 50mm clearance.
             # wall_x = BW/2000 + 0.050  →  BW ≥ (max_x + 0.050) × 2000

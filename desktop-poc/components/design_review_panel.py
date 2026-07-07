@@ -33,10 +33,10 @@ STAGES = [
      "gate": "Resolve all FAILs to advance"},
     {"level": 2, "label": "Preliminary", "color": WARNING,
      "desc": "No FAILs -- suitable for budgetary purposes",
-     "gate": "Resolve all WARNs to advance"},
+     "gate": "No FAILs remaining -- advance when ready"},
     {"level": 3, "label": "Detailed", "color": PRIMARY,
-     "desc": "No FAILs or WARNs -- suitable for detailed engineering",
-     "gate": "All checks PASS -- advance to Released to freeze design"},
+     "desc": "No FAILs -- suitable for detailed engineering (review any open WARNs/INFO first)",
+     "gate": "No FAILs remaining -- advance when ready"},
     {"level": 4, "label": "Released", "color": SUCCESS,
      "desc": "Design frozen -- suitable for fabrication and procurement",
      "gate": "Design released"},
@@ -206,8 +206,6 @@ class DesignReviewPanel(QWidget):
             effective_stage = auto_stage
         elif fail_count > 0:
             effective_stage = 1
-        elif warn_count > 0 and self._manual_stage > 2:
-            effective_stage = 2
         else:
             effective_stage = max(self._manual_stage, auto_stage)
 
@@ -260,7 +258,7 @@ class DesignReviewPanel(QWidget):
         ml.addWidget(desc)
 
         next_level = effective_stage + 1
-        can_advance = next_level <= 4 and fail_count == 0 and (warn_count == 0 if next_level < 4 else True)
+        can_advance = next_level <= 4 and fail_count == 0
         if effective_stage < 4:
             if can_advance:
                 next_stage = next(s for s in STAGES if s["level"] == next_level)
@@ -273,13 +271,14 @@ class DesignReviewPanel(QWidget):
                 )
                 advance_btn.clicked.connect(lambda: self._advance(next_level))
                 ml.addWidget(advance_btn)
+                if warn_count > 0:
+                    review_note = QLabel(f"ⓘ {warn_count} WARN{'s' if warn_count > 1 else ''} still open — "
+                                          f"review before advancing if not yet accepted")
+                    review_note.setWordWrap(True)
+                    review_note.setStyleSheet(f"color: {WARNING}; font-size: 9px; margin-top: 2px;")
+                    ml.addWidget(review_note)
             else:
-                if fail_count > 0:
-                    lock_text = f"LOCKED: Resolve {fail_count} FAIL{'s' if fail_count > 1 else ''} to advance"
-                elif warn_count > 0 and effective_stage >= 2:
-                    lock_text = f"LOCKED: Resolve {warn_count} WARN{'s' if warn_count > 1 else ''} to advance to Detailed"
-                else:
-                    lock_text = f"LOCKED: {stage['gate']}"
+                lock_text = f"LOCKED: Resolve {fail_count} FAIL{'s' if fail_count > 1 else ''} to advance"
                 lock = QLabel(lock_text)
                 lock.setWordWrap(True)
                 lock.setStyleSheet(

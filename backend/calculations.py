@@ -3432,8 +3432,27 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                 f"check material back-flow and filling efficiency [CEMA 375 §3.3]", subsystem="process"))
     else:
         # Standard centrifugal discharge (CC, A, B, etc.)
-        if cr < 1.0:
-            checks.append(warn(f"CR={cr:.3f} < 1.0 — gravity/mixed discharge [CEMA 375 §3]", subsystem="process"))
+        # FIX: was warn() unconditionally for any CR<1.0, even though this
+        # is the exact same class of failure the HF branch above already
+        # correctly fail()s for its own threshold (CR>=1.0 defeats HF's
+        # design intent). CR<1.0 on a centrifugal bucket means insufficient
+        # centrifugal force to fling material outward at all -- material
+        # just dribbles/falls rather than discharging, which is a genuine
+        # discharge failure, not a soft advisory. Confirmed live: this let
+        # a centrifugal-recommended design "pass" with only a warning even
+        # though the bucket style fundamentally cannot discharge as
+        # intended. Severity now scales with how far below 1.0: a small
+        # shortfall (>=0.85) stays a warn (marginal, some centrifugal
+        # assist still occurring); further below is a genuine fail.
+        if cr < 0.85:
+            checks.append(fail(
+                f"CR={cr:.3f} < 1.0 — insufficient centrifugal force for this bucket style; "
+                f"material will not discharge centrifugally at this speed. Increase belt/chain "
+                f"speed, reduce head pulley diameter, or switch to a continuous-discharge "
+                f"bucket style if speed cannot be increased [CEMA 375 §3]", subsystem="process"))
+        elif cr < 1.0:
+            checks.append(warn(f"CR={cr:.3f} < 1.0 — gravity/mixed discharge, marginal centrifugal "
+                                f"assist [CEMA 375 §3]", subsystem="process"))
         elif cr <= 1.8:
             checks.append(ok(f"CR={cr:.3f} — optimal centrifugal range 1.0–1.8 [CEMA 375 §3]", subsystem="process"))
         elif cr <= 2.5:
