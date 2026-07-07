@@ -1,6 +1,6 @@
 """
 VECTRIX™ — Bill of Materials Generator
-AKSHAYVIPRA EL-MEC · VECTOMEC™
+JAYVEECONS · VECTOMEC™
 
 generate_bom(results, inputs) → structured BOM dict
 

@@ -265,7 +265,7 @@ def sf_checks_table(check_rows):
 
 
 # ─── Header flowable ─────────────────────────────────────────────────────────
-def header_flowables(inp, res, project="", doc_ref=""):
+def header_flowables(inp, res, project="", doc_ref="", model_no="VM-??-?-???/???"):
     now    = datetime.now().strftime("%d %b %Y  %H:%M")
     mat    = (res.get("mat") or res.get("material") or {})
     status = str(res.get("status", "—")).upper()
@@ -1177,7 +1177,7 @@ def build_report(results: dict, inputs: dict,
     story = []
 
     # ── HEADER ────────────────────────────────────────────────────────────────
-    story += header_flowables(inp, r, project, doc_ref)
+    story += header_flowables(inp, r, project, doc_ref, model_no)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 1  INPUT SPECIFICATIONS

@@ -314,9 +314,14 @@ class TopNav(QFrame):
     the one real dropdown, plain QPushButtons for everything else.
     """
 
-    def __init__(self, on_tab_changed, parent=None):
+    def __init__(self, on_tab_changed, on_open=None, on_save=None,
+                 on_save_as=None, on_manage_users=None, parent=None):
         super().__init__(parent)
         self.on_tab_changed = on_tab_changed
+        self._on_open = on_open
+        self._on_save = on_save
+        self._on_save_as = on_save_as
+        self._on_manage_users = on_manage_users
         self.setFixedHeight(76)
         self.setStyleSheet(f"background-color: {PANEL}; border-bottom: 1px solid {BORDER};")
         layout = QHBoxLayout(self)
@@ -355,15 +360,19 @@ class TopNav(QFrame):
         app_menu.addSeparator()
         act_open = QAction("Open Design...", self)
         act_open.setShortcut("Ctrl+O")
-        act_open.triggered.connect(lambda: self._not_yet_wired("Open Design"))
+        act_open.triggered.connect(lambda: self._on_open() if self._on_open else None)
         app_menu.addAction(act_open)
         act_save = QAction("Save Design", self)
         act_save.setShortcut("Ctrl+S")
-        act_save.triggered.connect(lambda: self._not_yet_wired("Save Design"))
+        act_save.triggered.connect(lambda: self._on_save() if self._on_save else None)
         app_menu.addAction(act_save)
         act_save_as = QAction("Save Design As...", self)
-        act_save_as.triggered.connect(lambda: self._not_yet_wired("Save Design As"))
+        act_save_as.triggered.connect(lambda: self._on_save_as() if self._on_save_as else None)
         app_menu.addAction(act_save_as)
+        app_menu.addSeparator()
+        act_users = QAction("Manage Users...", self)
+        act_users.triggered.connect(lambda: self._on_manage_users() if self._on_manage_users else None)
+        app_menu.addAction(act_users)
         app_menu.addSeparator()
         act_exit = QAction("Exit", self)
         act_exit.setShortcut("Ctrl+Q")
@@ -472,14 +481,25 @@ class _PdfReportWorker(QThread):
 
 
 class ShellWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, auth_db=None):
         super().__init__()
-        self.setWindowTitle("VECTRIX™ -- Bucket Elevator")
+        from auth import current_user
+        self._auth_db = auth_db
+        self._current_design_file = None   # the currently open DesignFile, or None
+        user = current_user()
+        user_str = f" — {user.display_name} ({user.role.capitalize()})" if user else ""
+        self.setWindowTitle(f"VECTOMEC™ — Bucket Elevator{user_str}")
         self.resize(1400, 860)
         self.setStyleSheet(f"background-color: {BG};")
 
         self.app_title_bar = AppTitleBar(on_pdf_clicked=self._on_pdf_clicked)
-        self.top_nav = TopNav(on_tab_changed=self._on_tab_changed)
+        self.top_nav = TopNav(
+            on_tab_changed=self._on_tab_changed,
+            on_open=self._on_open_design,
+            on_save=self._on_save_design,
+            on_save_as=lambda: self._on_save_design(save_as=True),
+            on_manage_users=self._on_manage_users,
+        )
 
         col1 = QWidget()
         col1_layout = QVBoxLayout(col1)
@@ -721,27 +741,132 @@ class ShellWindow(QMainWindow):
         self.run_calculation(payload)
 
     def _auto_pdf_filename(self):
-        """Build a descriptive default filename from the actual design
-        parameters -- material, capacity, height, bucket series -- since
-        there's no formal "model number" field in this backend (checked:
-        only design_id exists, and that's a saved-design database key, not
-        a per-calculation designation). This is the closest equivalent,
-        built the same way the BOM's own tag prefixes identify a design."""
-        r = self._last_results or {}
+        """Build the PDF filename from the VM model number -- the canonical
+        identifier for this elevator configuration -- plus a timestamp."""
+        r   = self._last_results or {}
         inp = self._default_payload or {}
-        mat = str(inp.get("mat_id", "material")).replace(" ", "")
-        Q = inp.get("Q_req", "")
-        H = inp.get("H_m", "")
-        bkt = (r.get("bucket") or {}).get("id", "")
-        parts = [p for p in ["VECTOMEC", mat.capitalize(), f"{Q}tph" if Q else "",
-                              f"H{H}m" if H else "", bkt] if p]
+        try:
+            from api_client import fetch_model_number
+            model_no = fetch_model_number(inp, r)
+        except Exception:
+            mat = str(inp.get("mat_id", "material")).capitalize()
+            Q   = inp.get("Q_req", "")
+            H   = inp.get("H_m", "")
+            model_no = f"VM-BE_{mat}_{Q}tph_H{H}m"
         from datetime import datetime
         stamp = datetime.now().strftime("%Y%m%d_%H%M")
-        return "_".join(parts + [stamp]) + ".pdf"
+        return f"{model_no}_{stamp}.pdf"
 
     @staticmethod
     def _styled_message_box(icon, title, text, parent):
         return styled_message_box(icon, title, text, parent)
+
+    def _on_save_design(self, save_as: bool = False):
+        """Save Design / Save Design As handler."""
+        if not self._last_results:
+            self._styled_message_box(
+                QMessageBox.Icon.Information, "Nothing to Save",
+                "Run a calculation first before saving.", self
+            ).exec()
+            return
+
+        from app_config import AppConfig
+        from auth import current_user
+        from design_file import DesignFile, build_filename
+        import api_client
+
+        cfg = AppConfig.get()
+        user = current_user()
+        user_dict = user.to_dict() if user else {}
+
+        # Get model number and design stage from the current panels
+        try:
+            model_no = api_client.fetch_model_number(self._default_payload, self._last_results)
+        except Exception:
+            model_no = "VM-??-?-???/???"
+
+        drp = self.design_review_panel
+        stage = drp._manual_stage or 1   # respect the user's current review stage
+
+        if self._current_design_file and not save_as:
+            # Increment version of the same design
+            version = self._current_design_file.version + 1
+        else:
+            version = cfg.next_design_version(model_no)
+
+        df = DesignFile.create(
+            inputs=self._default_payload,
+            results=self._last_results,
+            model_number=model_no,
+            stage=stage,
+            version=version,
+            created_by=user_dict,
+        )
+        filename = build_filename(model_no, stage, version)
+        save_path = cfg.designs_dir / filename
+
+        try:
+            df.save(save_path)
+            self._current_design_file = df
+            self._styled_message_box(
+                QMessageBox.Icon.Information, "Design Saved",
+                f"Saved as:\n{save_path.name}", self
+            ).exec()
+        except Exception as e:
+            self._styled_message_box(
+                QMessageBox.Icon.Critical, "Save Failed",
+                f"Could not save design:\n{e}", self
+            ).exec()
+
+    def _on_open_design(self):
+        """Open Design handler -- shows the file browser dialog."""
+        from app_config import AppConfig
+        from open_design_dialog import OpenDesignDialog
+
+        cfg = AppConfig.get()
+        dlg = OpenDesignDialog(cfg.designs_dir, parent=self)
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+        df = dlg.selected_design_file
+        if df is None:
+            return
+
+        try:
+            self._current_design_file = df
+            self._default_payload = dict(df.inputs)
+            self.run_calculation(self._default_payload)
+            # Restore design review stage
+            drp = self.design_review_panel
+            drp._manual_stage = df.design_stage if df.design_stage > 1 else None
+            drp._rebuild()
+            self._styled_message_box(
+                QMessageBox.Icon.Information, "Design Loaded",
+                f"Opened: {df.model_number}  v{df.version:03d}  [{df.stage_label}]", self
+            ).exec()
+        except Exception as e:
+            self._styled_message_box(
+                QMessageBox.Icon.Critical, "Load Failed",
+                f"Could not load design:\n{e}", self
+            ).exec()
+
+    def _on_manage_users(self):
+        """User management -- approver role only."""
+        from auth import current_user, require_role
+        from login_dialog import UserManagerDialog
+        if not require_role("approver"):
+            self._styled_message_box(
+                QMessageBox.Icon.Warning, "Access Denied",
+                "Only Approvers can manage users.", self
+            ).exec()
+            return
+        if self._auth_db is None:
+            self._styled_message_box(
+                QMessageBox.Icon.Warning, "Not Available",
+                "User management is not available in this session.", self
+            ).exec()
+            return
+        dlg = UserManagerDialog(self._auth_db, parent=self)
+        dlg.exec()
 
     def _on_pdf_clicked(self):
         """PDF Report button handler. Opens a save dialog, spins up a
@@ -806,7 +931,30 @@ class ShellWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    window = ShellWindow()
+
+    # ── 1. Initialize folder structure and config ─────────────────────
+    from app_config import AppConfig
+    cfg = AppConfig.get()
+
+    # ── 2. Initialize auth database ───────────────────────────────────
+    from auth import AuthDB
+    auth_db = AuthDB(cfg.users_db_path)
+
+    # ── 3. First-launch wizard or login dialog ─────────────────────────
+    from login_dialog import FirstLaunchWizard, LoginDialog
+    if not auth_db.has_any_users():
+        wizard = FirstLaunchWizard(auth_db)
+        if wizard.exec() != wizard.DialogCode.Accepted:
+            sys.exit(0)
+        cfg.mark_first_launch_done()
+    else:
+        login = LoginDialog(auth_db)
+        if login.exec() != login.DialogCode.Accepted:
+            sys.exit(0)
+
+    # ── 4. Main window ────────────────────────────────────────────────
+    from auth import current_user
+    window = ShellWindow(auth_db=auth_db)
     window.run_calculation()
     window.show()
     sys.exit(app.exec())

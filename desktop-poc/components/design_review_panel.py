@@ -19,6 +19,14 @@ than the original always-on JSX placement, per "add the Design Review
 elements from the jsx to the status section when in the checks tab."
 """
 import re
+try:
+    from auth import require_role as _require_role, STAGE_REQUIRED_ROLE
+except ImportError:
+    # auth not available (test / headless environments)
+    def _require_role(role: str) -> bool:  # type: ignore[misc]
+        return True
+    STAGE_REQUIRED_ROLE: dict = {2: "designer", 3: "reviewer", 4: "approver"}
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea, QPushButton,
 )
@@ -259,24 +267,43 @@ class DesignReviewPanel(QWidget):
 
         next_level = effective_stage + 1
         can_advance = next_level <= 4 and fail_count == 0
+        required_role = STAGE_REQUIRED_ROLE.get(next_level, "approver")  # always bound
         if effective_stage < 4:
             if can_advance:
                 next_stage = next(s for s in STAGES if s["level"] == next_level)
-                advance_btn = QPushButton(f"Advance to {next_stage['label']} ->")
-                advance_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                advance_btn.setStyleSheet(
-                    f"background-color: rgba(74,158,255,.15); color: {next_stage['color']}; "
-                    f"border: 1px solid {next_stage['color']}; border-radius: 4px; padding: 6px 12px; "
-                    f"font-size: 10px; font-weight: 700;"
-                )
-                advance_btn.clicked.connect(lambda: self._advance(next_level))
-                ml.addWidget(advance_btn)
-                if warn_count > 0:
-                    review_note = QLabel(f"ⓘ {warn_count} WARN{'s' if warn_count > 1 else ''} still open — "
-                                          f"review before advancing if not yet accepted")
-                    review_note.setWordWrap(True)
-                    review_note.setStyleSheet(f"color: {WARNING}; font-size: 9px; margin-top: 2px;")
-                    ml.addWidget(review_note)
+                # Role gate: check whether the current user has the required
+                # role level to advance to this stage
+                try:
+                    has_permission = _require_role(required_role)
+                except Exception:
+                    has_permission = True   # auth not initialized (test mode)
+
+                if has_permission:
+                    advance_btn = QPushButton(f"Advance to {next_stage['label']} ->")
+                    advance_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                    advance_btn.setStyleSheet(
+                        f"background-color: rgba(74,158,255,.15); color: {next_stage['color']}; "
+                        f"border: 1px solid {next_stage['color']}; border-radius: 4px; padding: 6px 12px; "
+                        f"font-size: 10px; font-weight: 700;"
+                    )
+                    advance_btn.clicked.connect(lambda: self._advance(next_level))
+                    ml.addWidget(advance_btn)
+                    if warn_count > 0:
+                        review_note = QLabel(f"ⓘ {warn_count} WARN{'s' if warn_count > 1 else ''} still open — "
+                                              f"review before advancing if not yet accepted")
+                        review_note.setWordWrap(True)
+                        review_note.setStyleSheet(f"color: {WARNING}; font-size: 9px; margin-top: 2px;")
+                        ml.addWidget(review_note)
+                else:
+                    role_lock = QLabel(
+                        f"🔒 {required_role.capitalize()} role required to advance to {next_stage['label']}"
+                    )
+                    role_lock.setWordWrap(True)
+                    role_lock.setStyleSheet(
+                        f"color: {TEXT3}; font-size: 10px; padding: 5px 8px; border-radius: 4px; "
+                        f"background-color: rgba(0,0,0,.12); border: 1px solid {BORDER};"
+                    )
+                    ml.addWidget(role_lock)
             else:
                 lock_text = f"LOCKED: Resolve {fail_count} FAIL{'s' if fail_count > 1 else ''} to advance"
                 lock = QLabel(lock_text)
