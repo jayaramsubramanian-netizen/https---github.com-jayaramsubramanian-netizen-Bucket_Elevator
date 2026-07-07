@@ -1,814 +1,1268 @@
 """
-main.py -- VECTRIX™ desktop app entry point, modeled on BucketElevatorPage.jsx
-═══════════════════════════════════════════════════════════════════════════
-THIS is the file to run and keep upgrading -- not equipment_tree_poc.py,
-elevation_view_poc.py, or combined_shell_example.py.
+VECTRIX™ — AKSHAYVIPRA EL-MEC VECTOMEC™ Design Platform
+FastAPI Backend — Bucket Elevator Module
 
-FIXES this round (a real Windows screenshot still showed square-ish tab
-pills after the previous app.setStyle("Fusion") fix): the previous attempt
-used border-radius: 999px relying on it always exceeding half the
-button's actual rendered height. That depends on the button's real height
-being small and fixed -- here height was only ever a side-effect of
-padding, not a literal setFixedHeight(), so the radius-vs-height
-relationship the QSS engine actually rasterizes against wasn't as
-predictable as intended. Every pill-shaped button (tab buttons, the
-"Bucket Elevator" dropdown button, the module-switcher pills, the PDF
-Report button) now gets an explicit setFixedHeight() plus a border-radius
-set to exactly half that height -- the geometrically guaranteed way to
-get a true stadium shape, rather than relying on a radius-larger-than-
-the-box shortcut. border-style/border-width are also spelled out
-longhand (rather than the border: none shorthand) to remove any chance
-of a stylesheet parser treating the shorthand differently from the
-explicit properties.
+v1.1.0 — Engineering Platform Hardening
+────────────────────────────────────────────────────────────────────────────────
+ 1. Response envelope     {meta, data, warnings} on all calculation endpoints.
+ 2. _solver_meta()        Central version / standard / timestamp / input-hash.
+ 3. _collect_warnings()   Non-fatal CEMA 375-2017 advisory flags alongside
+                          results rather than raising HTTP 422.
+ 4. Structured errors     ErrorDetail(code, field, standard_clause) replaces
+                          bare HTTPException strings.
+ 5. /api/v1 prefix        APIRouter for forward-compatible versioning; old
+                          /api/* kept as hidden compat aliases.
+ 6. lru_cache             Reference data payloads cached at module level —
+                          no realloc on every GET.
+ 7. Audit table           calc_audit written via BackgroundTasks (never
+                          blocks the HTTP response).
+ 8. CORS regex            VECTRIX_CORS_REGEX env var for internal wildcard
+                          sub-domains alongside the origins list.
+ 9. calc_schema_version   Stored per design record; enables forward-compat
+                          migration when equations evolve.
+10. _err() helper         Single raise site for structured HTTP errors;
+                          annotated -> Never so type-checkers flag dead code.
+────────────────────────────────────────────────────────────────────────────────
 """
-import sys
 
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QFrame, QStackedWidget, QMenu, QSplitter,
-    QFileDialog, QMessageBox, QScrollArea,
-)
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QAction
+import hashlib
+import io
+import json
+import traceback as _traceback
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from functools import lru_cache
+import os
+import sqlite3
+from typing import Any, Never, Optional
 
-from theme import (
-    BG, PANEL, PANEL2, BORDER, TEXT, TEXT2, TEXT3, MUTED, PRIMARY,
-    SUCCESS, WARNING, DANGER, BRAND_RED,
-)
-from api_client import fetch_design, download_pdf_report
-from components.dialog_helpers import KPIChip, styled_message_box
-from components import (
-    ElevationView, EquipmentTreePanel, InputSidebarPanel, StatusPanel, OptimizerPanel,
-    BomPanel, StatusDesignLeaves, MaintenancePanel, ChecksPanel, DesignReviewPanel,
-    MaterialLibraryPanel, ChartsPanel,
-)
+from fastapi import APIRouter, BackgroundTasks, Body, FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
-TABS = [
-    {"id": "design",     "label": "Results"},
-    {"id": "optimizer",  "label": "Optimizer", "badge": "AI"},
-    {"id": "checks",     "label": "Checks", "failBadge": True},
-    {"id": "components", "label": "Components"},
-    {"id": "maintenance","label": "Maintenance"},
-    {"id": "materials",  "label": "Materials"},
-]
-
-TAB_PILL_HEIGHT = 34
-TAB_PILL_RADIUS = TAB_PILL_HEIGHT // 2
-MODULE_PILL_HEIGHT = 30
-MODULE_PILL_RADIUS = MODULE_PILL_HEIGHT // 2
-
-
-def fmt_kpi(v, dp):
-    if v is None:
-        return "—"
-    try:
-        return f"{float(v):.{dp}f}"
-    except (TypeError, ValueError):
-        return "—"
+try:
+    from .database import get_db, init_db
+except ImportError:
+    from database import get_db, init_db
+try:
+    from .models import BucketElevatorInput, DesignRecord, OptimizerRequest
+except ImportError:
+    from models import BucketElevatorInput, DesignRecord, OptimizerRequest
+try:
+    from .calculations import solve_elevator, run_optimizer, MATERIALS, BUCKET_SERIES, MOTOR_SIZES
+except ImportError:
+    from calculations import solve_elevator, run_optimizer, MATERIALS, BUCKET_SERIES, MOTOR_SIZES
+try:
+    from .vectrix_optimizer_v2 import run_nsga2_optimizer
+except ImportError:
+    from vectrix_optimizer_v2 import run_nsga2_optimizer
+try:
+    from .generate_report import build_report, build_variant_report
+except ImportError:
+    from generate_report import build_report, build_variant_report
 
 
-class ColHeader(QFrame):
-    """Direct port of the JSX's shared ColHeader -- every column in the
-    real app uses this same small component."""
+# ── Constants ─────────────────────────────────────────────────────────────────
 
-    def __init__(self, label, sub=None, action=None, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(36)
-        self.setStyleSheet(f"background-color: {PANEL}; border-bottom: 1px solid {BORDER};")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 0, 12, 0)
-        text_box = QHBoxLayout()
-        text_box.setSpacing(7)
-        lbl = QLabel(label.upper())
-        lbl.setStyleSheet(f"color: {TEXT3}; font-size: 9.5px; font-weight: 700; letter-spacing: 1px;")
-        text_box.addWidget(lbl)
-        if sub:
-            sub_lbl = QLabel(sub)
-            sub_lbl.setStyleSheet(f"color: {MUTED}; font-size: 8.5px;")
-            text_box.addWidget(sub_lbl)
-        layout.addLayout(text_box)
-        layout.addStretch()
-        if action:
-            layout.addWidget(action)
+CALC_SCHEMA_VERSION = "1.1.0"
+CEMA_STANDARD       = "CEMA 375-2017"
+
+# Must match the DB path used in database.py.  Override via env if needed.
+_DB_PATH = os.getenv("VECTRIX_DB", "vectrix.db")
 
 
-def fail_warn_badges(n_fail, n_warn):
-    """Small FAIL/WARN pill row -- port of the JSX's inline badge markup
-    that appears in the middle column's ColHeader action slot when on the
-    Results tab."""
-    box = QWidget()
-    layout = QHBoxLayout(box)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(5)
-    if n_fail > 0:
-        lbl = QLabel(f"{n_fail} FAIL")
-        lbl.setStyleSheet(
-            f"background-color: rgba(224,82,82,.12); color: {DANGER}; border: 1px solid rgba(224,82,82,.3); "
-            f"border-radius: 999px; padding: 2px 7px; font-size: 8.5px; font-weight: 700;"
-        )
-        layout.addWidget(lbl)
-    if n_warn > 0:
-        lbl = QLabel(f"{n_warn} WARN")
-        lbl.setStyleSheet(
-            f"background-color: rgba(217,142,0,.12); color: {WARNING}; border: 1px solid rgba(217,142,0,.3); "
-            f"border-radius: 999px; padding: 2px 7px; font-size: 8.5px; font-weight: 700;"
-        )
-        layout.addWidget(lbl)
-    return box
+# ── Improvement 2 — Solver metadata helper ─────────────────────────────────────
+#
+# Every calculation response includes this block.
+# input_hash is a truncated SHA-256 of the canonicalised input dict:
+#   • clients can skip re-sending a request when the hash matches a cache entry
+#   • audit records can be joined back to calc_audit by hash alone
+#   • regression test suites can assert on hash stability across solver versions
+
+def _solver_meta(inp_dict: dict | None = None) -> dict[str, Any]:
+    meta: dict[str, Any] = {
+        "solver_version": CALC_SCHEMA_VERSION,
+        "cema_reference": CEMA_STANDARD,
+        "timestamp":      datetime.now(timezone.utc).isoformat(),
+    }
+    if inp_dict:
+        raw = json.dumps(inp_dict, sort_keys=True, default=str).encode()
+        meta["input_hash"] = hashlib.sha256(raw).hexdigest()[:16]
+    return meta
 
 
-class Placeholder(QWidget):
-    """An honest, labeled gap -- not a fake implementation."""
+# ── Improvement 1 — Response envelope ──────────────────────────────────────────
+#
+# Why a dedicated model rather than a plain dict?
+#   • FastAPI validates and documents the shape automatically in OpenAPI.
+#   • Front-end clients can switch on response.warnings.length without
+#     guessing whether the field will exist.
+#   • Adding new top-level keys (e.g. "debug") in future is non-breaking.
 
-    def __init__(self, title, source_file, parent=None):
-        super().__init__(parent)
-        self.setStyleSheet(f"background-color: {BG};")
-        layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon = QLabel("○")
-        icon.setStyleSheet(f"color: {BORDER}; font-size: 28px;")
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_lbl = QLabel(title)
-        title_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 13px; font-weight: 600;")
-        title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        source_lbl = QLabel(f"not yet ported  ·  {source_file}")
-        source_lbl.setStyleSheet(f"color: {MUTED}; font-size: 10px;")
-        source_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        for w in (icon, title_lbl, source_lbl):
-            layout.addWidget(w)
-
-
-class ModulePill(QPushButton):
-    """One module switcher button in the platform title bar (Bucket
-    Elevator / Screw Conveyor). Active module gets the solid primary
-    fill; everything else (e.g. Screw Conveyor) is an honest, visibly-
-    disabled placeholder rather than a button that looks clickable but
-    does nothing.
-
-    FIX: setFixedHeight(MODULE_PILL_HEIGHT) + an exact-half border-radius,
-    same reasoning as NavTabButton below -- a true stadium shape needs a
-    known, fixed height to compute the matching radius against, not a
-    radius value assumed to always exceed whatever height padding alone
-    produces."""
-
-    def __init__(self, icon, label, badge=None, active=False, enabled=True, parent=None):
-        super().__init__(parent)
-        self.setText(f"{icon}  {label}" + (f"   " if badge else ""))
-        self.active = active
-        self.setEnabled(enabled)
-        self.setFixedHeight(MODULE_PILL_HEIGHT)
-        if not enabled:
-            self.setToolTip(f"{label} is a separate application, not part of this codebase yet")
-        if active:
-            self.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {PRIMARY}; color: white;
-                    border-style: none; border-width: 0px;
-                    border-radius: {MODULE_PILL_RADIUS}px;
-                    padding: 0px 14px; font-size: 12px; font-weight: 600;
-                }}
-            """)
-        else:
-            self.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: transparent; color: {TEXT3};
-                    border-style: none; border-width: 0px;
-                    border-radius: {MODULE_PILL_RADIUS}px;
-                    padding: 0px 14px; font-size: 12px;
-                }}
-                QPushButton:disabled {{ color: {MUTED}; }}
-                QPushButton:hover:!disabled {{ color: {TEXT2}; }}
-            """)
-        if badge:
-            self.setText(f"{icon}  {label}")
-            self._badge_text = badge
-
-
-class AppTitleBar(QFrame):
-    """Platform-level title bar -- VECTRIX™ branding + module switcher
-    (Bucket Elevator / Screw Conveyor) + PDF Report + version."""
-
-    def __init__(self, on_tab_changed=None, on_pdf_clicked=None, parent=None):
-        super().__init__(parent)
-        self.on_pdf_clicked = on_pdf_clicked
-        self.setFixedHeight(48)
-        self.setStyleSheet(f"background-color: {PANEL}; border-bottom: 1px solid {BORDER};")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 0, 14, 0)
-        layout.setSpacing(14)
-
-        icon = QLabel("⚙")
-        icon.setFixedSize(30, 30)
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon.setStyleSheet(
-            f"background-color: {BRAND_RED}; border-radius: 7px; color: white; font-size: 15px;"
-        )
-        layout.addWidget(icon)
-
-        brand_box = QVBoxLayout(); brand_box.setSpacing(0)
-        brand_title = QLabel("VECTRIX™")
-        brand_title.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 700;")
-        brand_sub = QLabel("DESIGN PLATFORM")
-        brand_sub.setStyleSheet(f"color: {TEXT3}; font-size: 8px; font-weight: 600; letter-spacing: 1px;")
-        brand_box.addWidget(brand_title); brand_box.addWidget(brand_sub)
-        layout.addLayout(brand_box)
-
-        module_bar = QFrame()
-        module_bar.setStyleSheet(f"background-color: {BG}; border: 1px solid {BORDER}; border-radius: 999px;")
-        module_layout = QHBoxLayout(module_bar)
-        module_layout.setContentsMargins(3, 3, 3, 3)
-        module_layout.setSpacing(2)
-
-        be_pill = ModulePill("⛏", "Bucket Elevator", badge="VECTOMEC™", active=True)
-        module_layout.addWidget(be_pill)
-        badge_lbl = QLabel("VECTOMEC™")
-        badge_lbl.setStyleSheet(
-            f"background-color: rgba(255,255,255,.18); color: white; border-radius: 999px; "
-            f"padding: 2px 8px; font-size: 8.5px; font-weight: 700; margin-left: -8px;"
-        )
-        module_layout.addWidget(badge_lbl)
-
-        sc_pill = ModulePill("🌀", "Screw Conveyor", active=False, enabled=False)
-        module_layout.addWidget(sc_pill)
-        layout.addWidget(module_bar)
-
-        layout.addStretch()
-
-        pdf_btn = QPushButton("⬇  PDF Report")
-        pdf_btn.setFixedHeight(MODULE_PILL_HEIGHT)
-        pdf_btn.setStyleSheet(
-            f"background-color: {PANEL2}; color: {TEXT2}; "
-            f"border-style: solid; border-width: 1px; border-color: {BORDER}; "
-            f"border-radius: {MODULE_PILL_RADIUS}px; padding: 0px 14px; font-size: 11.5px; font-weight: 600;"
-        )
-        pdf_btn.clicked.connect(lambda: self.on_pdf_clicked() if self.on_pdf_clicked else None)
-        layout.addWidget(pdf_btn)
-
-        version_lbl = QLabel("AKSHAYVIPRA EL-MEC · V1.0")
-        version_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 10.5px; font-weight: 600; letter-spacing: .5px;")
-        layout.addWidget(version_lbl)
-
-
-class NavTabButton(QPushButton):
-    """A tab button hosted in the top nav bar.
-
-    FIX (this round): a real Windows screenshot still showed square-ish
-    pills even after app.setStyle("Fusion") and removing setFlat(True).
-    The remaining cause: border-radius: 999px was relied on to always
-    exceed half the actual rendered height, but height here was only
-    ever a side-effect of padding -- never a literal fixed value the
-    radius was computed against. Now setFixedHeight(TAB_PILL_HEIGHT) is
-    set explicitly and the radius is exactly half of it, the
-    geometrically guaranteed way to get a true stadium shape. border-
-    style/border-width are spelled out longhand rather than the
-    `border: none` shorthand, removing any chance of a shorthand-vs-
-    longhand parsing inconsistency in the stylesheet engine."""
-
-    def __init__(self, label, parent=None):
-        super().__init__(label, parent)
-        self.setCheckable(True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(TAB_PILL_HEIGHT)
-        self._apply_style()
-
-    def setChecked(self, checked):
-        super().setChecked(checked)
-        self._apply_style()
-
-    def _apply_style(self):
-        if self.isChecked():
-            self.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {PRIMARY}; color: white;
-                    border-style: none; border-width: 0px;
-                    border-radius: {TAB_PILL_RADIUS}px;
-                    padding: 0px 16px; font-size: 12.5px; font-weight: 600;
-                }}
-            """)
-        else:
-            self.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: transparent; color: {TEXT3};
-                    border-style: none; border-width: 0px;
-                    border-radius: {TAB_PILL_RADIUS}px;
-                    padding: 0px 16px; font-size: 12.5px;
-                }}
-                QPushButton:hover {{ background-color: {PANEL2}; color: {TEXT2}; }}
-            """)
-
-
-class TopNav(QFrame):
-    """Page-level bar: a "Bucket Elevator" dropdown with standard window
-    functions, the tab pills, plus Q/P/v KPI chips.
-
-    FIX (earlier round, still in effect): the bar was a hard 40px with
-    KPI chips squeezed into the same 2px spacing as the tab buttons.
-    Now 56px tall, and the three KPI chips get their own sub-layout with
-    real spacing (8px) and larger type, independent of the tighter
-    spacing the tab row still uses.
-
-    FIX (earlier round, still documented here): QMenuBar.addWidget()
-    doesn't actually exist (confirmed: dir(QMenuBar) only has
-    addAction/addActions/addMenu/addSeparator). This version uses only
-    patterns confirmed to render correctly: QPushButton.setMenu() for
-    the one real dropdown, plain QPushButtons for everything else.
+class CalcResponse(BaseModel):
     """
+    Standard wrapper for all calculation endpoints.
 
-    def __init__(self, on_tab_changed, parent=None):
-        super().__init__(parent)
-        self.on_tab_changed = on_tab_changed
-        self.setFixedHeight(76)
-        self.setStyleSheet(f"background-color: {PANEL}; border-bottom: 1px solid {BORDER};")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(2)
-
-        menu_qss = f"""
-            QMenu {{ background-color: {PANEL2}; color: {TEXT2}; border: 1px solid {BORDER};
-                border-radius: 8px; padding: 4px; }}
-            QMenu::item {{ padding: 6px 24px 6px 14px; border-radius: 5px; font-size: 12px; }}
-            QMenu::item:selected {{ background-color: {PRIMARY}; color: white; }}
-            QMenu::separator {{ height: 1px; background-color: {BORDER}; margin: 4px 8px; }}
-        """
-
-        app_btn = QPushButton("Bucket Elevator  ▾")
-        app_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        app_btn.setFixedHeight(TAB_PILL_HEIGHT)
-        app_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent; color: {TEXT2};
-                border-style: none; border-width: 0px;
-                border-radius: {TAB_PILL_RADIUS}px;
-                padding: 0px 16px; font-size: 12.5px; font-weight: 600;
-            }}
-            QPushButton:hover {{ background-color: {PANEL2}; }}
-            QPushButton::menu-indicator {{ image: none; }}
-        """)
-        app_menu = QMenu(app_btn)
-        app_menu.setStyleSheet(menu_qss)
-        act_min = QAction("Minimize", self)
-        act_min.triggered.connect(lambda: self.window().showMinimized())
-        app_menu.addAction(act_min)
-        self.act_maximize = QAction("Maximize", self)
-        self.act_maximize.triggered.connect(self._toggle_maximize)
-        app_menu.addAction(self.act_maximize)
-        app_menu.addSeparator()
-        act_open = QAction("Open Design...", self)
-        act_open.setShortcut("Ctrl+O")
-        act_open.triggered.connect(lambda: self._not_yet_wired("Open Design"))
-        app_menu.addAction(act_open)
-        act_save = QAction("Save Design", self)
-        act_save.setShortcut("Ctrl+S")
-        act_save.triggered.connect(lambda: self._not_yet_wired("Save Design"))
-        app_menu.addAction(act_save)
-        act_save_as = QAction("Save Design As...", self)
-        act_save_as.triggered.connect(lambda: self._not_yet_wired("Save Design As"))
-        app_menu.addAction(act_save_as)
-        app_menu.addSeparator()
-        act_exit = QAction("Exit", self)
-        act_exit.setShortcut("Ctrl+Q")
-        act_exit.triggered.connect(lambda: self.window().close())
-        app_menu.addAction(act_exit)
-        app_btn.setMenu(app_menu)
-        self._app_menu = app_menu
-        layout.addWidget(app_btn)
-
-        sep = QFrame()
-        sep.setFixedWidth(1)
-        sep.setStyleSheet(f"background-color: {BORDER};")
-        layout.addWidget(sep)
-
-        self.tab_buttons = {}
-        for t in TABS:
-            label = t["label"]
-            if t.get("badge"):
-                label = f"{label}  ·{t['badge']}"
-            btn = NavTabButton(label)
-            btn.clicked.connect(lambda checked, tid=t["id"]: self._select_tab(tid))
-            layout.addWidget(btn)
-            self.tab_buttons[t["id"]] = btn
-        self.tab_buttons["design"].setChecked(True)
-
-        layout.addStretch()
-
-        # FIX (Jay, third pass on this specific complaint): previous
-        # rounds increased padding/spacing but kept the same basic chip
-        # proportions -- confirmed against a real screenshot that 279 /
-        # 25.0 / 1.83 were still hard to read at a glance. This is a
-        # genuinely bigger change, not an incremental nudge: value text
-        # nearly 50% larger (22px vs 15px) and bold, a fixed minimum
-        # FIX (this round, see KPIChip class above for the full reasoning):
-        # replaced the QFrame + 3-stacked-QLabel chip with a single
-        # custom-painted widget -- no box-in-a-box, label and unit are
-        # small corner marks around one large centered value, drawn
-        # directly with QPainter instead of QSS-styled QLabels.
-        kpi_row = QHBoxLayout()
-        kpi_row.setSpacing(10)
-        self.kpi_chips = {}
-        for label, unit in (("Q", "t/h"), ("P", "kW"), ("v", "m/s")):
-            chip = KPIChip(label, unit)
-            kpi_row.addWidget(chip)
-            self.kpi_chips[label] = chip
-        layout.addLayout(kpi_row)
-
-    def _toggle_maximize(self):
-        win = self.window()
-        if win.isMaximized():
-            win.showNormal()
-            self.act_maximize.setText("Maximize")
-        else:
-            win.showMaximized()
-            self.act_maximize.setText("Restore")
-
-    def _not_yet_wired(self, action_name):
-        print(f"[{action_name}] not yet wired -- no save/load format designed yet.")
-
-    def _select_tab(self, tab_id):
-        for tid, btn in self.tab_buttons.items():
-            btn.setChecked(tid == tab_id)
-        self.on_tab_changed(tab_id)
-
-    def update_kpis(self, results):
-        """Capacity color reads results["cap_ok"] directly (already
-        computed by the backend, a straight Q >= Q_req check in
-        calculations.py) -- per the architecture rule that the frontend
-        never duplicates engineering checks. P and v don't have an
-        equivalent required-vs-actual concept in the backend, so they
-        keep their original fixed categorical colors. set_value() handles
-        both the text and the border/value color in one call now -- no
-        separate accent step needed since KPIChip paints its own border."""
-        r = results or {}
-        if r.get("Q") is not None:
-            cap_ok = r.get("cap_ok")
-            q_color = SUCCESS if cap_ok else (DANGER if cap_ok is False else TEXT3)
-            self.kpi_chips["Q"].set_value(fmt_kpi(r.get("Q"), 0), q_color)
-        if r.get("P_total") is not None:
-            self.kpi_chips["P"].set_value(fmt_kpi(r.get("P_total"), 1), WARNING)
-        if r.get("v") is not None:
-            self.kpi_chips["v"].set_value(fmt_kpi(r.get("v"), 2), PRIMARY)
-
-    def update_fail_badge(self, n_fail):
-        base = next(t["label"] for t in TABS if t["id"] == "checks")
-        text = f"{base}  ·{n_fail}" if n_fail > 0 else base
-        self.tab_buttons["checks"].setText(text)
-        self.tab_buttons["checks"]._apply_style()
+    meta     — solver_version, cema_reference, timestamp, input_hash
+    data     — raw solver output (shape varies per endpoint)
+    warnings — non-fatal CEMA advisory notes; empty list when all clear
+    """
+    meta:     dict[str, Any]
+    data:     Any
+    warnings: list[str] = Field(default_factory=list)
 
 
-class _PdfReportWorker(QThread):
-    """Background thread for the PDF report endpoint -- confirmed ~1-3s
-    real call, not instant, so runs off the GUI thread same as every other
-    network call in this codebase."""
-    done = Signal(str)
-    errorOccurred = Signal(str)
-    def __init__(self, results, inputs, save_path, parent=None):
-        super().__init__(parent)
-        self.results, self.inputs, self.save_path = results, inputs, save_path
-    def run(self):
-        try:
-            path = download_pdf_report(self.results, self.inputs, self.save_path)
-            self.done.emit(path)
-        except Exception as e:
-            self.errorOccurred.emit(str(e))
+# ── Improvement 4 — Structured error model ─────────────────────────────────────
+#
+# Returning a bare string in HTTPException.detail is fine for development but
+# breaks clients that try to parse errors programmatically.  With ErrorDetail:
+#   • code      — machine-readable constant (e.g. "SOLVER_ERROR")
+#   • field     — which input field caused the problem, if applicable
+#   • standard_clause — CEMA section that defines the violated constraint
+#
+# _err() is annotated -> Never so mypy / pyright know it never returns.
+# Any code in the same branch after _err() is flagged as unreachable.
+
+class ErrorDetail(BaseModel):
+    code:            str
+    message:         str
+    field:           str | None = None
+    standard_clause: str | None = None
 
 
-class ShellWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("VECTRIX™ -- Bucket Elevator")
-        self.resize(1400, 860)
-        self.setStyleSheet(f"background-color: {BG};")
+def _err(
+    code:   str,
+    msg:    str,
+    field:  str | None = None,
+    clause: str | None = None,
+    status: int = 422,
+) -> Never:
+    raise HTTPException(
+        status_code=status,
+        detail=ErrorDetail(
+            code=code, message=msg,
+            field=field, standard_clause=clause,
+        ).model_dump(),
+    )
 
-        self.app_title_bar = AppTitleBar(on_pdf_clicked=self._on_pdf_clicked)
-        self.top_nav = TopNav(on_tab_changed=self._on_tab_changed)
 
-        col1 = QWidget()
-        col1_layout = QVBoxLayout(col1)
-        col1_layout.setContentsMargins(0, 0, 0, 0)
-        col1_layout.setSpacing(0)
-        col1_layout.addWidget(ColHeader("Equipment", "BE-001"))
-        self.tree_panel = EquipmentTreePanel(show_detail=False, popup_on_click=True)
-        col1_layout.addWidget(self.tree_panel)
+# ── Improvement 3 — Warning accumulator ────────────────────────────────────────
+#
+# Design warnings are different from validation errors:
+#   • Validation errors    → refuse to solve; return HTTP 422 immediately.
+#   • Engineering warnings → solve anyway; flag the advisory alongside results.
+#
+# This distinction matters on real projects.  An engineer may knowingly run
+# a slightly over-filled elevator to compare HPR; blocking them with a 422
+# forces them to game the inputs instead of reading the warning.
+#
+# Field names below (bucket_fill_pct, belt_speed_fpm, discharge_type, …)
+# must match the keys returned by solve_elevator().  Extend this list as the
+# physics layer gains additional tracked quantities.
 
-        col2 = QWidget()
-        col2_layout = QVBoxLayout(col2)
-        col2_layout.setContentsMargins(0, 0, 0, 0)
-        col2_layout.setSpacing(0)
-        col2_layout.addWidget(ColHeader("Parameters", "CEMA 375 Inputs"))
-        self.input_sidebar = InputSidebarPanel()
-        self.input_sidebar.inputsChanged.connect(self.run_calculation)
-        col2_layout.addWidget(self.input_sidebar)
+def _collect_warnings(inp: BucketElevatorInput, results: dict[str, Any]) -> list[str]:
+    w: list[str] = []
 
-        col3 = QWidget()
-        col3_layout = QVBoxLayout(col3)
-        col3_layout.setContentsMargins(0, 0, 0, 0)
-        col3_layout.setSpacing(0)
-        self.col3_layout = col3_layout
-        self.col3_header = ColHeader("Results")
-        col3_layout.addWidget(self.col3_header)
-        self.middle_stack = QStackedWidget()
-
-        # Results tab: elevation view + charts panel.
-        # Wrapped in a QScrollArea so neither the elevation schematic nor the
-        # charts are clipped when the window height is short -- direct user
-        # feedback: "elevator schematic section does not scroll, making this
-        # section be at the very bottom of the page". The internal splitter
-        # remains flexible so the user can still resize the elevation/chart
-        # proportion. The scroll area only activates when content overflows.
-        results_scroll = QScrollArea()
-        results_scroll.setWidgetResizable(True)
-        results_scroll.setStyleSheet("QScrollArea{border:none;}")
-        results_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        results_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-
-        results_inner = QWidget()
-        results_inner_layout = QVBoxLayout(results_inner)
-        results_inner_layout.setContentsMargins(0, 0, 0, 0)
-        results_inner_layout.setSpacing(0)
-
-        results_splitter = QSplitter(Qt.Orientation.Vertical)
-        results_splitter.setStyleSheet(
-            f"QSplitter::handle{{background:{BORDER};height:4px;}}"
-            f"QSplitter::handle:hover{{background:{PRIMARY};}}"
+    fill = results.get("bucket_fill_pct", 0.0)
+    if fill > 80.0:
+        w.append(
+            f"Bucket fill {fill:.1f} % exceeds recommended 80 % "
+            f"(CEMA 375-2017 §6.4). Consider larger bucket series or reduced belt speed."
         )
-        self.elevation = ElevationView()
-        self.elevation.setMinimumHeight(300)
-        results_splitter.addWidget(self.elevation)
-        self.charts_panel = ChartsPanel()
-        self.charts_panel.setMinimumHeight(300)
-        results_splitter.addWidget(self.charts_panel)
-        results_splitter.setStretchFactor(0, 55)
-        results_splitter.setStretchFactor(1, 45)
-        results_splitter.setSizes([420, 340])
 
-        results_inner_layout.addWidget(results_splitter)
-        results_scroll.setWidget(results_inner)
-        self.middle_stack.addWidget(results_scroll)
-        self.optimizer_panel = OptimizerPanel(on_apply=self._on_optimizer_apply)
-        self.middle_stack.addWidget(self.optimizer_panel)
-        self.checks_panel = ChecksPanel(on_apply_correction=self._on_apply_correction)
-        self.middle_stack.addWidget(self.checks_panel)
-        self.bom_panel = BomPanel()
-        self.middle_stack.addWidget(self.bom_panel)
-        self.maintenance_panel = MaintenancePanel()
-        self.middle_stack.addWidget(self.maintenance_panel)
-        self.material_library_panel = MaterialLibraryPanel()
-        self.middle_stack.addWidget(self.material_library_panel)
-        col3_layout.addWidget(self.middle_stack)
+    speed  = results.get("belt_speed_fpm", 0.0)
+    d_type = results.get("discharge_type", "centrifugal")
 
-        col4 = QWidget()
-        col4_layout = QVBoxLayout(col4)
-        col4_layout.setContentsMargins(0, 0, 0, 0)
-        col4_layout.setSpacing(0)
-        col4_layout.addWidget(ColHeader("Status"))
-        # FIX (direct instruction, this round): Status content is tab-aware.
-        # KpiGrid (status_panel.py) for Results/Optimizer/Maintenance/
-        # Materials -- the universal prior default, only ever asked to
-        # diverge for specific tabs. StatusDesignLeaves for Components.
-        # DesignReviewPanel (this round, new) for Checks -- "add the
-        # Design Review elements from the jsx to the status section when
-        # in the checks tab."
-        self.status_stack = QStackedWidget()
-        self.status_panel = StatusPanel()
-        self.status_stack.addWidget(self.status_panel)          # index 0 -- KpiGrid
-        self.status_leaves = StatusDesignLeaves()
-        self.status_stack.addWidget(self.status_leaves)          # index 1 -- BOM design leaves
-        self.design_review_panel = DesignReviewPanel()
-        self.status_stack.addWidget(self.design_review_panel)    # index 2 -- Design Review
-        col4_layout.addWidget(self.status_stack)
-        self._status_view_for_tab = {
-            "design": 0, "optimizer": 0, "components": 1,
-            "maintenance": 0, "materials": 0, "checks": 2,
-        }
-
-        body = QSplitter(Qt.Orientation.Horizontal)
-        body.setStyleSheet(f"""
-            QSplitter::handle {{ background-color: {BORDER}; }}
-            QSplitter::handle:hover {{ background-color: {PRIMARY}; }}
-        """)
-        body.setHandleWidth(2)
-        for col in (col1, col2, col3, col4):
-            body.addWidget(col)
-        body.setSizes([200, 280, 700, 260])
-        body.setStretchFactor(0, 0)
-        body.setStretchFactor(1, 0)
-        body.setStretchFactor(2, 1)
-        body.setStretchFactor(3, 0)
-
-        container = QWidget()
-        outer = QVBoxLayout(container)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-        outer.addWidget(self.app_title_bar)
-        outer.addWidget(self.top_nav)
-        outer.addWidget(body)
-        self.setCentralWidget(container)
-
-        self._tab_index = {"design": 0, "optimizer": 1, "checks": 2, "components": 3, "maintenance": 4, "materials": 5}
-        self._tab_label = {"design": "Results", "optimizer": "Optimizer", "checks": "Checks",
-                            "components": "Components", "maintenance": "Maintenance", "materials": "Materials"}
-        self._last_results = {}
-        self._default_payload = {
-            "Q_req": 100, "H_m": 25, "mat_id": "clinker",
-            "auto_bucket": False, "bucket_id": "AC_12x8",
-            "D_mm": 500, "n_rpm": 70, "fill_pct": 75,
-        }
-
-    def _on_tab_changed(self, tab_id):
-        self.middle_stack.setCurrentIndex(self._tab_index[tab_id])
-        self.status_stack.setCurrentIndex(self._status_view_for_tab.get(tab_id, 0))
-        action = fail_warn_badges(*self._fail_warn(self._last_results)) if tab_id == "design" else None
-        new_header = ColHeader(self._tab_label[tab_id], action=action)
-        self.col3_layout.replaceWidget(self.col3_header, new_header)
-        self.col3_header.deleteLater()
-        self.col3_header = new_header
-
-    @staticmethod
-    def _fail_warn(results):
-        checks = (results or {}).get("checks", []) or []
-        n_fail = sum(1 for c in checks if c.get("type") == "fail")
-        n_warn = sum(1 for c in checks if c.get("type") == "warn")
-        return n_fail, n_warn
-
-    def run_calculation(self, payload=None):
-        """Run a full recalculation and push results to every panel.
-
-        Wrapped in try/except -- any error (HTTP 4xx from invalid inputs,
-        backend 5xx, network drop, or a panel set_data crash) is caught here
-        and shown to the user as a non-fatal error banner instead of killing
-        the window. The previous result is kept so the user can still read
-        what they last successfully calculated.
-
-        The specific crash that prompted this fix: bucket_gap spinbox emitting
-        an intermediate value mid-edit sent a 422 Unprocessable Entity from
-        Pydantic validation, fetch_design() called resp.raise_for_status(),
-        the resulting HTTPError propagated through the call stack with no
-        catch, and Qt terminated the main window's event loop on the unhandled
-        exception. The backend was healthy (200 OK logged for other requests);
-        the crash was entirely in the client-side exception path."""
-        if payload is None:
-            payload = self._default_payload
-        try:
-            results = fetch_design(payload)
-        except Exception as e:
-            # Show the error in the col3 header area and return early,
-            # keeping _last_results / _default_payload from the previous
-            # successful calculation so the user can still read the UI.
-            err_msg = str(e)
-            if "422" in err_msg or "Unprocessable" in err_msg:
-                user_msg = f"Validation error — check input values ({err_msg[:120]})"
-            elif "ConnectionError" in type(e).__name__ or "Connection" in err_msg:
-                user_msg = "Cannot reach backend — is the server running on port 8000?"
-            else:
-                user_msg = f"Calculation error: {err_msg[:200]}"
-            # Replace the col3 header temporarily with an error notice
-            err_header = ColHeader(f"⚠  {user_msg[:80]}")
-            err_header.setStyleSheet(
-                f"background-color: rgba(224,82,82,.12); border-bottom: 1px solid rgba(224,82,82,.35);"
-                f"color: #e05252;"
+    if d_type == "centrifugal":
+        if speed > 225.0:
+            w.append(
+                f"Belt speed {speed:.0f} fpm exceeds centrifugal-discharge upper limit "
+                f"of 225 fpm (CEMA 375-2017 §7.2). Verify pulley diameter and RPM."
             )
-            self.col3_layout.replaceWidget(self.col3_header, err_header)
-            self.col3_header.deleteLater()
-            self.col3_header = err_header
-            return
+        elif speed < 100.0:
+            w.append(
+                f"Belt speed {speed:.0f} fpm may be insufficient for centrifugal "
+                f"discharge (CEMA 375-2017 §7.2 recommends ≥ 100 fpm)."
+            )
 
-        self._last_results = results
-        self._default_payload = payload
+    # Motor oversizing flag — more than 25 % above calculated requirement
+    # is worth flagging for energy-efficiency review.
+    motor_hp     = results.get("motor_hp",          0.0)
+    sel_motor_hp = results.get("selected_motor_hp", 0.0)
+    if sel_motor_hp > 0 and sel_motor_hp > motor_hp * 1.25:
+        w.append(
+            f"Selected motor ({sel_motor_hp:.1f} hp) is more than 25 % oversized "
+            f"relative to calculated requirement ({motor_hp:.2f} hp). "
+            f"Verify motor selection or consider a smaller standard frame."
+        )
+
+    return w
+
+
+# ── Improvement 7 — Calculation audit log ──────────────────────────────────────
+#
+# Every POST /calculate is persisted to calc_audit for:
+#   • Project traceability (who ran what, when)
+#   • Regression testing (replay a hash, compare results across versions)
+#   • Debugging (compare inputs_json to what the solver actually received)
+#
+# _audit_calc opens its own SQLite connection because the request-scoped `db`
+# dependency may already be closed when the background task runs.
+# BackgroundTasks.add_task() means this write never delays the HTTP response.
+
+def _init_audit_table() -> None:
+    """Create calc_audit if absent.  Called once during lifespan startup."""
+    con = sqlite3.connect(_DB_PATH)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS calc_audit (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            input_hash    TEXT    NOT NULL,
+            module        TEXT    NOT NULL,
+            schema_ver    TEXT    NOT NULL,
+            inputs_json   TEXT,
+            results_json  TEXT,
+            warnings_json TEXT,
+            created_at    TEXT    NOT NULL
+        )
+    """)
+    con.commit()
+    con.close()
+
+
+def _init_versions_table() -> None:
+    """Create design_versions table for revision history.  Called at startup."""
+    con = sqlite3.connect(_DB_PATH)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS design_versions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            design_id       TEXT    NOT NULL,
+            version         INTEGER NOT NULL,
+            module          TEXT    NOT NULL,
+            name            TEXT    NOT NULL,
+            inputs_json     TEXT,
+            results_json    TEXT,
+            notes           TEXT,
+            calc_schema_ver TEXT,
+            saved_at        TEXT    NOT NULL
+        )
+    """)
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS idx_dv_design_id ON design_versions (design_id)"
+    )
+    con.commit()
+    con.close()
+
+
+def _audit_calc(
+    module:     str,
+    inp_dict:   dict,
+    results:    Any,
+    warnings:   list[str],
+    input_hash: str,
+) -> None:
+    con = sqlite3.connect(_DB_PATH)
+    try:
+        con.execute("""
+            INSERT INTO calc_audit
+                (input_hash, module, schema_ver,
+                 inputs_json, results_json, warnings_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            input_hash,
+            module,
+            CALC_SCHEMA_VERSION,
+            json.dumps(inp_dict,  default=str),
+            json.dumps(results,   default=str),
+            json.dumps(warnings),
+            datetime.now(timezone.utc).isoformat(),
+        ))
+        con.commit()
+    finally:
+        con.close()
+
+
+# ── Lifespan ──────────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    _init_audit_table()        # create audit table alongside designs table
+    _init_versions_table()     # create design revision history table
+    # Unified component-catalog tables (materials/bearings/gearboxes/motors/
+    # drives/cost_items/buckets/material_grades/belts/screws/bolts) -- same
+    # physical vectrix.db file, a second (SQLAlchemy) connection alongside
+    # the raw-sqlite3 one above. list_motors()/list_gearboxes()/
+    # list_bearings()/list_drives() below already queried these tables via
+    # raw SQL; they 500'd on every call until this existed, since the
+    # tables themselves were never created. Defensive try/except: a
+    # missing optional dependency or schema issue here must never prevent
+    # the core bucket-elevator solver from starting.
+    try:
+        from vectrix_database import create_tables
+        create_tables()
+        # Re-sync Bucket/MaterialGrade from their real Python sources
+        # (BUCKET_SERIES, SHAFT_MATERIALS) on every boot -- same principle
+        # as calc_audit/design_versions being populated from runtime data
+        # rather than hand-maintained: BUCKET_SERIES in calculations.py
+        # stays the single source of truth solve_elevator() actually reads,
+        # this just keeps the queryable DB mirror from drifting out of sync
+        # with it (e.g. after a punching-data update like this round's).
+        # Idempotent (upserts by unique key) -- safe to run every startup.
+        from seed_catalog import run_seed
+        run_seed()
+    except Exception as e:
+        print(f"⚠ Unified catalog tables not initialised/synced: {e}")
+    yield
+
+
+# ── Improvement 8 — CORS (origins list + optional regex) ──────────────────────
+#
+# VECTRIX_CORS_ORIGINS  — comma-separated explicit origins (existing behaviour)
+# VECTRIX_CORS_REGEX    — Python regex for internal wildcard sub-domains, e.g.
+#                         r"https://.*\.akshayvipra\.internal"
+#
+# Both are additive; neither is required in development (localhost fallback).
+
+_cors_env = os.getenv("VECTRIX_CORS_ORIGINS", "")
+CORS_ORIGINS: list[str] = (
+    [o.strip() for o in _cors_env.split(",") if o.strip()]
+    if _cors_env
+    else ["http://localhost:3000", "http://localhost:5173"]
+)
+CORS_ORIGIN_REGEX: str | None = os.getenv("VECTRIX_CORS_REGEX") or None
+
+
+# ── Application ───────────────────────────────────────────────────────────────
+
+app = FastAPI(
+    title="VECTRIX™ Design Platform API",
+    description="AKSHAYVIPRA EL-MEC — VECTOMEC™ Bucket Elevator & Conveyor Design",
+    version=CALC_SCHEMA_VERSION,
+    lifespan=lifespan,
+)
+
+_cors_kw: dict[str, Any] = dict(
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+if CORS_ORIGIN_REGEX:
+    _cors_kw["allow_origin_regex"] = CORS_ORIGIN_REGEX
+
+app.add_middleware(CORSMiddleware, **_cors_kw)
+
+
+# ── Improvement 5 — Versioned router ───────────────────────────────────────────
+#
+# All new routes live under /api/v1.
+# The compat block at the bottom re-registers every route at /api/* with
+# include_in_schema=False so existing frontends keep working without appearing
+# in OpenAPI docs.  Remove the compat block when the frontend is updated.
+
+v1 = APIRouter(prefix="/api/v1")
+
+
+# ── Improvement 6 — Reference data (cached) ────────────────────────────────────
+#
+# MATERIALS, BUCKET_SERIES, MOTOR_SIZES are module-level constants in
+# calculations.py.  Wrapping them in lru_cache(maxsize=1) avoids rebuilding
+# the response dict on every GET — cheap but eliminates any repeated allocation.
+
+@lru_cache(maxsize=1)
+def _materials_payload():     return {"materials":     MATERIALS}
+
+@lru_cache(maxsize=1)
+def _bucket_series_payload(): return {"bucket_series": BUCKET_SERIES}
+
+@lru_cache(maxsize=1)
+def _motor_sizes_payload():   return {"motor_sizes":   MOTOR_SIZES}
+
+
+@v1.get("/materials")
+def get_materials():     return _materials_payload()
+
+
+@v1.get("/materials/search")
+def search_materials_api(
+    q:        str = "",
+    category: str = "",
+    app:      str = "",   # no filter: all modules searchable
+    limit:    int = 40,
+):
+    """
+    Live material search for the frontend dropdown.
+    Returns compact rows: {mat_id, name, category, rho_loose, abr_code, flowability}.
+
+    Query params
+    ────────────
+    q         Partial name match (case-insensitive, empty = all)
+    category  Filter by category code (e.g. GRAIN, MIN, CHEM) — empty = all
+    app       Module tag filter: "be" (bucket elevator), "sc" (screw), "" (all)
+    limit     Max results (default 40, max 200)
+    """
+    try:
+        from .materials_lookup import search_materials
+    except ImportError:
+        from materials_lookup import search_materials
+    return search_materials(
+        query    = q,
+        category = category,
+        app      = app,
+        limit    = min(int(limit), 200),
+    )
+
+
+@v1.get("/materials/categories")
+def list_material_categories(app: str = "be"):
+    """
+    Return sorted distinct category codes for the given module.
+    Used to populate category filter chips in the material search UI.
+    """
+    try:
+        from .materials_lookup import list_categories
+    except ImportError:
+        from materials_lookup import list_categories
+    return {"categories": list_categories(app=app)}
+
+
+# ── Material Library (custom materials) ────────────────────────────────────────
+# Backs the Material Library tab: browse/copy/edit/delete custom materials.
+# Built-in materials (materials.py's MATERIALS list) are immutable — there is
+# deliberately no PUT/DELETE for them, only for custom_materials rows.
+#
+# CRITICAL ORDERING: these routes must be registered BEFORE
+# /materials/{mat_id} below — FastAPI/Starlette matches routes in
+# registration order, and {mat_id} is a wildcard that would otherwise
+# swallow "custom" as a literal mat_id on every request to this path,
+# never reaching the actual custom-material handlers.
+
+@v1.get("/materials/custom")
+def list_custom_materials_api():
+    """Full-detail list of every custom material, for the Library tab's
+    browse view (the compact /materials/search shape doesn't carry enough
+    fields to populate an edit form)."""
+    try:
+        from .custom_materials import list_custom_materials
+    except ImportError:
+        from custom_materials import list_custom_materials
+    return {"materials": list_custom_materials()}
+
+
+@v1.get("/materials/custom/{mat_id}")
+def get_custom_material_api(mat_id: str):
+    try:
+        from .custom_materials import get_custom_material
+    except ImportError:
+        from custom_materials import get_custom_material
+    mat = get_custom_material(mat_id)
+    if not mat:
+        raise HTTPException(status_code=404, detail=f"Custom material '{mat_id}' not found")
+    return mat
+
+
+@v1.post("/materials/custom")
+def create_custom_material(data: dict = Body(...)):
+    """Create a new custom material. `data` should include every field in
+    custom_materials.MATERIAL_FIELDS; missing fields fall back to sane
+    defaults (see save_custom_material()). Rejects an id that collides with
+    a built-in material — the whole point of the separate table is that
+    built-ins stay immutable and unambiguous."""
+    try:
+        from .custom_materials import save_custom_material
+        from .materials import MATERIALS
+    except ImportError:
+        from custom_materials import save_custom_material
+        from materials import MATERIALS
+    try:
+        return save_custom_material(data, builtin_ids={m["id"] for m in MATERIALS}, is_update=False)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@v1.put("/materials/custom/{mat_id}")
+def update_custom_material(mat_id: str, data: dict = Body(...)):
+    try:
+        from .custom_materials import save_custom_material
+        from .materials import MATERIALS
+    except ImportError:
+        from custom_materials import save_custom_material
+        from materials import MATERIALS
+    data = {**data, "id": mat_id}
+    try:
+        return save_custom_material(data, builtin_ids={m["id"] for m in MATERIALS}, is_update=True)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@v1.delete("/materials/custom/{mat_id}")
+def delete_custom_material_api(mat_id: str):
+    try:
+        from .custom_materials import delete_custom_material
+    except ImportError:
+        from custom_materials import delete_custom_material
+    deleted = delete_custom_material(mat_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Custom material '{mat_id}' not found")
+    return {"deleted": True, "id": mat_id}
+
+
+@v1.get("/materials/{mat_id}")
+def get_material_by_id(mat_id: str):
+    """Return a single material dict by its slug ID (e.g. 'wheat')."""
+    try:
+        from .materials_lookup import get_material
+    except ImportError:
+        from materials_lookup import get_material
+    mat = get_material(mat_id)
+    if not mat or mat.get("_source") == "fallback":
+        raise HTTPException(status_code=404, detail=f"Material '{mat_id}' not found")
+    return mat
+
+
+# ── Material Library (custom materials) — endpoints moved above, before
+# the /materials/{mat_id} wildcard route (see ordering note there) ────────────
+
+@v1.get("/bucket-series")
+def get_bucket_series(): return _bucket_series_payload()
+
+@v1.get("/motor-sizes")
+def get_motor_sizes():   return _motor_sizes_payload()
+
+
+# ── Components ────────────────────────────────────────────────────────────────
+# Query the component catalogue tables (bearings, gearboxes, motors, drives)
+# with constraint-based filtering so the frontend only shows options that are
+# adequate for the calculated design — e.g. bearings with bore ≥ shaft d_mm.
+# All four endpoints use Depends(get_db) for the same SQLite connection that
+# serves design records.
+
+@v1.get("/components/motors")
+def list_motors(
+    pkw_min: float = 0.0,
+    pkw_max: float = 9999.0,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Standard IEC motors filtered by power range [kW], ordered smallest first."""
+    rows = db.execute(
+        "SELECT * FROM motors WHERE Pkw >= ? AND Pkw <= ? ORDER BY Pkw",
+        (pkw_min, pkw_max),
+    ).fetchall()
+    return {"motors": [dict(r) for r in rows], "count": len(rows)}
+
+
+@v1.get("/components/gearboxes")
+def list_gearboxes(
+    torque_min: float = 0.0,
+    ratio_min:  float = 0.0,
+    ratio_max:  float = 9999.0,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """
+    Shaft-mount gearboxes where:
+      Tn  ≥ torque_min   [Nm]  — rated output torque covers required torque
+      ratio range overlaps [ratio_min, ratio_max]
+    Ordered by Tn ascending (smallest adequate first).
+    """
+    rows = db.execute(
+        """SELECT * FROM gearboxes
+           WHERE Tn >= ?
+             AND ratio_max >= ?
+             AND ratio_min <= ?
+           ORDER BY Tn""",
+        (torque_min, ratio_min, ratio_max),
+    ).fetchall()
+    return {"gearboxes": [dict(r) for r in rows], "count": len(rows)}
+
+
+@v1.get("/components/bearings")
+def list_bearings(
+    bore_min: float = 0.0,
+    bore_max: float = 9999.0,
+    role:     str   = "",
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """
+    Pillow-block bearings filtered by bore range [mm] and optional role tag.
+    role="" returns all; role="head" filters to head-shaft pillow blocks.
+    Ordered by bore ASC, basic dynamic load C DESC (best life first).
+    """
+    if role:
+        rows = db.execute(
+            """SELECT * FROM bearings
+               WHERE bore >= ? AND bore <= ? AND role LIKE ?
+               ORDER BY bore, C DESC""",
+            (bore_min, bore_max, f"%{role}%"),
+        ).fetchall()
+    else:
+        rows = db.execute(
+            """SELECT * FROM bearings
+               WHERE bore >= ? AND bore <= ?
+               ORDER BY bore, C DESC""",
+            (bore_min, bore_max),
+        ).fetchall()
+    return {"bearings": [dict(r) for r in rows], "count": len(rows)}
+
+
+@v1.get("/components/drives")
+def list_drives(
+    pkw_min: float = 0.0,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Drive/starter units where rated power ≥ pkw_min [kW], ordered smallest first."""
+    rows = db.execute(
+        "SELECT * FROM drives WHERE Pkw_max >= ? ORDER BY Pkw_max",
+        (pkw_min,),
+    ).fetchall()
+    return {"drives": [dict(r) for r in rows], "count": len(rows)}
+
+
+@v1.get("/components/buckets")
+def list_catalog_buckets(
+    style: str = "",
+    discharge_type: str = "",
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """
+    Bucket catalog (vectrix_tables.Bucket -- seeded from calculations.py's
+    BUCKET_SERIES). This is a separate, DB-backed read path alongside the
+    existing /bucket-series static-list endpoint -- not yet what
+    select_bucket_auto()/the manual picker actually read from (those still
+    use the in-code BUCKET_SERIES list directly); this exists so the
+    catalog is queryable/extendable with custom entries the same way
+    motors/gearboxes/bearings/drives already are, ahead of actually
+    switching the solver's own read path over.
+    """
+    filters, params = ["1=1"], []
+    if style:
+        filters.append("style = ?"); params.append(style)
+    if discharge_type:
+        filters.append("discharge_type = ?"); params.append(discharge_type)
+    rows = db.execute(
+        f"SELECT * FROM buckets WHERE {' AND '.join(filters)} ORDER BY V_L",
+        params,
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
         try:
-            self.top_nav.update_kpis(results)
-            self.elevation.set_data(payload, results)
-            self.charts_panel.set_data(payload, results)
-            self.tree_panel.set_data(payload, results)
-            self.input_sidebar.set_data(payload, results)
-            self.bom_panel.set_data(payload, results)
-            self.status_panel.set_data(payload, results)
-            self.status_leaves.set_data(payload, results)
-            self.maintenance_panel.set_data(payload, results)
-            self.checks_panel.set_data(payload, results)
-            self.design_review_panel.set_data(payload, results)
-            self.material_library_panel.set_data(payload, results)
-            self.optimizer_panel.set_data(payload, results)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()   # visible in the terminal for debugging
-            # Non-fatal: results were saved, some panels may not have updated
-
-        n_fail, n_warn = self._fail_warn(results)
-        self.top_nav.update_fail_badge(n_fail)
-        if self._tab_index_of_current() == "design":
-            new_header = ColHeader("Results", action=fail_warn_badges(n_fail, n_warn))
-            self.col3_layout.replaceWidget(self.col3_header, new_header)
-            self.col3_header.deleteLater()
-            self.col3_header = new_header
-
-    def _on_optimizer_apply(self, variant):
-        """Mirrors useElevatorCalc.js's applyOptimizer() exactly (read
-        directly before writing this, not assumed): rpm -> n_rpm,
-        fill -> fill_pct, auto_bucket forced False, and the v2-only
-        fields (D_mm/boot_pulley_D_mm/chain_n_strands/sprocket teeth)
-        only merged in when present -- a belt-mode result has no chain
-        fields, and merging None over an existing value would clobber
-        it rather than leave it untouched, same as the JSX's own
-        `D_mm != null ? { D_mm } : {}` spread guards."""
-        payload = dict(self._default_payload)
-        payload["n_rpm"] = variant.get("rpm")
-        payload["bucket_id"] = variant.get("bucket_id")
-        payload["auto_bucket"] = False
-        payload["fill_pct"] = variant.get("fill")
-        for key in ("D_mm", "boot_pulley_D_mm", "chain_n_strands",
-                    "chain_sprocket_teeth", "chain_boot_sprocket_teeth"):
-            if variant.get(key) is not None:
-                payload[key] = variant[key]
-        self.run_calculation(payload)
-
-    def _auto_pdf_filename(self):
-        """Build the PDF filename from the VM model number -- the canonical
-        identifier for this elevator configuration -- plus a timestamp."""
-        r   = self._last_results or {}
-        inp = self._default_payload or {}
-        try:
-            from api_client import fetch_model_number
-            model_no = fetch_model_number(inp, r)
+            d["recommended_materials"] = json.loads(d.get("recommended_materials") or "[]")
         except Exception:
-            mat = str(inp.get("mat_id", "material")).capitalize()
-            Q   = inp.get("Q_req", "")
-            H   = inp.get("H_m", "")
-            model_no = f"VM-BE_{mat}_{Q}tph_H{H}m"
-        from datetime import datetime
-        stamp = datetime.now().strftime("%Y%m%d_%H%M")
-        return f"{model_no}_{stamp}.pdf"
+            d["recommended_materials"] = []
+        out.append(d)
+    return {"buckets": out, "count": len(out)}
 
-    @staticmethod
-    def _styled_message_box(icon, title, text, parent):
-        return styled_message_box(icon, title, text, parent)
 
-    def _on_pdf_clicked(self):
-        """PDF Report button handler. Opens a save dialog, spins up a
-        background worker, and updates the TopNav's version label with
-        progress feedback while it runs -- same pattern as every other
-        network-call button in this codebase."""
-        if not self._last_results:
-            self._styled_message_box(
-                QMessageBox.Icon.Information, "No Results", "Run a calculation first.", self
-            ).exec()
-            return
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF Report", self._auto_pdf_filename(), "PDF Files (*.pdf)"
+@v1.get("/components/material-grades")
+def list_material_grades(
+    component_type: str = "",
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """
+    Structural material grades for shaft/pulley/casing/chain (vectrix_tables.
+    MaterialGrade -- seeded from constants.py's SHAFT_MATERIALS, the only
+    grade currently with a real multi-option catalog; pulley/casing/chain
+    rows don't exist yet, see seed_catalog.py's own notes on why). Filter by
+    component_type to get only grades valid for a given part, e.g.
+    component_type=shaft.
+    """
+    rows = db.execute("SELECT * FROM material_grades ORDER BY Sy_Pa").fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["component_types"] = json.loads(d.get("component_types") or "[]")
+        except Exception:
+            d["component_types"] = []
+        if component_type and component_type not in d["component_types"]:
+            continue
+        out.append(d)
+    return {"material_grades": out, "count": len(out)}
+
+@v1.post("/bucket-elevator/calculate", response_model=CalcResponse)
+def calculate(
+    inp:              BucketElevatorInput,
+    background_tasks: BackgroundTasks,
+    db:               sqlite3.Connection = Depends(get_db),
+):
+    """
+    Full CEMA 375-2017 bucket elevator design calculation.
+
+    Returns CalcResponse{meta, data, warnings}.
+    warnings is a list of non-fatal engineering advisory notes;
+    an empty list means all CEMA checks passed cleanly.
+    """
+    inp_dict = inp.model_dump()
+    meta     = _solver_meta(inp_dict)
+
+    try:
+        results = solve_elevator(inp)
+    except ValueError as e:
+        # ValueError is the convention for domain validation failures
+        # in the calculation layer (e.g. negative height, zero capacity).
+        _err("VALIDATION_ERROR", str(e))
+    except Exception as e:
+        _tb = _traceback.format_exc()
+        # ── Print to uvicorn terminal — visible without opening Network tab ──
+        print(f"\n{'='*64}\nSOLVER 500 — full traceback\n{_tb}{'='*64}\n", flush=True)
+        _err("SOLVER_ERROR", "Internal calculation error — see server log for details.", status=500)
+
+    warnings = _collect_warnings(inp, results)
+
+    # Audit write deferred — never delays the response.
+    background_tasks.add_task(
+        _audit_calc,
+        "bucket_elevator", inp_dict, results, warnings, meta["input_hash"],
+    )
+
+    return CalcResponse(meta=meta, data=results, warnings=warnings)
+
+
+@v1.post("/bucket-elevator/optimize", response_model=CalcResponse)
+def optimize(req: OptimizerRequest):
+    """Grid-search optimizer over RPM × Bucket × Fill space."""
+    meta = _solver_meta()
+    try:
+        candidates = run_optimizer(req)
+    except Exception as e:
+        _err("OPTIMIZER_ERROR", str(e))
+
+    return CalcResponse(
+        meta=meta,
+        data={"candidates": candidates, "count": len(candidates)},
+    )
+
+
+@v1.post("/bucket-elevator/optimize/v2", response_model=CalcResponse)
+def optimize_v2(req: OptimizerRequest):
+    """
+    NSGA-II multi-objective constrained optimizer (added 2026-06, per design
+    discussion logged in vectrix_findings_log.md rounds 2b/3). Evaluates every
+    candidate through the real solve_elevator() -- not duplicated physics --
+    and returns a genuine Pareto-efficient front across
+    (motor_kw, R_headshaft_N, L10_h, cr_deviation) rather than one weighted
+    score. req.objective is accepted but unused (kept for schema compat with
+    the v1 OptimizerRequest shape; there is no single objective in a Pareto
+    front by design).
+
+    Left alongside the existing /optimize endpoint rather than replacing it,
+    pending review -- see vectrix_optimizer_v2.py module docstring for the
+    full design rationale and known limitations.
+    """
+    meta = _solver_meta()
+    try:
+        result = run_nsga2_optimizer(req.base_input.model_dump())
+    except ValueError as e:
+        _err("OPTIMIZER_V2_BAD_INPUT", str(e))
+    except Exception as e:
+        _err("OPTIMIZER_V2_ERROR", str(e))
+
+    return CalcResponse(meta=meta, data=result)
+
+
+# ── Reports ───────────────────────────────────────────────────────────────────
+
+class SignOffPerson(BaseModel):
+    name:        str = ""
+    designation: str = ""
+    date:        str = ""
+
+class SignOff(BaseModel):
+    designed_by: SignOffPerson = SignOffPerson()
+    reviewed_by: SignOffPerson = SignOffPerson()
+    approved_by: SignOffPerson = SignOffPerson()
+
+class ReportRequest(BaseModel):
+    results:  dict
+    inputs:   dict
+    project:  str | None = ""
+    ref:      str | None = ""
+    sign_off: Optional[SignOff] = None   # Task 13 — engineering sign-off
+
+
+class ModelNumberRequest(BaseModel):
+    inputs:  dict = {}
+    results: dict = {}
+
+
+@v1.post("/model-number")
+def get_model_number(data: ModelNumberRequest):
+    """Return the canonical VM model number for a given inputs+results pair.
+    Kept as a real endpoint (not just a client-side calculation) so the
+    logic lives in one place and is consistent across PDF, BOM, and the
+    desktop's filename/title bar."""
+    try:
+        from model_number import generate_model_number
+        model_no = generate_model_number(data.inputs, data.results)
+    except Exception as e:
+        model_no = "VM-??-?-???/???"
+    return {"model_number": model_no}
+
+
+@v1.post("/bucket-elevator/report")
+def generate_report(data: ReportRequest):
+    """
+    A4 PDF engineering report with optional engineering sign-off block.
+
+    sign_off body field (optional):
+        {
+            "designed_by":  {"name": "...", "designation": "...", "date": "YYYY-MM-DD"},
+            "reviewed_by":  {"name": "...", "designation": "...", "date": "YYYY-MM-DD"},
+            "approved_by":  {"name": "...", "designation": "...", "date": "YYYY-MM-DD"}
+        }
+    """
+    try:
+        sign_off_dict = None
+        if data.sign_off:
+            sign_off_dict = {
+                "designed_by": data.sign_off.designed_by.model_dump(),
+                "reviewed_by": data.sign_off.reviewed_by.model_dump(),
+                "approved_by": data.sign_off.approved_by.model_dump(),
+            }
+        pdf = build_report(
+            data.results, data.inputs,
+            project=data.project or "",
+            doc_ref=data.ref or "",
+            sign_off=sign_off_dict,
         )
-        if not save_path:
-            return
-        self._pdf_worker = _PdfReportWorker(
-            self._last_results, self._default_payload, save_path, parent=self
+    except Exception as e:
+        _err("REPORT_ERROR", str(e), status=500)
+
+    return StreamingResponse(
+        io.BytesIO(pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="elevator_report.pdf"'},
+    )
+
+
+class VariantReportRequest(BaseModel):
+    candidates: list
+    inputs:     dict
+    project:    str | None = ""
+    ref:        str | None = ""
+
+
+@v1.post("/bucket-elevator/report-variants")
+def generate_variant_report(data: VariantReportRequest):
+    """Generate A4 PDF comparing multiple optimizer candidate variants."""
+    try:
+        pdf = build_variant_report(
+            data.candidates, data.inputs,
+            project=data.project or "",
+            doc_ref=data.ref or "",
         )
-        self._pdf_worker.done.connect(self._on_pdf_done)
-        self._pdf_worker.errorOccurred.connect(self._on_pdf_error)
-        self._pdf_worker.start()
-        # Update the version label to show progress
-        for lbl in self.app_title_bar.findChildren(QLabel):
-            if "EL-MEC" in (lbl.text() or ""):
-                lbl.setText("Generating PDF…")
-                self._pdf_version_lbl = lbl
-                break
+    except Exception as e:
+        _err("REPORT_ERROR", str(e), status=500)
 
-    def _on_pdf_done(self, path):
-        if hasattr(self, "_pdf_version_lbl"):
-            self._pdf_version_lbl.setText("AKSHAYVIPRA EL-MEC · V1.0")
-        self._styled_message_box(
-            QMessageBox.Icon.Information, "Report Saved", f"PDF saved to:\n{path}", self
-        ).exec()
-
-    def _on_pdf_error(self, msg):
-        if hasattr(self, "_pdf_version_lbl"):
-            self._pdf_version_lbl.setText("AKSHAYVIPRA EL-MEC · V1.0")
-        self._styled_message_box(
-            QMessageBox.Icon.Critical, "Report Failed", f"PDF generation failed:\n{msg}", self
-        ).exec()
-
-    def _on_apply_correction(self, param, value):
-        """Mirrors RootCausePanel.jsx's setField(param, target) -- a
-        single corrective param/value pair from a root-cause finding's
-        Apply button gets merged directly into the live payload and
-        recalculated, same pattern as _on_optimizer_apply just above but
-        for one field instead of a whole variant."""
-        payload = dict(self._default_payload)
-        payload[param] = value
-        self.run_calculation(payload)
-
-    def _tab_index_of_current(self):
-        idx = self.middle_stack.currentIndex()
-        for tid, i in self._tab_index.items():
-            if i == idx:
-                return tid
-        return "design"
+    return StreamingResponse(
+        io.BytesIO(pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="elevator_variants.pdf"'},
+    )
 
 
-def main():
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    window = ShellWindow()
-    window.run_calculation()
-    window.show()
-    sys.exit(app.exec())
+# ── Designs ───────────────────────────────────────────────────────────────────
+
+@v1.post("/designs/save")
+def save_design(record: DesignRecord, db: sqlite3.Connection = Depends(get_db)):
+    """
+    Persist a named design to SQLite.
+
+    Improvement 9: calc_schema_version is stored alongside the record.
+    When solve_elevator() equations change in a future release, old designs
+    remain queryable — you can filter by schema_ver to identify which records
+    need recalculation or migration.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    cur = db.cursor()
+
+    # Upsert current design record (unchanged — frontend always loads latest)
+    cur.execute("""
+        INSERT OR REPLACE INTO designs
+            (id, module, name, project, inputs_json, results_json,
+             notes, calc_schema_version, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        record.id, record.module, record.name, record.project,
+        record.inputs_json, record.results_json, record.notes,
+        CALC_SCHEMA_VERSION,
+        record.created_at or now, now,
+    ))
+
+    # Append to design_versions — one row per save, never overwritten
+    # Version number = max existing version for this design_id + 1
+    ver_row = cur.execute(
+        "SELECT COALESCE(MAX(version),0) FROM design_versions WHERE design_id = ?",
+        (record.id,)
+    ).fetchone()
+    next_ver = (ver_row[0] if ver_row else 0) + 1
+
+    cur.execute("""
+        INSERT INTO design_versions
+            (design_id, version, module, name,
+             inputs_json, results_json, notes, calc_schema_ver, saved_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        record.id, next_ver, record.module, record.name,
+        record.inputs_json, record.results_json, record.notes,
+        CALC_SCHEMA_VERSION, now,
+    ))
+
+    db.commit()
+    return {
+        "saved":              True,
+        "id":                 record.id,
+        "version":            next_ver,
+        "calc_schema_version": CALC_SCHEMA_VERSION,
+    }
 
 
-if __name__ == "__main__":
-    main()
+@v1.get("/designs")
+def list_designs(
+    module:  str | None = None,
+    project: str | None = None,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    cur   = db.cursor()
+    query = (
+        "SELECT id, module, name, project, notes, "
+        "calc_schema_version, created_at, updated_at "
+        "FROM designs WHERE 1=1"
+    )
+    params: list = []
+    if module:
+        query += " AND module = ?";  params.append(module)
+    if project:
+        query += " AND project = ?"; params.append(project)
+    query += " ORDER BY updated_at DESC"
+    return {"designs": [dict(r) for r in cur.execute(query, params).fetchall()]}
+
+
+@v1.get("/designs/{design_id}")
+def get_design(design_id: str, db: sqlite3.Connection = Depends(get_db)):
+    row = db.cursor().execute(
+        "SELECT * FROM designs WHERE id = ?", (design_id,)
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Design not found")
+    return dict(row)
+
+
+@v1.get("/designs/{design_id}/versions")
+def list_design_versions(
+    design_id: str,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """
+    Return all saved revisions for a design in reverse-chronological order.
+
+    Each revision contains: version number, inputs_json, results_json,
+    calc_schema_ver, and saved_at timestamp.  The frontend can use this to
+    implement a "restore revision" workflow (load older inputs_json and re-run).
+    """
+    rows = db.cursor().execute(
+        "SELECT version, name, notes, calc_schema_ver, saved_at "
+        "FROM design_versions WHERE design_id = ? ORDER BY version DESC",
+        (design_id,),
+    ).fetchall()
+    return {"design_id": design_id, "versions": [dict(r) for r in rows]}
+
+
+@v1.get("/designs/{design_id}/versions/{version}")
+def get_design_version(
+    design_id: str,
+    version:   int,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Return full inputs_json + results_json for a specific revision."""
+    row = db.cursor().execute(
+        "SELECT * FROM design_versions WHERE design_id = ? AND version = ?",
+        (design_id, version),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Version {version} not found")
+    return dict(row)
+
+
+@v1.delete("/designs/{design_id}")
+def delete_design(design_id: str, db: sqlite3.Connection = Depends(get_db)):
+    db.cursor().execute("DELETE FROM designs WHERE id = ?", (design_id,))
+    db.cursor().execute("DELETE FROM design_versions WHERE design_id = ?", (design_id,))
+    db.commit()
+    return {"deleted": True, "id": design_id}
+
+
+# ── Projects ──────────────────────────────────────────────────────────────────
+
+@v1.get("/projects")
+def list_projects(db: sqlite3.Connection = Depends(get_db)):
+    rows = db.cursor().execute(
+        "SELECT DISTINCT project FROM designs "
+        "WHERE project IS NOT NULL ORDER BY project"
+    ).fetchall()
+    return {"projects": [r["project"] for r in rows]}
+
+
+# ── Design comparison ────────────────────────────────────────────────────────
+
+
+class CompareRequest(BaseModel):
+    """Two designs to compare side-by-side."""
+    base:      BucketElevatorInput
+    candidate: BucketElevatorInput
+    labels:    list[str] = Field(
+        default_factory=list,
+        description="Optional display labels: ['Current design', 'Proposed design']",
+    )
+
+
+@v1.post("/calculate/compare")
+def compare_designs(req: CompareRequest, bg: BackgroundTasks):
+    """
+    Run two BucketElevatorInput designs through solve_elevator() and return a
+    structured side-by-side comparison.  Useful for:
+      - Evaluating a proposed change (wider pulley, different bucket series)
+      - Variant selection during preliminary design
+      - Before / after documentation for engineering change notes
+
+    Returns a delta dict for every numeric KPI so the frontend can render
+    colour-coded improvement / regression indicators.
+    """
+    try:
+        r_base = solve_elevator(req.base)
+        r_cand = solve_elevator(req.candidate)
+    except Exception as e:
+        _err("COMPARE_ERROR", f"Solver error during comparison: {e}", status=500)
+
+    labels = (req.labels + ["Base", "Candidate"])[:2]
+
+    # KPIs to compare — (key, label, unit, lower_is_better)
+    KPI_DEFS = [
+        # Core performance
+        ("Q",                  "Capacity",            "t/h",  False),
+        ("v",                  "Belt speed",          "m/s",  None),
+        ("cr",                 "Centrifugal ratio",   "—",    None),
+        # Power
+        ("P_total",            "Total power",         "kW",   True),
+        ("motor_kw",           "Motor size",          "kW",   True),
+        ("gearbox_ratio",      "Gearbox ratio",       ":1",   None),
+        # Belt & buckets
+        ("belt_length_total_m","Belt length",         "m",    None),
+        ("n_buckets",          "Bucket count",        "off",  None),
+        # Shaft
+        ("d_mm",               "Shaft diameter",      "mm",   None),
+        ("shaft_tau_allow_MPa","Shaft allowable τ",   "MPa",  False),
+        # Tensions
+        ("T3",                 "Take-up tension",     "N",    True),
+        ("R_headshaft",        "Headshaft load",      "N",    True),
+        ("T_total",            "Belt tight side",     "N",    True),
+        # Startup
+        ("startup_dynamic.T_peak_governing",
+                               "Startup peak tension","N",    True),
+        # Bearing & life
+        ("L10",                "Bearing L10",         "h",    False),
+        # Process
+        ("recommended_fill_pct","Rec. fill",          "%",    None),
+        ("cap_margin_pct",     "Capacity margin",     "%",    False),
+        ("motor_margin_pct",   "Motor margin",        "%",    False),
+    ]
+
+    def _get_kpi(result: dict, key: str):
+        """Support dot-notation for nested keys e.g. 'startup_dynamic.T_peak_governing'."""
+        if "." in key:
+            parts = key.split(".", 1)
+            sub = result.get(parts[0])
+            if isinstance(sub, dict):
+                return sub.get(parts[1])
+            return None
+        return result.get(key)
+
+    kpi_rows = []
+    for key, label, unit, lower_better in KPI_DEFS:
+        v_b = _get_kpi(r_base, key)
+        v_c = _get_kpi(r_cand, key)
+        if v_b is None and v_c is None:
+            continue
+        try:
+            f_b = float(v_b) if v_b is not None else None
+            f_c = float(v_c) if v_c is not None else None
+            if f_b is not None and f_c is not None and f_b != 0:
+                delta_pct = round((f_c - f_b) / abs(f_b) * 100, 1)
+                if lower_better is True:
+                    direction = "better" if delta_pct < 0 else "worse"
+                elif lower_better is False:
+                    direction = "better" if delta_pct > 0 else "worse"
+                else:
+                    direction = "neutral"
+            else:
+                delta_pct = None
+                direction = "neutral"
+        except (TypeError, ValueError):
+            f_b = f_c = delta_pct = None
+            direction = "neutral"
+        kpi_rows.append({
+            "key":       key,
+            "label":     label,
+            "unit":      unit,
+            "base":      round(f_b, 3) if f_b is not None else None,
+            "candidate": round(f_c, 3) if f_c is not None else None,
+            "delta_pct": delta_pct,
+            "direction": direction,
+        })
+
+    # Check-level summary
+    def _check_summary(r: dict) -> dict:
+        chks = r.get("checks", [])
+        return {
+            "pass": sum(1 for c in chks if c["type"] == "ok"),
+            "warn": sum(1 for c in chks if c["type"] == "warn"),
+            "fail": sum(1 for c in chks if c["type"] == "fail"),
+            "info": sum(1 for c in chks if c["type"] == "info"),
+        }
+
+    # String-valued configuration fields that are meaningful to compare
+    # but can't be expressed as numeric deltas
+    STRING_FIELDS = [
+        ("shaft_material_name",  "Shaft material"),
+        ("shaft_section",        "Shaft section"),
+        ("shaft_hub_connection", "Hub connection"),
+        ("governed_by",          "Shaft governed by"),
+        ("discharge_type",       "Discharge type"),
+    ]
+    config_rows = []
+    for key, label in STRING_FIELDS:
+        v_b = r_base.get(key)
+        v_c = r_cand.get(key)
+        if v_b is None and v_c is None:
+            continue
+        config_rows.append({
+            "key":       key,
+            "label":     label,
+            "base":      str(v_b) if v_b is not None else "—",
+            "candidate": str(v_c) if v_c is not None else "—",
+            "changed":   v_b != v_c,
+        })
+
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        "meta": {
+            "solver_version": CALC_SCHEMA_VERSION,
+            "timestamp":      now,
+            "labels":         labels,
+        },
+        "kpis":    kpi_rows,
+        "config":  config_rows,      # string-valued fields (shaft material, section, etc.)
+        "checks": {
+            labels[0]: _check_summary(r_base),
+            labels[1]: _check_summary(r_cand),
+        },
+        "full": {
+            labels[0]: r_base,
+            labels[1]: r_cand,
+        },
+    }
+
+
+# ── Health ────────────────────────────────────────────────────────────────────
+
+@v1.get("/health")
+def health():
+    import os as _os
+    _db_ok = False
+    try:
+        import sqlite3 as _sq
+        _conn = _sq.connect(_DB_PATH, timeout=2)
+        _conn.execute("SELECT 1")
+        _conn.close()
+        _db_ok = True
+    except Exception:
+        pass
+    return {
+        "status":               "ok" if _db_ok else "degraded",
+        "product":              "VECTRIX™",
+        "solver_version":       CALC_SCHEMA_VERSION,
+        "calc_schema_version":  CALC_SCHEMA_VERSION,
+        "cema_reference":       CEMA_STANDARD,
+        "database_connected":   _db_ok,
+        "database_file":        _os.path.basename(_DB_PATH),
+        "cors_origins":         CORS_ORIGINS,
+        "timestamp":            datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ── Register versioned router ─────────────────────────────────────────────────
+
+app.include_router(v1)
+
+
+# ── Backward-compat /api/* aliases ────────────────────────────────────────────
+#
+# IMPORTANT — why calculate/optimize are NOT in add_api_route here:
+#
+#   The v1 calculate() and optimize() functions return CalcResponse{meta, data,
+#   warnings}.  Wiring them via add_api_route would expose the envelope at the
+#   old /api/* paths too, breaking any frontend that reads response.speed_sweep,
+#   response.motor_hp, etc. directly.
+#
+#   The two explicit wrappers below call the v1 functions and strip .data,
+#   restoring the original flat-dict response the frontend expects.
+#
+#   All other endpoints (reference data, reports, designs, health) do not wrap
+#   results in an envelope, so they are safe to alias directly.
+#
+#   Remove this entire block once the frontend has been updated to /api/v1/*.
+
+_compat = APIRouter(prefix="/api", tags=["deprecated — migrate to /api/v1"])
+_R: dict[str, Any] = {"include_in_schema": False}   # typed Any — Pylance needs this for **_R spread
+
+_compat.add_api_route("/materials",                       get_materials,           methods=["GET"],    **_R)
+_compat.add_api_route("/bucket-series",                   get_bucket_series,       methods=["GET"],    **_R)
+_compat.add_api_route("/motor-sizes",                     get_motor_sizes,         methods=["GET"],    **_R)
+_compat.add_api_route("/components/motors",               list_motors,             methods=["GET"],    **_R)
+_compat.add_api_route("/components/gearboxes",            list_gearboxes,          methods=["GET"],    **_R)
+_compat.add_api_route("/components/bearings",             list_bearings,           methods=["GET"],    **_R)
+_compat.add_api_route("/components/drives",               list_drives,             methods=["GET"],    **_R)
+_compat.add_api_route("/bucket-elevator/report",          generate_report,         methods=["POST"],   **_R)
+_compat.add_api_route("/bucket-elevator/report-variants", generate_variant_report, methods=["POST"],   **_R)
+_compat.add_api_route("/designs/save",                    save_design,             methods=["POST"],   **_R)
+_compat.add_api_route("/designs",                         list_designs,            methods=["GET"],    **_R)
+_compat.add_api_route("/designs/{design_id}",             get_design,              methods=["GET"],    **_R)
+_compat.add_api_route("/designs/{design_id}",             delete_design,           methods=["DELETE"], **_R)
+_compat.add_api_route("/projects",                        list_projects,           methods=["GET"],    **_R)
+_compat.add_api_route("/health",                          health,                  methods=["GET"],    **_R)
+
+app.include_router(_compat)
+
+
+# ── Compat wrappers for enveloped endpoints ───────────────────────────────────
+#
+# calculate() → CalcResponse.data is the raw solve_elevator() dict:
+#   {"speed_sweep": [...], "motor_hp": ..., "belt_speed_fpm": ..., ...}
+#
+# optimize()  → CalcResponse.data is {"candidates": [...], "count": N}
+#
+# Stripping .data here gives the frontend exactly what it received from v1.0.0.
+# These are registered on `app` directly (not _compat) because add_api_route
+# does not preserve the CalcResponse → dict unwrapping we need.
+
+@app.post("/api/bucket-elevator/calculate", include_in_schema=False)
+def _compat_calculate(
+    inp:              BucketElevatorInput,
+    background_tasks: BackgroundTasks,
+    db:               sqlite3.Connection = Depends(get_db),
+):
+    """Compat shim — returns raw solver dict, not CalcResponse envelope."""
+    return calculate(inp, background_tasks, db).data
+
+
+@app.post("/api/bucket-elevator/optimize", include_in_schema=False)
+def _compat_optimize(req: OptimizerRequest):
+    """Compat shim — returns {candidates, count}, not CalcResponse envelope."""
+    return optimize(req).data
+
+
+@app.post("/api/bucket-elevator/optimize/v2", include_in_schema=False)
+def _compat_optimize_v2(req: OptimizerRequest):
+    """Compat shim — returns {pareto_front, ...}, not CalcResponse envelope."""
+    return optimize_v2(req).data
