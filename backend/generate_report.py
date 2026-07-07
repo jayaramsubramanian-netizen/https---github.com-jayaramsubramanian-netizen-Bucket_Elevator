@@ -273,21 +273,24 @@ def header_flowables(inp, res, project="", doc_ref=""):
     mat_name = mat.get("name") or inp.get("mat_id","Custom")
 
     logo_col = [
-        Paragraph("<b>VECTRIX™</b>",
+        Paragraph("<b>VECTOMEC™</b>",
             ParagraphStyle("lg", fontName="Helvetica-Bold", fontSize=16,
                            textColor=white, leading=18)),
-        Paragraph("BUCKET ELEVATOR",
-            ParagraphStyle("s1", fontName="Helvetica", fontSize=7,
-                           textColor=MUTED2, leading=9)),
-        Paragraph("Engineering Design Report",
+        Paragraph(f"<b>{model_no}</b>",
+            ParagraphStyle("mn", fontName="Helvetica-Bold", fontSize=9,
+                           textColor=HexColor("#f59e0b"), leading=11)),
+        Paragraph("Bucket Elevator  ·  Engineering Design Report",
             ParagraphStyle("s2", fontName="Helvetica", fontSize=6.5,
                            textColor=MUTED, leading=8)),
     ]
     info_col = [
+        Paragraph(f"<b>Model:</b> {model_no}",
+            ParagraphStyle("pi", fontName="Helvetica", fontSize=8,
+                           textColor=white, leading=10)),
         Paragraph(f"<b>Project:</b> {project or 'Unspecified'}",
             ParagraphStyle("pi", fontName="Helvetica", fontSize=8,
                            textColor=white, leading=10)),
-        Paragraph(f"<b>Ref:</b> {doc_ref or 'VX-BE-001'}",
+        Paragraph(f"<b>Ref:</b> {doc_ref or '—'}",
             ParagraphStyle("pi", fontName="Helvetica", fontSize=8,
                            textColor=white, leading=10)),
         Paragraph(f"<b>Date:</b> {now}",
@@ -1142,9 +1145,16 @@ def build_report(results: dict, inputs: dict,
                  sign_off: dict | None = None,
                  output_path=None) -> bytes:
     buf = io.BytesIO()
+
+    try:
+        from model_number import generate_model_number
+        model_no = generate_model_number(inputs or {}, results or {})
+    except Exception:
+        model_no = "VM-??-?-???/???"
+
     doc = SimpleDocTemplate(buf, pagesize=A4,
         leftMargin=ML, rightMargin=MR, topMargin=MT, bottomMargin=MB,
-        title="VECTRIX™ Bucket Elevator Report",
+        title=f"VECTOMEC™ {model_no} — Engineering Report",
         author="Jayveecons Engineering & Design")
 
     r   = results or {}

@@ -146,3 +146,29 @@ def download_pdf_report(results: dict, inputs: dict, save_path: str,
     with open(save_path, "wb") as f:
         f.write(resp.content)
     return save_path
+
+
+def fetch_model_number(inputs: dict, results: dict) -> str:
+    """POST to /model-number to get the canonical VM model number string.
+    Falls back to a safe local derivation if the backend is unreachable."""
+    try:
+        resp = requests.post(
+            f"{API_BASE_V1}/model-number",
+            json={"inputs": inputs, "results": results},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return resp.json().get("model_number", "VM-??-?-???/???")
+    except Exception:
+        # Minimal offline fallback using the same logic as the backend
+        bkt = (results.get("bucket") or {})
+        is_chain = results.get("is_chain") or (str(inputs.get("conveyor_type","")).lower() == "chain")
+        drive = "C" if is_chain else "B"
+        discharge = bkt.get("discharge_type", "centrifugal")
+        abr = int((results.get("mat") or {}).get("abr_code") or 0)
+        temp = float(inputs.get("material_temperature_c") or 20)
+        w = int((results.get("belt_w") or inputs.get("belt_width_override_mm") or 305))
+        d = int(inputs.get("D_mm") or 500)
+        family = "MD" if (abr >= 5 or temp > 80) else ("KD" if discharge == "continuous" else "CD")
+        suffix = "-".join(s for s in ["AR" if abr >= 5 else "", "HT" if temp > 80 else ""] if s)
+        return f"VM-{family}-{drive}-{w}/{d}" + (f"-{suffix}" if suffix else "")

@@ -103,6 +103,11 @@ def _next_pos(state):
 # ─── Main generator ───────────────────────────────────────────────────────────
 
 def generate_bom(results: dict, inputs: dict) -> dict:
+    try:
+        from model_number import generate_model_number
+        _model_prefix = generate_model_number(inputs or {}, results or {})
+    except Exception:
+        _model_prefix = "VM-??-?-???/???"
     """
     Generate a structured preliminary Bill of Materials.
 
@@ -249,9 +254,9 @@ def generate_bom(results: dict, inputs: dict) -> dict:
     def add(description, qty, unit, material, standard, spec,
             mass_ea_kg, category, notes="", tag_suffix=None):
         p = _next_pos(pos)
-        tag = f"BE-001-{category}-{p}"
+        tag = f"{_model_prefix}-{category}-{str(p).zfill(3)}"
         if tag_suffix:
-            tag = f"BE-001-{tag_suffix}"
+            tag = f"{_model_prefix}-{tag_suffix}"
         m_tot = round(float(mass_ea_kg) * qty, 1)
         items.append({
             "pos":         p,
