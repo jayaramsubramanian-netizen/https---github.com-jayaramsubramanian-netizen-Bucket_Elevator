@@ -172,3 +172,35 @@ def fetch_model_number(inputs: dict, results: dict) -> str:
         family = "MD" if (abr >= 5 or temp > 80) else ("KD" if discharge == "continuous" else "CD")
         suffix = "-".join(s for s in ["AR" if abr >= 5 else "", "HT" if temp > 80 else ""] if s)
         return f"VM-{family}-{drive}-{w}/{d}" + (f"-{suffix}" if suffix else "")
+
+
+# ── Components Library CRUD ───────────────────────────────────────────────────
+def fetch_component_types() -> dict:
+    resp = requests.get(f"{API_BASE_V1}/components/types", timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+def list_components_api(component_type: str = "") -> list:
+    params = {"component_type": component_type} if component_type else {}
+    resp = requests.get(f"{API_BASE_V1}/components", params=params, timeout=10)
+    resp.raise_for_status()
+    return resp.json().get("components", [])
+
+def create_component_api(component_type: str, description: str, specs: dict, notes: str = "") -> dict:
+    resp = requests.post(f"{API_BASE_V1}/components",
+        json={"component_type": component_type, "description": description, "specs": specs, "notes": notes},
+        timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+def update_component_api(component_id: str, description: str, specs: dict, notes: str = "") -> dict:
+    resp = requests.put(f"{API_BASE_V1}/components/{component_id}",
+        json={"description": description, "specs": specs, "notes": notes},
+        timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+def delete_component_api(component_id: str) -> bool:
+    resp = requests.delete(f"{API_BASE_V1}/components/{component_id}", timeout=10)
+    resp.raise_for_status()
+    return resp.json().get("deleted", True)

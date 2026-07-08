@@ -40,7 +40,7 @@ from components.dialog_helpers import KPIChip, styled_message_box
 from components import (
     ElevationView, EquipmentTreePanel, InputSidebarPanel, StatusPanel, OptimizerPanel,
     BomPanel, StatusDesignLeaves, MaintenancePanel, ChecksPanel, DesignReviewPanel,
-    MaterialLibraryPanel, ChartsPanel,
+    MaterialLibraryPanel, ChartsPanel, ComponentsLibraryPanel,
 )
 
 TABS = [
@@ -48,6 +48,7 @@ TABS = [
     {"id": "optimizer",  "label": "Optimizer", "badge": "AI"},
     {"id": "checks",     "label": "Checks", "failBadge": True},
     {"id": "components", "label": "Components"},
+    {"id": "comp_library", "label": "Comp. Library"},
     {"id": "maintenance","label": "Maintenance"},
     {"id": "materials",  "label": "Materials"},
 ]
@@ -244,7 +245,17 @@ class AppTitleBar(QFrame):
         pdf_btn.clicked.connect(lambda: self.on_pdf_clicked() if self.on_pdf_clicked else None)
         layout.addWidget(pdf_btn)
 
-        version_lbl = QLabel("AKSHAYVIPRA EL-MEC · V1.0")
+        # Welcome message -- shows "Hello, [Name]" for the logged-in user.
+        # Reads from auth.current_user() with a safe fallback for test/
+        # headless environments where auth isn't initialized.
+        try:
+            from auth import current_user as _cu
+            _u = _cu()
+            _greeting = f"Hello, {_u.display_name}  ·  " if _u else ""
+        except Exception:
+            _greeting = ""
+
+        version_lbl = QLabel(f"{_greeting}JAYVEECONS · V1.0")
         version_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 10.5px; font-weight: 600; letter-spacing: .5px;")
         layout.addWidget(version_lbl)
 
@@ -464,17 +475,42 @@ class TopNav(QFrame):
 
 
 class _PdfReportWorker(QThread):
-    """Background thread for the PDF report endpoint -- confirmed ~1-3s
-    real call, not instant, so runs off the GUI thread same as every other
-    network call in this codebase."""
+    """Background thread for all four PDF report types."""
     done = Signal(str)
     errorOccurred = Signal(str)
-    def __init__(self, results, inputs, save_path, parent=None):
+
+    ENDPOINT_MAP = {
+        "engineering": None,                             # uses existing download_pdf_report
+        "workshop":    "manufacturing-reports/workshop",
+        "procurement": "manufacturing-reports/procurement",
+        "enduser":     "manufacturing-reports/enduser",
+    }
+
+    def __init__(self, results, inputs, save_path, report_type="engineering", parent=None):
         super().__init__(parent)
-        self.results, self.inputs, self.save_path = results, inputs, save_path
+        self.results    = results
+        self.inputs     = inputs
+        self.save_path  = save_path
+        self.report_type = report_type
+
     def run(self):
         try:
-            path = download_pdf_report(self.results, self.inputs, self.save_path)
+            endpoint = self.ENDPOINT_MAP.get(self.report_type)
+            if endpoint is None:
+                # Engineering report uses the existing helper
+                path = download_pdf_report(self.results, self.inputs, self.save_path)
+            else:
+                import requests, os
+                from api_client import API_BASE_V1
+                resp = requests.post(
+                    f"{API_BASE_V1}/{endpoint}",
+                    json={"results": self.results, "inputs": self.inputs},
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                with open(self.save_path, "wb") as f:
+                    f.write(resp.content)
+                path = self.save_path
             self.done.emit(path)
         except Exception as e:
             self.errorOccurred.emit(str(e))
@@ -573,6 +609,8 @@ class ShellWindow(QMainWindow):
         self.middle_stack.addWidget(self.maintenance_panel)
         self.material_library_panel = MaterialLibraryPanel()
         self.middle_stack.addWidget(self.material_library_panel)
+        self.components_library_panel = ComponentsLibraryPanel()
+        self.middle_stack.addWidget(self.components_library_panel)
         col3_layout.addWidget(self.middle_stack)
 
         col4 = QWidget()
@@ -623,9 +661,10 @@ class ShellWindow(QMainWindow):
         outer.addWidget(body)
         self.setCentralWidget(container)
 
-        self._tab_index = {"design": 0, "optimizer": 1, "checks": 2, "components": 3, "maintenance": 4, "materials": 5}
+        self._tab_index = {"design": 0, "optimizer": 1, "checks": 2, "components": 3, "maintenance": 4, "materials": 5, "comp_library": 6}
         self._tab_label = {"design": "Results", "optimizer": "Optimizer", "checks": "Checks",
-                            "components": "Components", "maintenance": "Maintenance", "materials": "Materials"}
+                            "components": "Components", "maintenance": "Maintenance",
+                            "materials": "Materials", "comp_library": "Components Library"}
         self._last_results = {}
         self._default_payload = {
             "Q_req": 100, "H_m": 25, "mat_id": "clinker",
@@ -706,6 +745,7 @@ class ShellWindow(QMainWindow):
             self.checks_panel.set_data(payload, results)
             self.design_review_panel.set_data(payload, results)
             self.material_library_panel.set_data(payload, results)
+            self.components_library_panel.set_data(payload, results)
             self.optimizer_panel.set_data(payload, results)
         except Exception as e:
             import traceback
@@ -869,43 +909,82 @@ class ShellWindow(QMainWindow):
         dlg.exec()
 
     def _on_pdf_clicked(self):
-        """PDF Report button handler. Opens a save dialog, spins up a
-        background worker, and updates the TopNav's version label with
-        progress feedback while it runs -- same pattern as every other
-        network-call button in this codebase."""
+        """PDF Report button -- shows a context menu to choose which of the
+        four report types to generate (engineering, workshop, procurement,
+        end-user) then delegates to the appropriate handler."""
         if not self._last_results:
             self._styled_message_box(
                 QMessageBox.Icon.Information, "No Results", "Run a calculation first.", self
             ).exec()
             return
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtCore import QPoint
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu{{background:{PANEL2};color:{TEXT};border:1px solid {BORDER};"
+            f"border-radius:5px;padding:4px;}}"
+            f"QMenu::item{{padding:7px 18px;font-size:11px;}}"
+            f"QMenu::item:selected{{background:{PRIMARY};color:#fff;border-radius:3px;}}"
+        )
+        menu.addSection("Select Report Type")
+        menu.addAction("📋  Engineering Report (Design + Calculations)",
+                       lambda: self._generate_report("engineering"))
+        menu.addSeparator()
+        menu.addAction("🔧  Workshop Report (Fabrication BOM + QC Checkpoints)",
+                       lambda: self._generate_report("workshop"))
+        menu.addAction("🛒  Procurement Report (Commercial BOM + Long-Lead Items)",
+                       lambda: self._generate_report("procurement"))
+        menu.addAction("📖  End-User Report (Installation + Commissioning + Spares)",
+                       lambda: self._generate_report("enduser"))
+        # Show the menu below the PDF button
+        pdf_btns = [w for w in self.app_title_bar.findChildren(QPushButton)
+                    if "PDF" in (w.text() or "").upper() or "REPORT" in (w.text() or "").upper()]
+        if pdf_btns:
+            pos = pdf_btns[0].mapToGlobal(QPoint(0, pdf_btns[0].height()))
+        else:
+            from PySide6.QtGui import QCursor
+            pos = QCursor.pos()
+        menu.exec(pos)
+
+    def _generate_report(self, report_type: str):
+        """Launch the save dialog and background worker for the selected
+        report type. All four reports use the same save/progress/done
+        pattern; only the filename suffix and backend endpoint differ."""
+        suffix_map = {
+            "engineering": ("_Engineering", self._auto_pdf_filename),
+            "workshop":    ("_Workshop",    lambda: self._auto_pdf_filename().replace(".pdf", "_Workshop.pdf")),
+            "procurement": ("_Procurement", lambda: self._auto_pdf_filename().replace(".pdf", "_Procurement.pdf")),
+            "enduser":     ("_EndUser",     lambda: self._auto_pdf_filename().replace(".pdf", "_EndUser.pdf")),
+        }
+        _, name_fn = suffix_map.get(report_type, ("", self._auto_pdf_filename))
         save_path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF Report", self._auto_pdf_filename(), "PDF Files (*.pdf)"
+            self, "Save Report", name_fn(), "PDF Files (*.pdf)"
         )
         if not save_path:
             return
         self._pdf_worker = _PdfReportWorker(
-            self._last_results, self._default_payload, save_path, parent=self
+            self._last_results, self._default_payload, save_path,
+            report_type=report_type, parent=self
         )
         self._pdf_worker.done.connect(self._on_pdf_done)
         self._pdf_worker.errorOccurred.connect(self._on_pdf_error)
         self._pdf_worker.start()
-        # Update the version label to show progress
         for lbl in self.app_title_bar.findChildren(QLabel):
-            if "EL-MEC" in (lbl.text() or ""):
+            if "JAYVEECONS" in (lbl.text() or ""):
                 lbl.setText("Generating PDF…")
                 self._pdf_version_lbl = lbl
                 break
 
     def _on_pdf_done(self, path):
         if hasattr(self, "_pdf_version_lbl"):
-            self._pdf_version_lbl.setText("AKSHAYVIPRA EL-MEC · V1.0")
+            self._pdf_version_lbl.setText("JAYVEECONS · V1.0")
         self._styled_message_box(
             QMessageBox.Icon.Information, "Report Saved", f"PDF saved to:\n{path}", self
         ).exec()
 
     def _on_pdf_error(self, msg):
         if hasattr(self, "_pdf_version_lbl"):
-            self._pdf_version_lbl.setText("AKSHAYVIPRA EL-MEC · V1.0")
+            self._pdf_version_lbl.setText("JAYVEECONS · V1.0")
         self._styled_message_box(
             QMessageBox.Icon.Critical, "Report Failed", f"PDF generation failed:\n{msg}", self
         ).exec()

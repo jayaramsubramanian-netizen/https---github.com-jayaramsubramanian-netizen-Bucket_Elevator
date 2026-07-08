@@ -30,6 +30,7 @@ from .maintenance_panel import MaintenancePanel
 from .checks_panel import ChecksPanel
 from .design_review_panel import DesignReviewPanel
 from .material_library_panel import MaterialLibraryPanel
+from .components_library_panel import ComponentsLibraryPanel
 from .charts_panel import ChartsPanel
 
 __all__ = [
@@ -37,5 +38,5 @@ __all__ = [
     "TakeupEditDialog", "FeedEditDialog", "DischargeEditDialog", "CasingEditDialog",
     "ServiceEditDialog", "PowerEditDialog", "StatusPanel", "OptimizerPanel",
     "BomPanel", "StatusDesignLeaves", "MaintenancePanel", "ChecksPanel",
-    "DesignReviewPanel", "MaterialLibraryPanel", "ChartsPanel",
+    "DesignReviewPanel", "MaterialLibraryPanel", "ChartsPanel", "ComponentsLibraryPanel",
 ]

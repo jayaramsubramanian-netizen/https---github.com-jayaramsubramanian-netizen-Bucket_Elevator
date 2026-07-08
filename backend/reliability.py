@@ -1,6 +1,6 @@
 """
 VECTRIX™ — Reliability & Maintenance Schedule Generator
-AKSHAYVIPRA EL-MEC · VECTOMEC™
+JAYVEECONS · VECTOMEC™
 
 maintenance_schedule(results, inputs) → structured schedule dict
 

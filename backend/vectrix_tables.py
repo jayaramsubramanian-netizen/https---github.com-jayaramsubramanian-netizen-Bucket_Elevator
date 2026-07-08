@@ -9,7 +9,7 @@ App tagging
 ───────────
 Every row carries an `app` JSON array that declares which VECTRIX modules can
 use it.  Standard tags:
-  "be"   — AKSHAYVIPRA EL-MEC bucket elevator
+  "be"   — JAYVEECONS bucket elevator
   "sc"   — screw conveyor
   "conv" — generic conveyor (inherited from screw conveyor seed)
   "dry"  — drying process

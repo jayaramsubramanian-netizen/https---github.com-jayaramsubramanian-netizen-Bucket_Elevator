@@ -1,5 +1,5 @@
 """
-VECTRIX™ — AKSHAYVIPRA EL-MEC VECTOMEC™ Design Platform
+VECTRIX™ — JAYVEECONS VECTOMEC™ Design Platform
 FastAPI Backend — Bucket Elevator Module
 
 v1.1.0 — Engineering Platform Hardening
@@ -337,7 +337,7 @@ CORS_ORIGIN_REGEX: str | None = os.getenv("VECTRIX_CORS_REGEX") or None
 
 app = FastAPI(
     title="VECTRIX™ Design Platform API",
-    description="AKSHAYVIPRA EL-MEC — VECTOMEC™ Bucket Elevator & Conveyor Design",
+    description="JAYVEECONS — VECTOMEC™ Bucket Elevator & Conveyor Design",
     version=CALC_SCHEMA_VERSION,
     lifespan=lifespan,
 )
@@ -800,6 +800,100 @@ def get_model_number(data: ModelNumberRequest):
     return {"model_number": model_no}
 
 
+# ── Components Library ──────────────────────────────────────────────────────────
+class ComponentCreate(BaseModel):
+    component_type: str
+    description:    str
+    specs:          dict = {}
+    notes:          str  = ""
+
+
+class ComponentUpdate(BaseModel):
+    description: str
+    specs:       dict = {}
+    notes:       str  = ""
+
+
+@v1.get("/components/types")
+def get_component_types():
+    try:
+        from custom_components import COMPONENT_TYPES, TYPE_LABELS, COMPONENT_SCHEMAS
+    except ImportError:
+        from .custom_components import COMPONENT_TYPES, TYPE_LABELS, COMPONENT_SCHEMAS
+    return {
+        "types":   COMPONENT_TYPES,
+        "labels":  TYPE_LABELS,
+        "schemas": {
+            t: [
+                {"field": f, "type": tp.__name__, "default": d, "label": lbl, "hint": hint}
+                for f, tp, d, lbl, hint in schema
+            ]
+            for t, schema in COMPONENT_SCHEMAS.items()
+        },
+    }
+
+
+@v1.get("/components")
+def list_all_components(component_type: str = ""):
+    try:
+        from custom_components import list_components
+    except ImportError:
+        from .custom_components import list_components
+    return {"components": list_components(component_type or None)}
+
+
+@v1.get("/components/{component_id}")
+def get_component_by_id(component_id: str):
+    try:
+        from custom_components import get_component as _get
+    except ImportError:
+        from .custom_components import get_component as _get
+    comp = _get(component_id)
+    if not comp:
+        raise HTTPException(status_code=404, detail="Component not found")
+    return comp
+
+
+@v1.post("/components")
+def create_component_api(data: ComponentCreate):
+    try:
+        from custom_components import create_component, default_specs
+    except ImportError:
+        from .custom_components import create_component, default_specs
+    specs = {**default_specs(data.component_type), **data.specs}
+    try:
+        return create_component(data.component_type, data.description, specs, data.notes)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        if "UNIQUE" in str(e):
+            raise HTTPException(status_code=409,
+                detail=f"A {data.component_type} with this description already exists")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@v1.put("/components/{component_id}")
+def update_component_api(component_id: str, data: ComponentUpdate):
+    try:
+        from custom_components import update_component, get_component as _get
+    except ImportError:
+        from .custom_components import update_component, get_component as _get
+    if not _get(component_id):
+        raise HTTPException(status_code=404, detail="Component not found")
+    return update_component(component_id, data.description, data.specs, data.notes)
+
+
+@v1.delete("/components/{component_id}")
+def delete_component_api(component_id: str):
+    try:
+        from custom_components import delete_component
+    except ImportError:
+        from .custom_components import delete_component
+    if not delete_component(component_id):
+        raise HTTPException(status_code=404, detail="Component not found")
+    return {"deleted": True, "id": component_id}
+
+
 @v1.post("/bucket-elevator/report")
 def generate_report(data: ReportRequest):
     """
@@ -860,6 +954,54 @@ def generate_variant_report(data: VariantReportRequest):
         media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="elevator_variants.pdf"'},
     )
+
+
+# ── Manufacturing Transfer Reports ────────────────────────────────────────────
+
+class MfgReportRequest(BaseModel):
+    results: dict = {}
+    inputs:  dict = {}
+    project: str  = ""
+    doc_ref: str  = ""
+
+
+@v1.post("/manufacturing-reports/workshop")
+def workshop_report(data: MfgReportRequest):
+    """Internal fabrication report -- fabrication BOM, QC checkpoints, weld specs."""
+    try:
+        from manufacturing_reports import build_workshop_report
+    except ImportError:
+        from .manufacturing_reports import build_workshop_report
+    pdf_bytes = build_workshop_report(data.results, data.inputs, data.project, data.doc_ref)
+    from fastapi.responses import Response
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=workshop_report.pdf"})
+
+
+@v1.post("/manufacturing-reports/procurement")
+def procurement_report(data: MfgReportRequest):
+    """Procurement report -- commercial BOM, long-lead items, transport notes."""
+    try:
+        from manufacturing_reports import build_procurement_report
+    except ImportError:
+        from .manufacturing_reports import build_procurement_report
+    pdf_bytes = build_procurement_report(data.results, data.inputs, data.project, data.doc_ref)
+    from fastapi.responses import Response
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=procurement_report.pdf"})
+
+
+@v1.post("/manufacturing-reports/enduser")
+def enduser_report(data: MfgReportRequest):
+    """End-user report -- installation, commissioning, maintenance schedule, 1-yr spares."""
+    try:
+        from manufacturing_reports import build_enduser_report
+    except ImportError:
+        from .manufacturing_reports import build_enduser_report
+    pdf_bytes = build_enduser_report(data.results, data.inputs, data.project, data.doc_ref)
+    from fastapi.responses import Response
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=enduser_report.pdf"})
 
 
 # ── Designs ───────────────────────────────────────────────────────────────────

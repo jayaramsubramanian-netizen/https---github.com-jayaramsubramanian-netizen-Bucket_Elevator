@@ -2,7 +2,7 @@
 VECTRIX™ Unified Database — vectrix_database.py
 ─────────────────────────────────────────────────────────────────────────────
 Single SQLite database shared by:
-  • AKSHAYVIPRA EL-MEC bucket elevator (BE)
+  • JAYVEECONS bucket elevator (BE)
   • Screw conveyor module (SC)
 
 Swap DATABASE_URL env var for PostgreSQL in production.
