@@ -58,6 +58,7 @@ VIEWS = [
     ("side",      "Side Elevation"),
     ("trajectory","Trajectory"),
     ("bucket",    "Bucket Detail"),
+    ("cad",       "Eng. Drawing"),   # ISO A3 QGraphicsScene CAD view
 ]
 
 SVG_W, SVG_H = 580, 460   # matches the JSX's fixed internal drawing canvas size
@@ -262,7 +263,7 @@ class _SchematicCanvas(QWidget):
                     7, C["text3"])
         self._text(p, bx + 4, by + 41, view_name.upper() + " VIEW", 7, C["text3"])
         self._text(p, bx + 104, by + 41, f"D = {inp.get('D_mm','—')} mm", 7, C["text3"])
-        self._text(p, bx + 4, by + 52, "AKSHAYVIPRA EL-MEC · VECTRIX™", 6, C["label"])
+        self._text(p, bx + 4, by + 52, "JAYVEECONS · VECTRIX™", 6, C["label"])
 
     def _no_data(self, p, W, H, view_name):
         self._grid(p, W, H)
@@ -1081,9 +1082,18 @@ class ElevationView(QWidget):
         outer.addWidget(tab_bar)
 
         # ── Canvas + overlay stat cards ──────────────────────────────
+        from PySide6.QtWidgets import QStackedWidget as _SWid
+        from .elevation_cad import ElevationCADWidget
+
+        self._view_stack = _SWid()
+
         canvas_container = QWidget()
         canvas_container.setStyleSheet(f"background:{C['bg']};")
         self.canvas = _SchematicCanvas(canvas_container)
+        self._cad_widget = ElevationCADWidget()
+
+        self._view_stack.addWidget(canvas_container)   # index 0 — QPainter views
+        self._view_stack.addWidget(self._cad_widget)   # index 1 — CAD drawing
         self.canvas.on_hover_changed = self._on_hover_changed
         self.canvas.setCursor(Qt.CursorShape.OpenHandCursor)
 
@@ -1104,11 +1114,12 @@ class ElevationView(QWidget):
         stat_layout.addStretch()
         self._stat_overlay.setFixedWidth(110)
 
-        outer.addWidget(canvas_container, 1)
+        outer.addWidget(self._view_stack, 1)
 
         # Position canvas + overlay via resize handling (Qt has no CSS
         # position:absolute, so the overlay is a raw child widget moved
         # in resizeEvent)
+        self._canvas_container = canvas_container
         canvas_container.resizeEvent = self._on_container_resize
 
         # ── Status bar ────────────────────────────────────────────────
@@ -1140,7 +1151,11 @@ class ElevationView(QWidget):
     def _switch_view(self, view_id):
         for vid, btn in self._tab_btns.items():
             btn.setChecked(vid == view_id)
-        self.canvas.set_view(view_id)
+        if view_id == "cad":
+            self._view_stack.setCurrentIndex(1)
+        else:
+            self._view_stack.setCurrentIndex(0)
+            self.canvas.set_view(view_id)
 
     def _reset_view(self):
         self.canvas.reset_view()
@@ -1164,6 +1179,7 @@ class ElevationView(QWidget):
         self.inputs = inputs or {}
         self.results = results or {}
         self.canvas.set_data(self.inputs, self.results)
+        self._cad_widget.set_data(self.inputs, self.results)
 
         r = self.results
         q_req = self.inputs.get("Q_req")
