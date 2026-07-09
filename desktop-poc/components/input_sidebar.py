@@ -1734,6 +1734,23 @@ class BucketEditDialog(QDialog):
                                 note="Gap added beyond bucket projection for spacing. CEMA default 25mm. "
                                      "Continuous elevators typically 0mm."))
 
+        bl.addWidget(section_head("Double-Row Configuration (HG)"))
+        self.double_row_toggle = ToggleButton()
+        self.double_row_toggle.setChecked(int(self.inputs.get("n_rows", 1)) == 2)
+        self.double_row_toggle.toggled.connect(self._on_double_row_changed)
+        bl.addLayout(field_row(
+            "Double-Row (HG)", self.double_row_toggle, "",
+            note="Two half-width buckets per pitch position, staggered by half a pitch. "
+                 "Belt drive only — chain not valid. Belt width is automatically "
+                 "validated (min 2× bucket width + 50mm). Capacity formula is "
+                 "unchanged; advantage is smoother flow at higher speed [CEMA 375 §6 DR]."))
+
+        self._dr_status = QLabel("")
+        self._dr_status.setWordWrap(True)
+        self._dr_status.setStyleSheet("color:#94a3b8;font-size:10px;padding:0 4px;")
+        bl.addWidget(self._dr_status)
+        self._on_double_row_changed(self.double_row_toggle.isChecked())
+
         bl.addWidget(section_head("Plate Thickness"))
         bt = r.get("bucket_thickness")
         if bt:
@@ -1842,11 +1859,28 @@ class BucketEditDialog(QDialog):
     def _update_auto_state(self, auto_on):
         self.size_combo.setEnabled(not auto_on)
 
+    def _on_double_row_changed(self, checked: bool):
+        """Update the inline status note when double-row is toggled."""
+        if checked:
+            bkt_id   = self.inputs.get("bucket_id", "") or ""
+            conv     = self.inputs.get("conveyor_type", "belt") or "belt"
+            if conv.lower() == "chain":
+                self._dr_status.setText("⚠ Chain drive selected — double-row requires belt drive. "
+                                         "Switch to Belt Drive in the Belt/Chain section.")
+                self._dr_status.setStyleSheet("color:#f59e0b;font-size:10px;padding:0 4px;")
+            else:
+                self._dr_status.setText("ℹ  n_rows=2 active. Belt width will be validated "
+                                         "(≥ 2×bucket.W + 50mm). Model family → HG.")
+                self._dr_status.setStyleSheet("color:#3b82f6;font-size:10px;padding:0 4px;")
+        else:
+            self._dr_status.setText("")
+
     def updated_inputs(self):
         self.inputs["auto_bucket"] = self.auto_toggle.isChecked()
         if not self.auto_toggle.isChecked():
             self.inputs["bucket_id"] = self.size_combo.currentData()
         self.inputs["bucket_gap"] = self.bucket_gap.value()
+        self.inputs["n_rows"]     = 2 if self.double_row_toggle.isChecked() else 1
         self.inputs["bucket_thickness_override_mm"] = self.thickness_override.value()
         return self.inputs
 

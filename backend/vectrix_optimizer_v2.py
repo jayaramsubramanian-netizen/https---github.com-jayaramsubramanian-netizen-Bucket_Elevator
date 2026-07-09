@@ -119,13 +119,16 @@ class ElevatorOptProblem(ElementwiseProblem):
             "boot_D_mm":   Real(bounds=BOOT_D_MM_BOUNDS),
             "head_teeth":  Choice(options=SPROCKET_TEETH_OPTIONS),
             "boot_teeth":  Choice(options=SPROCKET_TEETH_OPTIONS),
+            "n_rows":      Choice(options=[1, 2]),   # 1=single-row, 2=HG double-row
         }
-        super().__init__(vars=variables, n_obj=4, n_ieq_constr=6)
+        super().__init__(vars=variables, n_obj=4, n_ieq_constr=7)  # +1 constraint for n_rows
         self.base_input = base_input
         self.mat = mat
 
     def _evaluate(self, X, out, *args, **kwargs):
         payload = dict(self.base_input)
+        _n_rows = int(X["n_rows"])
+        _is_chain = str(payload.get("conveyor_type", "belt")).lower() == "chain"
         payload.update(
             auto_bucket=False,
             bucket_id=X["bucket"],
@@ -134,19 +137,14 @@ class ElevatorOptProblem(ElementwiseProblem):
             chain_n_strands=int(X["n_strands"]),
             D_mm=float(X["D_mm"]),
             boot_pulley_D_mm=float(X["boot_D_mm"]),
-            # Forced False: otherwise calculations.py would silently override
-            # the independently-searched boot_D_mm back to D_mm whenever
-            # base_input happened to have this set, defeating the search.
             boot_pulley_same_as_head=False,
-            # #22: only meaningful in chain mode (sprocket_geometry() is only
-            # called inside calculations.py's is_chain branch -- same as how
-            # chain_n_strands above is harmlessly unused in belt mode), but
-            # included unconditionally for every run, matching n_strands'
-            # own existing precedent rather than branching the variable set
-            # by conveyor_type.
             chain_sprocket_teeth=int(X["head_teeth"]),
             chain_boot_sprocket_teeth=int(X["boot_teeth"]),
+            n_rows=_n_rows,
         )
+        # Chain + double-row is not a valid configuration (no chain HG exists).
+        # Penalise hard so the search avoids this combination entirely.
+        chain_double_row_violation = 1.0 if (_is_chain and _n_rows == 2) else 0.0
         # FIX (Jay's direction: "add constraint, not practical design"): the
         # search previously had nothing tying boot diameter to head diameter,
         # so some Pareto points showed boot_D_mm > D_mm -- mathematically
@@ -165,7 +163,7 @@ class ElevatorOptProblem(ElementwiseProblem):
                 r = solve_elevator(inp)
         except Exception:
             out["F"] = [_CRASH_PENALTY] * 4
-            out["G"] = [_CRASH_PENALTY] * 4
+            out["G"] = [_CRASH_PENALTY] * 7
             return
 
         checks = r.get("checks", []) or []
@@ -218,7 +216,7 @@ class ElevatorOptProblem(ElementwiseProblem):
 
         out["F"] = [motor_kw, R_head, -L10, cr_dev]
         out["G"] = [fail_count, sc_belt_violation, l10_violation, boot_diameter_violation,
-                    l10_boot_violation, startup_margin_violation]
+                    l10_boot_violation, startup_margin_violation, chain_double_row_violation]
 
 
 def _to_native(x):

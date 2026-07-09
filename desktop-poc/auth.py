@@ -121,6 +121,7 @@ class AuthDB:
                      title: str, company: str, role: str) -> UserRecord:
         if role not in ROLES:
             raise ValueError(f"Invalid role '{role}'. Must be one of {ROLES}")
+        username = username.strip().lower()   # normalize — stored and matched as lowercase
         salt = secrets.token_hex(16)
         pw_hash = _hash_password(password, salt)
         created_at = datetime.now().isoformat()
@@ -139,7 +140,8 @@ class AuthDB:
     def authenticate(self, username: str, password: str) -> Optional[UserRecord]:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT * FROM users WHERE username=? AND active=1", (username,)
+                "SELECT * FROM users WHERE username=? AND active=1",
+                (username.strip().lower(),)   # normalize before lookup
             ).fetchone()
         if not row:
             return None
@@ -151,7 +153,8 @@ class AuthDB:
     def get_by_username(self, username: str) -> Optional[UserRecord]:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT * FROM users WHERE username=?", (username,)
+                "SELECT * FROM users WHERE username=?",
+                (username.strip().lower(),)   # normalize before lookup
             ).fetchone()
         return UserRecord(tuple(row)) if row else None
 

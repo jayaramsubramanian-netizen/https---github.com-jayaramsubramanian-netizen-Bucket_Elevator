@@ -114,10 +114,16 @@ def generate_model_number(inputs: dict, results: dict,
     takeup_type    = str(inp.get("takeup_type") or "screw").lower()
     takeup_pos     = str(inp.get("takeup_position") or "boot").lower()
 
+    n_rows    = int(inp.get("n_rows") or 1)
+    is_dr     = (n_rows == 2) and not is_chain
+
     # ── FAMILY ───────────────────────────────────────────────────────────
     # SC overrides everything else (structural: double-chain, between-strand mount)
     if bucket_style == "SC" and n_strands == 2:
         family = "SC"
+    # HG: double-row belt (two half-width buckets per pitch, staggered)
+    elif is_dr:
+        family = "HG"
     # MD: duty-classification override for CD or KD
     elif abr_class >= 5 or mat_temp_c > 80 or casing_t_mm > 6.0:
         family = "MD"
@@ -127,7 +133,6 @@ def generate_model_number(inputs: dict, results: dict,
     # CD: centrifugal discharge bucket styles
     else:
         family = "CD"
-    # HG not auto-assigned -- reserved for future double-leg implementation
 
     # ── DRIVE ────────────────────────────────────────────────────────────
     drive = "C" if is_chain else "B"
@@ -152,7 +157,8 @@ def generate_model_number(inputs: dict, results: dict,
     duty_flags = []
     if abr_class >= 5:
         duty_flags.append("AR")
-    if is_double_row and family in ("CD", "KD") and not is_chain:
+    # DR suffix from either the explicit is_double_row parameter or auto-derived n_rows
+    if (is_double_row or is_dr) and family in ("CD", "KD", "HG") and not is_chain:
         duty_flags.append("DR")
     if mat_temp_c > 80:
         duty_flags.append("HT")

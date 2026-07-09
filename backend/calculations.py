@@ -1,6 +1,6 @@
 """
 VECTRIX™ — CEMA No. 375-2017 Compliant Bucket Elevator Physics Engine
-AKSHAYVIPRA EL-MEC · VECTOMEC™ Module
+JAYVEECONS · VECTOMEC™ Module
 
 v1.2.0 — Critical Engineering Fixes + Material Behaviour Integration
 ─────────────────────────────────────────────────────────────────────────────
@@ -2105,6 +2105,14 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
 
     # ── Spacing & capacity ────────────────────────────────────────────────────
     spacing = (bucket["P"] + inp.bucket_gap) / 1000.0
+    n_rows  = int(getattr(inp, "n_rows", 1) or 1)
+    is_double_row = (n_rows == 2)
+
+    # Double-row (HG): two half-width buckets per pitch position, staggered by
+    # half a pitch. Capacity formula is unchanged (2 buckets × half-volume ×
+    # same frequency = same Q). The benefit is smoother flow and the ability
+    # to run at higher speed, not additional theoretical capacity at fixed speed.
+    # What IS doubled: physical bucket count and belt-mass contribution.
     Q = calc_capacity(v, spacing, bucket["V"], inp.fill_pct, rho)
 
     # ── 3.7 — Bucket recommendation (advisory only) ───────────────────────────
@@ -2150,6 +2158,12 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         _bkt_mass_thickness_adjusted = _bkt_mass_catalogue
 
     bw_kg = _bkt_mass_thickness_adjusted * _bm_prop["density_factor"]
+
+    # Double-row: two physical buckets per pitch → double the mass per metre of
+    # belt. All subsequent tension, startup-inertia, and shaft-load calculations
+    # that use bw_kg automatically get the correct doubled value.
+    if is_double_row:
+        bw_kg = bw_kg * 2.0
 
     # ── Belt width / casing width ─────────────────────────────────────────────
     _bw_override = getattr(inp, "belt_width_override_mm", 0) or 0
@@ -2936,6 +2950,10 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         H_m=inp.H_m, D_head_mm=float(inp.D_mm), D_boot_mm=float(_boot_D_mm),
         spacing_m=spacing,
     )
+    if is_double_row:
+        # Two physical buckets per pitch position (staggered left + right)
+        belt_qty = dict(belt_qty)
+        belt_qty["n_buckets"] = belt_qty["n_buckets"] * 2
 
     # ── Engineering checks ─────────────────────────────────────────────────────
     # Backlegging risk classification (v1.9.1) — computed here so it can be
@@ -2992,6 +3010,7 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         bucket_thickness = bucket_thickness_calc,
         takeup_screw     = takeup_screw,        # v1.9.9
         takeup_hydraulic = takeup_hydraulic,    # v1.9.9
+        is_double_row    = is_double_row,       # HG double-row configuration
     )
 
     # ── Design recommendations ────────────────────────────────────────────────
@@ -3342,6 +3361,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                   bucket_thickness: "dict | None" = None,
                   takeup_screw:     "dict | None" = None,
                   takeup_hydraulic: "dict | None" = None,
+                  is_double_row:    bool           = False,
                   **kwargs,                         # absorb future additions
                   ) -> list:
     checks = []
@@ -3945,6 +3965,57 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
             f"Corrosive environment — verify: casing (CS+paint or SS), "
             f"fasteners (A4-SS stainless), belt cover (PVC/special rubber), "
             f"shaft end seals [CEMA 550 §A-8]", subsystem="service"))
+
+    # 10e — Double-row (HG) specific checks
+    if is_double_row:
+        _bkt_W_mm   = float(bucket.get("W") or 305)
+        _bw_override = float(getattr(inp, "belt_width_override_mm", 0) or 0)
+        _actual_BW  = float(_bw_override) if _bw_override > 0 else float(select_belt_width(_bkt_W_mm))
+
+        # 10e-1: Chain not valid for double-row
+        if is_chain:
+            checks.append(fail(
+                "Double-row (HG) configuration requires belt drive — chain elevators "
+                "cannot carry two side-by-side buckets between chain strands. "
+                "Set conveyor_type='belt' or n_rows=1 [CEMA 375 §6]",
+                subsystem="bucket"))
+
+        # 10e-2: Belt width must accommodate two buckets side by side
+        _min_BW_mm  = 2.0 * _bkt_W_mm + 50.0   # 25 mm clearance each side
+        if _actual_BW < _min_BW_mm:
+            checks.append(fail(
+                f"Belt width {_actual_BW:.0f}mm too narrow for double-row arrangement. "
+                f"Two {_bkt_W_mm:.0f}mm buckets side by side require minimum "
+                f"{_min_BW_mm:.0f}mm belt width (2 × bucket width + 50mm clearance). "
+                f"Increase belt width or select a narrower bucket [CEMA 375 §6]",
+                subsystem="bucket"))
+        else:
+            checks.append(ok(
+                f"Belt width {_actual_BW:.0f}mm — adequate for double-row "
+                f"(2 × {_bkt_W_mm:.0f}mm + 50mm clearance = {_min_BW_mm:.0f}mm min) [CEMA 375 §6]",
+                subsystem="bucket"))
+
+        # 10e-3: Minimum speed for HG (stagger advantage only realised above ~1.2 m/s)
+        _HG_V_MIN = 1.2
+        if v < _HG_V_MIN:
+            checks.append(warn(
+                f"Belt speed {v:.2f} m/s below recommended HG minimum {_HG_V_MIN:.1f} m/s. "
+                f"Double-row stagger provides smoother flow and higher throughput "
+                f"at higher speeds — the advantage over single-row is minimal below "
+                f"{_HG_V_MIN:.1f} m/s [CEMA 375 §6]",
+                subsystem="process"))
+
+        # 10e-4: Advisory note on stagger arrangement
+        _hg_spacing  = (float(bucket.get("P") or 203) + float(getattr(inp, "bucket_gap", 25) or 25)) / 1000.0
+        _half_pitch  = round(_hg_spacing * 500)   # half-pitch in mm
+        _n_bkt_total = round(2 * inp.H_m * 2 / max(_hg_spacing, 0.01))   # approx
+        checks.append(info(
+            f"Double-row (HG): two {_bkt_W_mm:.0f}mm-wide buckets side by side "
+            f"on a {_actual_BW:.0f}mm belt, staggered by {_half_pitch}mm "
+            f"(half-pitch). Effective bucket pass every {_half_pitch}mm. "
+            f"Capacity formula unchanged — advantage is smoother flow at higher speed. "
+            f"[CEMA 375 §6, DR arrangement]",
+            subsystem="bucket"))
 
     # 11 — Hazard flags (v1.2.0)
     hazards = mat_behavior["hazards"]

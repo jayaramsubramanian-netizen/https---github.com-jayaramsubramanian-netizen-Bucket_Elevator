@@ -81,6 +81,13 @@ class BucketElevatorInput(BaseModel):
 
     fill_pct:       float = Field(75,    ge=30,   le=100,   description="Bucket fill factor (%)")
     bucket_gap:     float = Field(25,    ge=0,    le=600,   description="Extra gap added to bucket projection for spacing (mm)")
+    n_rows:         int   = Field(1,     ge=1,    le=2,     description=(
+        "Number of bucket rows across belt width. 1 = standard single-row. "
+        "2 = double-row (HG / high-speed grain): two half-width buckets per "
+        "pitch position, staggered by half a pitch, on one belt with one drive. "
+        "Belt-only — chain drives are not valid for n_rows=2 (no chain HG exists). "
+        "Belt width check: BW ≥ 2 × bucket.W + 50 mm clearance."
+    ))
     auto_bucket:    bool  = Field(True,                      description="Auto-select bucket series from required capacity")
     bucket_id:      str   = Field("B",                       description="Manual bucket series ID (used when auto_bucket=False)")
 
