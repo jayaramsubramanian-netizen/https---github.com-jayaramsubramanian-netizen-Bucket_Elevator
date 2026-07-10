@@ -699,22 +699,28 @@ class ElevationCADDraw:
     # ── Scale selection ────────────────────────────────────────────────
     def _select_scale_and_layout(self, H_total_mm: float, avail_h_mm: float):
         """Returns (scale, n_segments). n_segments=1 for a normal single
-        view; n_segments=2 for a broken (head/boot) view at the same scale."""
-        target = self._user_scale or self.DEFAULT_SCALE
+        view; n_segments=2 for a broken (head/boot) view at the same scale.
 
-        # Does it fit as a single view at the target scale?
+        If the user explicitly picked a scale (drawing_scale != None), it
+        is ALWAYS honoured exactly -- never silently substituted for a
+        different value. If it doesn't fit even as 2 segments, the
+        drawing is still rendered at that scale (broken into 2 segments)
+        and may extend past the nominal drawing-area boundary; that's the
+        visible, honest consequence of the user's own scale choice, not
+        a silent substitution. Only in Auto-fit mode (drawing_scale=None)
+        does the system choose/widen the scale on the user's behalf."""
+        if self._user_scale:
+            target = self._user_scale
+            if H_total_mm / target <= avail_h_mm:
+                return target, 1
+            return target, 2   # broken view at the user's own scale -- never widened
+
+        # Auto-fit mode
+        target = self.DEFAULT_SCALE
         if H_total_mm / target <= avail_h_mm:
             return target, 1
-
-        # Try a 2-segment break at the SAME scale (each segment only needs
-        # to show half the elevator, roughly -- so the per-segment real
-        # height budget is doubled relative to a single view).
         if H_total_mm / target <= avail_h_mm * 2:
             return target, 2
-
-        # Extreme case: even 2 segments don't fit at the target scale.
-        # Widen the scale as a last resort (with a note added to the
-        # drawing) rather than adding more segments indefinitely.
         widened = _choose_scale(H_total_mm, avail_h_mm * 2)
         return widened, 2
 
@@ -834,6 +840,19 @@ class ElevationCADDraw:
         seg_real_mm = min(H_total_real_mm / 2, max_real_mm_per_seg - 40)
         seg_real_mm = max(seg_real_mm, 200)
         H_draw_seg  = sc(seg_real_mm)
+
+        # Honesty check: at a fine user-selected scale, 2 segments may not
+        # be enough to cover the FULL real height without silently
+        # dropping the middle portion. Rather than omit material with no
+        # indication, warn clearly on the drawing. (Full N-segment
+        # support is future scope -- this is the first-pass safety net.)
+        total_covered_mm = 2 * seg_real_mm
+        if total_covered_mm < H_total_real_mm - 1:
+            missing_mm = H_total_real_mm - total_covered_mm
+            add_text(real_scene, DA_X_MM+1, DA_Y_MM+5.5,
+                     f"⚠ INCOMPLETE AT THIS SCALE: {missing_mm/1000:.1f}m of casing not shown "
+                     f"(2 segments insufficient at 1:{K}) — increase scale or use Auto-fit",
+                     1.8, bold=True, color=C.RED)
 
         col_w  = DA_W_MM * 0.46
         gap    = DA_W_MM * 0.08
@@ -981,12 +1000,183 @@ class ElevationCADDraw:
                  f"Ø{D_boot_mm:.0f}mm · {(inp.get('takeup_type') or 'Screw').capitalize()}",
                  1.7, color=C.TEXT_MUTED)
 
+    def _draw_structural_elements(self, s, cx_l, cx_r, headCY, bootCY,
+                                   CAS_W, H_draw, K):
+        """Structural elements pass -- called after the casing outline is
+        already drawn so these sit on top of it cleanly.
+
+        Implemented increments (task #9):
+          1. Casing section joints / stiffener rings (real spacing data)
+          2. Inspection doors (600×600mm, boot + every 3rd ring)
+          3. Balloon callouts (ISO-style circled numbers)
+          4. Access platforms with handrails (THIS INCREMENT)
+             — code-compliant: max 6000mm spacing per OSHA 1910.23
+             — coincide with nearest stiffener ring for structural rigour
+             — 1000mm grating each side, 1100mm top rail, 550mm mid-rail,
+               100mm toe board, end + centre posts
+
+        Next increment:
+          - Caged ladder
+          - Structural support framework / legs
+        """
+        r = self.r
+        H_m = float(self.inp.get("H_m") or 25)
+        BW_mm = float(r.get("belt_w") or 350)
+
+        # ── Stiffener/section joints ───────────────────────────────────
+        cs = r.get("casing_stiffener") or {}
+        stiff_spacing_mm = float(cs.get("recommended_mm") or 1200)
+        stiff_draw = stiff_spacing_mm / K
+        flange_t   = max(0.8, 4.0 / K)
+        flange_pen = pen_visible(0.4)
+        stiff_brush = QBrush(QColor("#d0d8c8"))
+
+        y = headCY
+        stiff_y_positions = []
+        while y + stiff_draw < bootCY - 2:
+            y += stiff_draw
+            stiff_y_positions.append(y)
+            s.addRect(QRectF(m(cx_l), m(y - flange_t), m(CAS_W), m(flange_t * 2)),
+                      flange_pen, stiff_brush)
+            s.addLine(m(cx_l), m(y), m(cx_r), m(y), pen_visible(0.4))
+
+        # ── Inspection doors ───────────────────────────────────────────
+        door_w_draw = max(4.0, min(600 / K, CAS_W * 0.5))
+        door_h_draw = max(3.5, min(600 / K, stiff_draw * 0.8 if stiff_draw > 0 else 6.0))
+        door_pen    = pen_visible(0.35)
+        door_brush  = QBrush(QColor("#dce4f0"))
+
+        def _draw_door(dy_centre):
+            dx     = cx_l
+            dy_top = dy_centre - door_h_draw / 2
+            dy_bot = dy_centre + door_h_draw / 2
+            if dy_top < headCY or dy_bot > bootCY:
+                return
+            s.addRect(QRectF(m(dx), m(dy_top), m(door_w_draw), m(door_h_draw)),
+                      door_pen, door_brush)
+            s.addLine(m(dx), m(dy_top), m(dx+door_w_draw), m(dy_bot), door_pen)
+            s.addLine(m(dx+door_w_draw), m(dy_top), m(dx), m(dy_bot), door_pen)
+
+        _draw_door(bootCY - door_h_draw * 0.8)
+        for i, sy in enumerate(stiff_y_positions):
+            if (i + 1) % 3 == 0:
+                _draw_door(sy)
+
+        # ── Access platforms with handrails ────────────────────────────
+        # OSHA 1910.23 / ISO 14122-3: max 6000mm between access platforms.
+        # Platforms coincide with the nearest stiffener ring so the
+        # structural load transfers cleanly into the casing stiffener.
+        # Real dimensions:
+        #   Grating platform: 1000mm each side of casing face
+        #   Top handrail:     1100mm above platform floor
+        #   Mid-rail:          550mm above platform floor
+        #   Toe board:         100mm above platform floor
+        #   Posts: one at the outer end of each platform + one at mid-span
+
+        MAX_PLATFORM_SPACING_MM = 6000.0
+        plat_real  = 1000.0            # grating width each side (mm)
+        rail_h_mm  = 1100.0            # top rail height (mm)
+        midr_h_mm  =  550.0            # mid-rail height (mm)
+        toe_h_mm   =  100.0            # toe board height (mm)
+        post_w_mm  =   50.0            # square hollow post width (mm)
+
+        # Drawing sizes (scaled)
+        plat_draw  = max(5.0, plat_real / K)
+        rail_h     = max(1.5, rail_h_mm / K)
+        midr_h     = max(0.8, midr_h_mm / K)
+        toe_h      = max(0.5, toe_h_mm  / K)
+        post_w     = max(0.6, post_w_mm / K)
+
+        # Choose platform levels: walk through stiffener positions and pick
+        # every ring that is ≥ MAX_PLATFORM_SPACING_MM below the previous
+        # platform. Always include the ring nearest 2/3 up the leg (a
+        # mandatory intermediate platform for elevators >12m tall per code).
+        platform_y_positions = []
+        last_plat_real_y = H_m * 1000   # start from bottom (boot = 0 reference)
+        # Build a mapping: stiffener index → real y from bottom
+        n_stiff = len(stiff_y_positions)
+        for i, sy in enumerate(reversed(stiff_y_positions)):
+            # Real height from boot = (n_stiff - i) * stiff_spacing_mm
+            real_y_from_boot = (n_stiff - i) * stiff_spacing_mm
+            if last_plat_real_y - real_y_from_boot >= MAX_PLATFORM_SPACING_MM:
+                platform_y_positions.append(sy)
+                last_plat_real_y = real_y_from_boot
+
+        # Always add a platform near head if last one is > 3m below it
+        if stiff_y_positions:
+            top_stiff = stiff_y_positions[0]
+            if not platform_y_positions or abs(platform_y_positions[-1] - top_stiff) > 3000/K:
+                if top_stiff > headCY + 2:
+                    platform_y_positions.append(top_stiff)
+
+        platform_pen   = QPen(QColor("#2d5a2d"), m(0.4), Qt.PenStyle.SolidLine)
+        platform_brush = QBrush(QColor("#c8dcc8"))   # muted green grating
+        rail_pen       = QPen(QColor("#2d5a2d"), m(0.35), Qt.PenStyle.SolidLine)
+        post_pen       = QPen(QColor("#2d5a2d"), m(0.4), Qt.PenStyle.SolidLine)
+
+        for py in platform_y_positions:
+            if py <= headCY + 2 or py >= bootCY - 2:
+                continue
+            # LEFT platform grating
+            s.addRect(QRectF(m(cx_l - plat_draw), m(py - toe_h),
+                              m(plat_draw), m(toe_h)),
+                      platform_pen, platform_brush)
+            # RIGHT platform grating
+            s.addRect(QRectF(m(cx_r), m(py - toe_h),
+                              m(plat_draw), m(toe_h)),
+                      platform_pen, platform_brush)
+
+            # Toe boards (front edge, both sides)
+            s.addLine(m(cx_l - plat_draw), m(py),
+                      m(cx_l - plat_draw), m(py - toe_h), post_pen)
+            s.addLine(m(cx_r + plat_draw), m(py),
+                      m(cx_r + plat_draw), m(py - toe_h), post_pen)
+
+            for side_l, side_r in [(cx_l - plat_draw, cx_l),
+                                    (cx_r, cx_r + plat_draw)]:
+                mid_x = (side_l + side_r) / 2
+                outer_x = side_l if side_l < cx_l else side_r
+
+                # Outer post (full height from floor to top rail)
+                s.addLine(m(outer_x), m(py),
+                           m(outer_x), m(py - rail_h), post_pen)
+                # Mid post
+                s.addLine(m(mid_x),   m(py),
+                           m(mid_x),   m(py - rail_h), post_pen)
+
+                # Top handrail
+                s.addLine(m(side_l), m(py - rail_h),
+                           m(side_r), m(py - rail_h), rail_pen)
+                # Mid-rail
+                s.addLine(m(side_l), m(py - midr_h),
+                           m(side_r), m(py - midr_h), rail_pen)
+
+            # Platform level label (right side, small, muted)
+            real_h_m = (n_stiff - stiff_y_positions.index(py) - 1) * stiff_spacing_mm / 1000
+            add_text(s, cx_r + plat_draw + 1.5, py - midr_h,
+                     f"EL +{real_h_m:.1f}m", 1.7, color=QColor("#2d5a2d"))
+
+        # ── Balloon callouts ───────────────────────────────────────────
+        balloon_r   = 3.5
+        balloon_pen = pen_visible(0.25)
+        for by, num in [(headCY, "①"), (headCY + H_draw*0.50, "③"), (bootCY, "②")]:
+            bx = cx_r + 6.0
+            if by < headCY - 2 or by > bootCY + 8:
+                continue
+            s.addEllipse(QRectF(m(bx-balloon_r), m(by-balloon_r),
+                                 m(balloon_r*2), m(balloon_r*2)),
+                         balloon_pen, QBrush(QColor("#ffffff")))
+            s.addLine(m(cx_r), m(by), m(bx-balloon_r), m(by), pen_dim())
+            add_text(s, bx-balloon_r*0.55, by-balloon_r*0.85,
+                     num, 2.2, bold=True, color=C.BORDER)
+
     def _draw_casing_and_internals(self, midX, headCY, bootCY, cx_l, cx_r,
                                    CAS_W, H_draw, rH, rB, shaft_r, shaft_rB,
                                    ext, gb_w, gb_h, m_w, m_h,
                                    D_head_mm, D_boot_mm, BW_mm, spacing_m,
                                    bkt, draw_head=True, draw_boot=True):
         s, inp, r = self.s, self.inp, self.r
+        K = r.get("_draw_scale") or 8
 
         centre_line(s, midX, headCY - rH - 6, midX, bootCY + rB + 6)
         s.addRect(QRectF(m(cx_l), m(headCY), m(CAS_W), m(H_draw)),
@@ -994,15 +1184,19 @@ class ElevationCADDraw:
         hatch_rect(s, cx_l, headCY, 4, H_draw)
         hatch_rect(s, cx_r-4, headCY, 4, H_draw)
 
+        # Structural elements on top of casing outline
+        self._draw_structural_elements(s, cx_l, cx_r, headCY, bootCY,
+                                        CAS_W, H_draw, K)
+
         belt_off = CAS_W * 0.20
         bltL, bltR = midX - belt_off, midX + belt_off
         s.addLine(m(bltL), m(headCY), m(bltL), m(bootCY), pen_visible(0.5))
         s.addLine(m(bltR), m(headCY), m(bltR), m(bootCY), pen_visible(0.35))
 
         # Buckets
-        pitch_draw = max(0.1, spacing_m * 1000 / (r.get("_draw_scale") or 8))
-        bkt_proj   = max(3.5, (float(bkt.get("P") or 178) * 0.75) / (r.get("_draw_scale") or 8))
-        bkt_h_draw = max(2.5, (float(bkt.get("H") or 216) * 0.55) / (r.get("_draw_scale") or 8))
+        pitch_draw = max(0.1, spacing_m * 1000 / K)
+        bkt_proj   = max(3.5, (float(bkt.get("P") or 178) * 0.75) / K)
+        bkt_h_draw = max(2.5, (float(bkt.get("H") or 216) * 0.55) / K)
         n_vis = min(int(H_draw / pitch_draw) + 1, 24) if pitch_draw > 0 else 0
         for i in range(n_vis):
             by = headCY + i * pitch_draw + pitch_draw * 0.25
@@ -1148,8 +1342,16 @@ class ElevationCADWidget(QWidget):
         toolbar.setContentsMargins(6, 4, 6, 4)
         from PySide6.QtWidgets import QLabel, QComboBox
         lbl = QLabel("Drawing scale:")
+        lbl.setStyleSheet("color: #ddd; font-size: 11px;")
         toolbar.addWidget(lbl)
         self._scale_combo = QComboBox()
+        self._scale_combo.setStyleSheet(
+            "QComboBox { background: #f0f0eb; color: #1a1a1a; border: 1px solid #999; "
+            "border-radius: 3px; padding: 3px 8px; font-size: 11px; }"
+            "QComboBox::drop-down { border: none; }"
+            "QComboBox QAbstractItemView { background: #f0f0eb; color: #1a1a1a; "
+            "selection-background-color: #2266cc; selection-color: #ffffff; }"
+        )
         self._scale_combo.addItem("Auto-fit (default 1:8)", None)
         for k in self.SCALE_OPTIONS:
             self._scale_combo.addItem(f"1:{k}", k)

@@ -140,8 +140,8 @@ class AuthDB:
     def authenticate(self, username: str, password: str) -> Optional[UserRecord]:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT * FROM users WHERE username=? AND active=1",
-                (username.strip().lower(),)   # normalize before lookup
+                "SELECT * FROM users WHERE LOWER(username)=? AND active=1",
+                (username.strip().lower(),)
             ).fetchone()
         if not row:
             return None
@@ -153,8 +153,8 @@ class AuthDB:
     def get_by_username(self, username: str) -> Optional[UserRecord]:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT * FROM users WHERE username=?",
-                (username.strip().lower(),)   # normalize before lookup
+                "SELECT * FROM users WHERE LOWER(username)=?",
+                (username.strip().lower(),)
             ).fetchone()
         return UserRecord(tuple(row)) if row else None
 

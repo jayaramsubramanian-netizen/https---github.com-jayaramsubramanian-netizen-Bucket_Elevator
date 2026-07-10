@@ -5,6 +5,12 @@ Run from PowerShell:
 
 Lists all users, then prompts for username and new password.
 No login required.
+
+FIX (v2): SQLite = comparison is case-sensitive for text by default.
+Previously, searching WHERE username='jsmith' would miss any row
+stored as 'JSmith' or 'JAYARAM'. Now uses LOWER(username)=? so it
+finds the account regardless of how the username was stored, and also
+writes the username back to lowercase to clean up the stored value.
 """
 import hashlib
 import os
@@ -12,17 +18,18 @@ import secrets
 import sqlite3
 from pathlib import Path
 
+
 def _db_path():
     appdata = os.environ.get("APPDATA", "")
     if appdata:
         p = Path(appdata) / "VECTOMEC" / "db" / "users.db"
         if p.exists():
             return p
-    # Fallback: look in the current directory
     local = Path("users.db")
     if local.exists():
         return local
     return None
+
 
 def main():
     db_path = _db_path()
@@ -49,16 +56,23 @@ def main():
         print(f"  [{uid}] {uname:20s} {name:25s} ({role}) — {status}")
 
     print()
-    username = input("Enter username to reset: ").strip()
+    username_input = input("Enter username to reset: ").strip().lower()
 
+    # Use LOWER(username)=? so it finds accounts stored with any casing
+    # (SQLite's = is case-sensitive by default -- this was the bug)
     row = conn.execute(
-        "SELECT user_id FROM users WHERE username=?", (username,)
+        "SELECT user_id, username FROM users WHERE LOWER(username)=?",
+        (username_input,)
     ).fetchone()
 
     if not row:
-        print(f"ERROR: User '{username}' not found.")
+        print(f"ERROR: User '{username_input}' not found.")
         conn.close()
         return
+
+    user_id, stored_username = row
+    if stored_username != username_input:
+        print(f"Note: found account stored as '{stored_username}' — will normalize to '{username_input}'")
 
     new_password = input("Enter new password (min 8 chars): ").strip()
     if len(new_password) < 8:
@@ -66,18 +80,22 @@ def main():
         conn.close()
         return
 
-    salt     = secrets.token_hex(16)
-    pw_hash  = hashlib.sha256((salt + new_password).encode("utf-8")).hexdigest()
+    salt    = secrets.token_hex(16)
+    pw_hash = hashlib.sha256((salt + new_password).encode("utf-8")).hexdigest()
 
+    # Reset password AND normalize the stored username to lowercase
     conn.execute(
-        "UPDATE users SET pw_hash=?, salt=? WHERE username=?",
-        (pw_hash, salt, username)
+        "UPDATE users SET pw_hash=?, salt=?, username=? WHERE user_id=?",
+        (pw_hash, salt, username_input, user_id)
     )
     conn.commit()
     conn.close()
 
-    print(f"\nPassword for '{username}' has been reset successfully.")
+    print(f"\nPassword for '{username_input}' has been reset successfully.")
+    if stored_username != username_input:
+        print(f"Username also normalized from '{stored_username}' to '{username_input}'.")
     print("You can now log in to VECTOMEC with the new password.")
+
 
 if __name__ == "__main__":
     main()
