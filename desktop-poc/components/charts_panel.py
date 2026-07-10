@@ -214,8 +214,13 @@ class ChartsPanel(QWidget):
         tbl.addStretch()
         outer.addWidget(tab_bar)
 
-        # Content area -- each tab gets its own pre-built widget swapped in
+        # Content area -- each tab gets its own pre-built widget swapped in.
+        # Explicit PANEL background here is what eliminates the box-in-box:
+        # without it, Qt uses the Fusion platform default which differs from
+        # PANEL, so any child widget with background:PANEL appeared as a
+        # visible box inside a differently-colored container.
         self._content = QWidget()
+        self._content.setStyleSheet(f'background:{PANEL};')
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._content_layout.setSpacing(0)
