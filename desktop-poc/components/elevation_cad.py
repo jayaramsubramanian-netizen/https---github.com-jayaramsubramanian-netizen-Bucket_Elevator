@@ -614,8 +614,9 @@ class CADTemplate:
         r1h = 14.0   # company + model
         r2h = 9.0    # drawing title
         r3h = 9.0    # material/Q/H
+        r3bh = 6.0   # engineering disclaimer (structural sizing not modeled)
         r4h = 9.0    # scale/sheet
-        r5h = h - r1h - r2h - r3h - r4h  # sign-offs
+        r5h = h - r1h - r2h - r3h - r3bh - r4h  # sign-offs
 
         # Row 1: company block | model number
         s.addRect(QRectF(m(x), m(y), m(w), m(r1h)), no_pen(), QBrush(C.HDR_BG))
@@ -639,8 +640,24 @@ class CADTemplate:
                  f"Mat: {mat_name}  |  H={inp.get('H_m','—')}m  Q={inp.get('Q_req','—')}t/h",
                  2.0, max_w_mm=w-3)
 
+        # Row 3b: engineering disclaimer -- base/foundation/structural
+        # support framework is NOT modeled in this drawing (skipped per
+        # Jay's decision -- no verified sizing basis exists yet). Flagged
+        # here so nobody mistakes the absence of a base frame for "there
+        # is none needed."
+        y3b = y + r1h + r2h + r3h
+        s.addRect(QRectF(m(x), m(y3b), m(w), m(r3bh)), no_pen(),
+                  QBrush(QColor("#f5e8d0")))
+        s.addLine(m(x), m(y3b+r3bh), m(x+w), m(y3b+r3bh), pen_visible(0.25))
+        add_text(s, x+1.5, y3b+0.6,
+                 "⚠ Base/foundation & other structural sizing NOT shown —",
+                 1.5, bold=True, color=QColor("#885500"), max_w_mm=w-3)
+        add_text(s, x+1.5, y3b+3.2,
+                 "consult structural engineer before fabrication",
+                 1.5, bold=True, color=QColor("#885500"), max_w_mm=w-3)
+
         # Row 4: scale / sheet  (vertical separator at mid)
-        y4 = y + r1h + r2h + r3h
+        y4 = y + r1h + r2h + r3h + r3bh
         s.addLine(m(x), m(y4+r4h), m(x+w), m(y4+r4h), pen_visible(0.25))
         s.addLine(m(x+w/2), m(y4), m(x+w/2), m(y4+r4h), pen_visible(0.25))
         add_text(s, x+1.5, y4+1.0, "SCALE", 1.7, color=C.TEXT_MUTED)
@@ -882,6 +899,14 @@ class ElevationCADDraw:
                   pen_visible(0.5), QBrush(C.CASING))
         hatch_rect(s, cx_l1, headCY, 3.5, H_draw_seg)
         hatch_rect(s, cx_r1-3.5, headCY, 3.5, H_draw_seg)
+
+        # Structural elements (stiffeners, doors, platforms, ladder) --
+        # THIS WAS MISSING: previously only called from the single-view
+        # path (_draw_casing_and_internals), which the broken-view path
+        # (used by virtually every real elevator) never goes through.
+        self._draw_structural_elements(s, cx_l1, cx_r1, headCY, head_break_y,
+                                        CAS_W, H_draw_seg, K)
+
         belt_off1 = CAS_W * 0.20
         s.addLine(m(col1_cx-belt_off1), m(headCY), m(col1_cx-belt_off1), m(head_break_y), pen_visible(0.5))
         s.addLine(m(col1_cx+belt_off1), m(headCY), m(col1_cx+belt_off1), m(head_break_y), pen_visible(0.35))
@@ -910,6 +935,11 @@ class ElevationCADDraw:
                   pen_visible(0.5), QBrush(C.CASING))
         hatch_rect(s, cx_l2, boot_break_y, 3.5, H_draw_seg)
         hatch_rect(s, cx_r2-3.5, boot_break_y, 3.5, H_draw_seg)
+
+        # Structural elements -- same fix as the head segment above
+        self._draw_structural_elements(s, cx_l2, cx_r2, boot_break_y, bootCY,
+                                        CAS_W, H_draw_seg, K)
+
         belt_off2 = CAS_W * 0.20
         s.addLine(m(col2_cx-belt_off2), m(boot_break_y), m(col2_cx-belt_off2), m(bootCY), pen_visible(0.5))
         s.addLine(m(col2_cx+belt_off2), m(boot_break_y), m(col2_cx+belt_off2), m(bootCY), pen_visible(0.35))
@@ -1009,15 +1039,11 @@ class ElevationCADDraw:
           1. Casing section joints / stiffener rings (real spacing data)
           2. Inspection doors (600×600mm, boot + every 3rd ring)
           3. Balloon callouts (ISO-style circled numbers)
-          4. Access platforms with handrails (THIS INCREMENT)
-             — code-compliant: max 6000mm spacing per OSHA 1910.23
-             — coincide with nearest stiffener ring for structural rigour
-             — 1000mm grating each side, 1100mm top rail, 550mm mid-rail,
-               100mm toe board, end + centre posts
+          4. Access platforms with handrails (OSHA 1910.23 / ISO 14122-3)
+          5. Caged ladder (ISO 14122-4) — THIS INCREMENT
 
         Next increment:
-          - Caged ladder
-          - Structural support framework / legs
+          - Structural support framework / base legs
         """
         r = self.r
         H_m = float(self.inp.get("H_m") or 25)
@@ -1155,6 +1181,71 @@ class ElevationCADDraw:
             real_h_m = (n_stiff - stiff_y_positions.index(py) - 1) * stiff_spacing_mm / 1000
             add_text(s, cx_r + plat_draw + 1.5, py - midr_h,
                      f"EL +{real_h_m:.1f}m", 1.7, color=QColor("#2d5a2d"))
+
+        # ── Caged ladder (increment 4 of structural elements) ─────────
+        # ISO 14122-4 / OSHA 1910.23: vertical ladder on the right face
+        # of the casing, from boot to head, offset so it clears the casing
+        # wall. Cage (safety cage) required when height > 3m.
+        #
+        # Real dimensions:
+        #   Stringer spacing:     400mm (inside width of ladder)
+        #   Rung pitch:           250mm (step spacing)
+        #   Cage hoop pitch:      900mm (ISO 14122-4 maximum)
+        #   Cage hoop radius:     350mm from stringer centreline
+        #   Ladder offset from casing face: 150mm (clearance for cage)
+
+        STRINGER_SPACING_MM = 400.0
+        RUNG_PITCH_MM       = 250.0
+        CAGE_HOOP_PITCH_MM  = 900.0
+        CAGE_R_MM           = 350.0
+        LADDER_OFFSET_MM    = 150.0
+
+        str_w  = max(3.0, STRINGER_SPACING_MM / K)
+        rung_p = max(1.0, RUNG_PITCH_MM / K)
+        cage_p = max(3.0, CAGE_HOOP_PITCH_MM / K)
+        cage_r = max(2.5, CAGE_R_MM / K)
+        lad_off = max(3.0, LADDER_OFFSET_MM / K)
+
+        # Ladder centreline: right face of casing + offset
+        lad_cx = cx_r + lad_off
+        lad_l  = lad_cx - str_w / 2    # left stringer x
+        lad_r  = lad_cx + str_w / 2    # right stringer x
+
+        ladder_pen  = QPen(QColor("#2d5a2d"), m(0.35), Qt.PenStyle.SolidLine)
+        cage_pen    = QPen(QColor("#3a7a3a"), m(0.25), Qt.PenStyle.SolidLine)
+
+        # Stringers (full height, boot to head)
+        s.addLine(m(lad_l), m(headCY), m(lad_l), m(bootCY), ladder_pen)
+        s.addLine(m(lad_r), m(headCY), m(lad_r), m(bootCY), ladder_pen)
+
+        # Rungs
+        y = headCY + rung_p
+        while y < bootCY - rung_p * 0.3:
+            s.addLine(m(lad_l), m(y), m(lad_r), m(y), ladder_pen)
+            y += rung_p
+
+        # Cage hoops (semi-circular arcs, bowing rightward from ladder)
+        # In a 2D elevation view, a cage hoop is shown as a horizontal
+        # bar at each hoop level (the arc projects to a straight line in
+        # this projection), with short vertical stubs at the attachment
+        # points showing the hoop depth.
+        cage_stub = max(1.0, cage_r * 0.25)   # stub depth
+        y = headCY + cage_p
+        while y < bootCY - cage_p * 0.3:
+            # Horizontal bar (cage hoop arc, in elevation)
+            s.addLine(m(lad_l - cage_stub), m(y), m(lad_r + cage_r), m(y), cage_pen)
+            # Left + right attachment stubs
+            s.addLine(m(lad_l), m(y - cage_stub*0.5),
+                       m(lad_l), m(y + cage_stub*0.5), cage_pen)
+            s.addLine(m(lad_r + cage_r), m(y - cage_stub*0.5),
+                       m(lad_r + cage_r), m(y + cage_stub*0.5), cage_pen)
+            y += cage_p
+
+        # Ladder label
+        add_text(s, lad_r + cage_r + 1.5, (headCY + bootCY) / 2 - 3.0,
+                 "CAGE LADDER", 1.8, bold=True, color=QColor("#2d5a2d"))
+        add_text(s, lad_r + cage_r + 1.5, (headCY + bootCY) / 2 + 0.5,
+                 "ISO 14122-4", 1.5, color=QColor("#3a7a3a"))
 
         # ── Balloon callouts ───────────────────────────────────────────
         balloon_r   = 3.5
