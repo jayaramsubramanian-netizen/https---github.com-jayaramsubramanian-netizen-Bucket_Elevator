@@ -59,6 +59,9 @@ VIEWS = [
     ("trajectory","Trajectory"),
     ("bucket",    "Bucket Detail"),
     ("cad",       "Eng. Drawing"),   # ISO A3 QGraphicsScene CAD view
+    ("cad_side",  "Side Eng. Drawing"),  # ISO A3 side elevation CAD view
+    ("cad_head",  "Head Detail"),        # ISO A3 head + discharge chute + trajectory
+    ("cad_bucket","Bucket Detail"),      # ISO A3 bucket front/profile/bolt-hole detail
 ]
 
 SVG_W, SVG_H = 580, 460   # matches the JSX's fixed internal drawing canvas size
@@ -1084,6 +1087,9 @@ class ElevationView(QWidget):
         # ── Canvas + overlay stat cards ──────────────────────────────
         from PySide6.QtWidgets import QStackedWidget as _SWid
         from .elevation_cad import ElevationCADWidget
+        from .elevation_side_cad import SideElevationCADWidget
+        from .elevation_head_cad import HeadDetailCADWidget
+        from .elevation_bucket_cad import BucketDetailCADWidget
 
         self._view_stack = _SWid()
 
@@ -1091,9 +1097,15 @@ class ElevationView(QWidget):
         canvas_container.setStyleSheet(f"background:{C['bg']};")
         self.canvas = _SchematicCanvas(canvas_container)
         self._cad_widget = ElevationCADWidget()
+        self._cad_side_widget = SideElevationCADWidget()
+        self._cad_head_widget = HeadDetailCADWidget()
+        self._cad_bucket_widget = BucketDetailCADWidget()
 
-        self._view_stack.addWidget(canvas_container)   # index 0 — QPainter views
-        self._view_stack.addWidget(self._cad_widget)   # index 1 — CAD drawing
+        self._view_stack.addWidget(canvas_container)     # index 0 — QPainter views
+        self._view_stack.addWidget(self._cad_widget)     # index 1 — CAD drawing (front)
+        self._view_stack.addWidget(self._cad_side_widget) # index 2 — CAD drawing (side)
+        self._view_stack.addWidget(self._cad_head_widget) # index 3 — CAD drawing (head detail)
+        self._view_stack.addWidget(self._cad_bucket_widget) # index 4 — CAD drawing (bucket detail)
         self.canvas.on_hover_changed = self._on_hover_changed
         self.canvas.setCursor(Qt.CursorShape.OpenHandCursor)
 
@@ -1153,6 +1165,12 @@ class ElevationView(QWidget):
             btn.setChecked(vid == view_id)
         if view_id == "cad":
             self._view_stack.setCurrentIndex(1)
+        elif view_id == "cad_side":
+            self._view_stack.setCurrentIndex(2)
+        elif view_id == "cad_head":
+            self._view_stack.setCurrentIndex(3)
+        elif view_id == "cad_bucket":
+            self._view_stack.setCurrentIndex(4)
         else:
             self._view_stack.setCurrentIndex(0)
             self.canvas.set_view(view_id)
@@ -1180,6 +1198,9 @@ class ElevationView(QWidget):
         self.results = results or {}
         self.canvas.set_data(self.inputs, self.results)
         self._cad_widget.set_data(self.inputs, self.results)
+        self._cad_side_widget.set_data(self.inputs, self.results)
+        self._cad_head_widget.set_data(self.inputs, self.results)
+        self._cad_bucket_widget.set_data(self.inputs, self.results)
 
         r = self.results
         q_req = self.inputs.get("Q_req")

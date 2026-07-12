@@ -381,11 +381,13 @@ def _group_recorded_items(recorder: _ItemRecorder, real_scene: QGraphicsScene,
 
 # ── Template: border, zones, panels ──────────────────────────────────────────
 class CADTemplate:
-    def __init__(self, scene: QGraphicsScene, inputs, results, sign_off=None):
+    def __init__(self, scene: QGraphicsScene, inputs, results, sign_off=None,
+                 view_title: str = "BUCKET ELEVATOR — ELEVATION VIEW"):
         self.s: QGraphicsScene = scene
         self.inp = inputs or {}
         self.r = results or {}
         self.so = sign_off or {}
+        self.view_title = view_title
         try:
             from api_client import fetch_model_number
             self.model_no = fetch_model_number(self.inp, self.r)
@@ -630,7 +632,7 @@ class CADTemplate:
         # Row 2: drawing title
         s.addLine(m(x), m(y+r1h+r2h), m(x+w), m(y+r1h+r2h), pen_visible(0.25))
         add_text(s, x+1.5, y+r1h+1.0,
-                 "BUCKET ELEVATOR — ELEVATION VIEW", 2.2, bold=True,
+                 self.view_title, 2.2, bold=True,
                  max_w_mm=w-3)
 
         # Row 3: material / Q / H
@@ -674,19 +676,261 @@ class CADTemplate:
                 s.addLine(m(cx), m(y5), m(cx), m(y5+r5h), pen_visible(0.25))
             name = (self.so.get(role.lower()) or {}).get("display_name", "—")
             date = (self.so.get(role.lower()) or {}).get("signed_at", "—")[:10]
-            add_text(s, cx+1.2, y5+1.0, role, 1.7, color=C.TEXT_MUTED,
+            # Tightened vertical spacing (was 1.0/4.2/8.5) -- row5 shrank
+            # to make room for the structural-sizing disclaimer row above,
+            # so these 3 lines now need to fit more compactly, leaving
+            # clear space at the bottom for the ISO/date strip below.
+            add_text(s, cx+1.2, y5+0.8, role, 1.6, color=C.TEXT_MUTED,
                      max_w_mm=col3-2)
-            add_text(s, cx+1.2, y5+4.2, name, 2.0, bold=True, max_w_mm=col3-2)
-            add_text(s, cx+1.2, y5+8.5, date, 1.7, color=C.TEXT_MUTED,
+            add_text(s, cx+1.2, y5+3.4, name, 1.9, bold=True, max_w_mm=col3-2)
+            add_text(s, cx+1.2, y5+6.6, date, 1.6, color=C.TEXT_MUTED,
                      max_w_mm=col3-2)
 
+        # Bottom strip -- placed at a fixed clear offset from the row5
+        # boundary, safely below the sign-off content's tightened spacing
         from datetime import datetime
-        add_text(s, x+1.5, y+h-3.5,
+        add_text(s, x+1.5, y5+r5h-3.0,
                  f"ISO A3 · {datetime.now().strftime('%Y-%m-%d')} · VECTOMEC™",
-                 1.6, color=C.TEXT_MUTED)
+                 1.5, color=C.TEXT_MUTED)
 
 
 # ── Elevation Drawing ─────────────────────────────────────────────────────────
+def draw_structural_elements(s, inp, r, cx_l, cx_r, headCY, bootCY,
+                          CAS_W, H_draw, K):
+    """Structural elements pass -- called after the casing outline is
+    already drawn so these sit on top of it cleanly.
+
+    Standalone function (not a method) so it can be called identically
+    from ElevationCADDraw (front view) and SideElevationCADDraw (side
+    view) without the type mismatch that comes from calling an unbound
+    method with a 'self' of the wrong class.
+
+    Implemented increments (task #9):
+      1. Casing section joints / stiffener rings (real spacing data)
+      2. Inspection doors (600×600mm, boot + every 3rd ring)
+      3. Balloon callouts (ISO-style circled numbers)
+      4. Access platforms with handrails (OSHA 1910.23 / ISO 14122-3)
+      5. Caged ladder (ISO 14122-4)
+
+    Next increment:
+      - Structural support framework / base legs
+    """
+    H_m = float(inp.get("H_m") or 25)
+    BW_mm = float(r.get("belt_w") or 350)
+
+    # ── Stiffener/section joints ───────────────────────────────────
+    cs = r.get("casing_stiffener") or {}
+    stiff_spacing_mm = float(cs.get("recommended_mm") or 1200)
+    stiff_draw = stiff_spacing_mm / K
+    flange_t   = max(0.8, 4.0 / K)
+    flange_pen = pen_visible(0.4)
+    stiff_brush = QBrush(QColor("#d0d8c8"))
+
+    y = headCY
+    stiff_y_positions = []
+    while y + stiff_draw < bootCY - 2:
+        y += stiff_draw
+        stiff_y_positions.append(y)
+        s.addRect(QRectF(m(cx_l), m(y - flange_t), m(CAS_W), m(flange_t * 2)),
+                  flange_pen, stiff_brush)
+        s.addLine(m(cx_l), m(y), m(cx_r), m(y), pen_visible(0.4))
+
+    # ── Inspection doors ───────────────────────────────────────────
+    door_w_draw = max(4.0, min(600 / K, CAS_W * 0.5))
+    door_h_draw = max(3.5, min(600 / K, stiff_draw * 0.8 if stiff_draw > 0 else 6.0))
+    door_pen    = pen_visible(0.35)
+    door_brush  = QBrush(QColor("#dce4f0"))
+
+    def _draw_door(dy_centre):
+        dx     = cx_l
+        dy_top = dy_centre - door_h_draw / 2
+        dy_bot = dy_centre + door_h_draw / 2
+        if dy_top < headCY or dy_bot > bootCY:
+            return
+        s.addRect(QRectF(m(dx), m(dy_top), m(door_w_draw), m(door_h_draw)),
+                  door_pen, door_brush)
+        s.addLine(m(dx), m(dy_top), m(dx+door_w_draw), m(dy_bot), door_pen)
+        s.addLine(m(dx+door_w_draw), m(dy_top), m(dx), m(dy_bot), door_pen)
+
+    _draw_door(bootCY - door_h_draw * 0.8)
+    for i, sy in enumerate(stiff_y_positions):
+        if (i + 1) % 3 == 0:
+            _draw_door(sy)
+
+    # ── Access platforms with handrails ────────────────────────────
+    # OSHA 1910.23 / ISO 14122-3: max 6000mm between access platforms.
+    # Platforms coincide with the nearest stiffener ring so the
+    # structural load transfers cleanly into the casing stiffener.
+    # Real dimensions:
+    #   Grating platform: 1000mm each side of casing face
+    #   Top handrail:     1100mm above platform floor
+    #   Mid-rail:          550mm above platform floor
+    #   Toe board:         100mm above platform floor
+    #   Posts: one at the outer end of each platform + one at mid-span
+
+    MAX_PLATFORM_SPACING_MM = 6000.0
+    plat_real  = 1000.0            # grating width each side (mm)
+    rail_h_mm  = 1100.0            # top rail height (mm)
+    midr_h_mm  =  550.0            # mid-rail height (mm)
+    toe_h_mm   =  100.0            # toe board height (mm)
+    post_w_mm  =   50.0            # square hollow post width (mm)
+
+    # Drawing sizes (scaled)
+    plat_draw  = max(5.0, plat_real / K)
+    rail_h     = max(1.5, rail_h_mm / K)
+    midr_h     = max(0.8, midr_h_mm / K)
+    toe_h      = max(0.5, toe_h_mm  / K)
+    post_w     = max(0.6, post_w_mm / K)
+
+    # Choose platform levels: walk through stiffener positions and pick
+    # every ring that is ≥ MAX_PLATFORM_SPACING_MM below the previous
+    # platform. Always include the ring nearest 2/3 up the leg (a
+    # mandatory intermediate platform for elevators >12m tall per code).
+    platform_y_positions = []
+    last_plat_real_y = H_m * 1000   # start from bottom (boot = 0 reference)
+    # Build a mapping: stiffener index → real y from bottom
+    n_stiff = len(stiff_y_positions)
+    for i, sy in enumerate(reversed(stiff_y_positions)):
+        # Real height from boot = (n_stiff - i) * stiff_spacing_mm
+        real_y_from_boot = (n_stiff - i) * stiff_spacing_mm
+        if last_plat_real_y - real_y_from_boot >= MAX_PLATFORM_SPACING_MM:
+            platform_y_positions.append(sy)
+            last_plat_real_y = real_y_from_boot
+
+    # Always add a platform near head if last one is > 3m below it
+    if stiff_y_positions:
+        top_stiff = stiff_y_positions[0]
+        if not platform_y_positions or abs(platform_y_positions[-1] - top_stiff) > 3000/K:
+            if top_stiff > headCY + 2:
+                platform_y_positions.append(top_stiff)
+
+    platform_pen   = QPen(QColor("#2d5a2d"), m(0.4), Qt.PenStyle.SolidLine)
+    platform_brush = QBrush(QColor("#c8dcc8"))   # muted green grating
+    rail_pen       = QPen(QColor("#2d5a2d"), m(0.35), Qt.PenStyle.SolidLine)
+    post_pen       = QPen(QColor("#2d5a2d"), m(0.4), Qt.PenStyle.SolidLine)
+
+    for py in platform_y_positions:
+        if py <= headCY + 2 or py >= bootCY - 2:
+            continue
+        # LEFT platform grating
+        s.addRect(QRectF(m(cx_l - plat_draw), m(py - toe_h),
+                          m(plat_draw), m(toe_h)),
+                  platform_pen, platform_brush)
+        # RIGHT platform grating
+        s.addRect(QRectF(m(cx_r), m(py - toe_h),
+                          m(plat_draw), m(toe_h)),
+                  platform_pen, platform_brush)
+
+        # Toe boards (front edge, both sides)
+        s.addLine(m(cx_l - plat_draw), m(py),
+                  m(cx_l - plat_draw), m(py - toe_h), post_pen)
+        s.addLine(m(cx_r + plat_draw), m(py),
+                  m(cx_r + plat_draw), m(py - toe_h), post_pen)
+
+        for side_l, side_r in [(cx_l - plat_draw, cx_l),
+                                (cx_r, cx_r + plat_draw)]:
+            mid_x = (side_l + side_r) / 2
+            outer_x = side_l if side_l < cx_l else side_r
+
+            # Outer post (full height from floor to top rail)
+            s.addLine(m(outer_x), m(py),
+                       m(outer_x), m(py - rail_h), post_pen)
+            # Mid post
+            s.addLine(m(mid_x),   m(py),
+                       m(mid_x),   m(py - rail_h), post_pen)
+
+            # Top handrail
+            s.addLine(m(side_l), m(py - rail_h),
+                       m(side_r), m(py - rail_h), rail_pen)
+            # Mid-rail
+            s.addLine(m(side_l), m(py - midr_h),
+                       m(side_r), m(py - midr_h), rail_pen)
+
+        # Platform level label (right side, small, muted)
+        real_h_m = (n_stiff - stiff_y_positions.index(py) - 1) * stiff_spacing_mm / 1000
+        add_text(s, cx_r + plat_draw + 1.5, py - midr_h,
+                 f"EL +{real_h_m:.1f}m", 1.7, color=QColor("#2d5a2d"))
+
+    # ── Caged ladder (increment 4 of structural elements) ─────────
+    # ISO 14122-4 / OSHA 1910.23: vertical ladder on the right face
+    # of the casing, from boot to head, offset so it clears the casing
+    # wall. Cage (safety cage) required when height > 3m.
+    #
+    # Real dimensions:
+    #   Stringer spacing:     400mm (inside width of ladder)
+    #   Rung pitch:           250mm (step spacing)
+    #   Cage hoop pitch:      900mm (ISO 14122-4 maximum)
+    #   Cage hoop radius:     350mm from stringer centreline
+    #   Ladder offset from casing face: 150mm (clearance for cage)
+
+    STRINGER_SPACING_MM = 400.0
+    RUNG_PITCH_MM       = 250.0
+    CAGE_HOOP_PITCH_MM  = 900.0
+    CAGE_R_MM           = 350.0
+    LADDER_OFFSET_MM    = 150.0
+
+    str_w  = max(3.0, STRINGER_SPACING_MM / K)
+    rung_p = max(1.0, RUNG_PITCH_MM / K)
+    cage_p = max(3.0, CAGE_HOOP_PITCH_MM / K)
+    cage_r = max(2.5, CAGE_R_MM / K)
+    lad_off = max(3.0, LADDER_OFFSET_MM / K)
+
+    # Ladder centreline: right face of casing + offset
+    lad_cx = cx_r + lad_off
+    lad_l  = lad_cx - str_w / 2    # left stringer x
+    lad_r  = lad_cx + str_w / 2    # right stringer x
+
+    ladder_pen  = QPen(QColor("#2d5a2d"), m(0.35), Qt.PenStyle.SolidLine)
+    cage_pen    = QPen(QColor("#3a7a3a"), m(0.25), Qt.PenStyle.SolidLine)
+
+    # Stringers (full height, boot to head)
+    s.addLine(m(lad_l), m(headCY), m(lad_l), m(bootCY), ladder_pen)
+    s.addLine(m(lad_r), m(headCY), m(lad_r), m(bootCY), ladder_pen)
+
+    # Rungs
+    y = headCY + rung_p
+    while y < bootCY - rung_p * 0.3:
+        s.addLine(m(lad_l), m(y), m(lad_r), m(y), ladder_pen)
+        y += rung_p
+
+    # Cage hoops (semi-circular arcs, bowing rightward from ladder)
+    # In a 2D elevation view, a cage hoop is shown as a horizontal
+    # bar at each hoop level (the arc projects to a straight line in
+    # this projection), with short vertical stubs at the attachment
+    # points showing the hoop depth.
+    cage_stub = max(1.0, cage_r * 0.25)   # stub depth
+    y = headCY + cage_p
+    while y < bootCY - cage_p * 0.3:
+        # Horizontal bar (cage hoop arc, in elevation)
+        s.addLine(m(lad_l - cage_stub), m(y), m(lad_r + cage_r), m(y), cage_pen)
+        # Left + right attachment stubs
+        s.addLine(m(lad_l), m(y - cage_stub*0.5),
+                   m(lad_l), m(y + cage_stub*0.5), cage_pen)
+        s.addLine(m(lad_r + cage_r), m(y - cage_stub*0.5),
+                   m(lad_r + cage_r), m(y + cage_stub*0.5), cage_pen)
+        y += cage_p
+
+    # Ladder label
+    add_text(s, lad_r + cage_r + 1.5, (headCY + bootCY) / 2 - 3.0,
+             "CAGE LADDER", 1.8, bold=True, color=QColor("#2d5a2d"))
+    add_text(s, lad_r + cage_r + 1.5, (headCY + bootCY) / 2 + 0.5,
+             "ISO 14122-4", 1.5, color=QColor("#3a7a3a"))
+
+    # ── Balloon callouts ───────────────────────────────────────────
+    balloon_r   = 3.5
+    balloon_pen = pen_visible(0.25)
+    for by, num in [(headCY, "①"), (headCY + H_draw*0.50, "③"), (bootCY, "②")]:
+        bx = cx_r + 6.0
+        if by < headCY - 2 or by > bootCY + 8:
+            continue
+        s.addEllipse(QRectF(m(bx-balloon_r), m(by-balloon_r),
+                             m(balloon_r*2), m(balloon_r*2)),
+                     balloon_pen, QBrush(QColor("#ffffff")))
+        s.addLine(m(cx_r), m(by), m(bx-balloon_r), m(by), pen_dim())
+        add_text(s, bx-balloon_r*0.55, by-balloon_r*0.85,
+                 num, 2.2, bold=True, color=C.BORDER)
+
+
 class ElevationCADDraw:
     """Draws the elevator elevation in the drawing area. All dimensions mm.
 
@@ -904,8 +1148,8 @@ class ElevationCADDraw:
         # THIS WAS MISSING: previously only called from the single-view
         # path (_draw_casing_and_internals), which the broken-view path
         # (used by virtually every real elevator) never goes through.
-        self._draw_structural_elements(s, cx_l1, cx_r1, headCY, head_break_y,
-                                        CAS_W, H_draw_seg, K)
+        draw_structural_elements(s, self.inp, self.r, cx_l1, cx_r1, headCY, head_break_y,
+                                  CAS_W, H_draw_seg, K)
 
         belt_off1 = CAS_W * 0.20
         s.addLine(m(col1_cx-belt_off1), m(headCY), m(col1_cx-belt_off1), m(head_break_y), pen_visible(0.5))
@@ -937,8 +1181,8 @@ class ElevationCADDraw:
         hatch_rect(s, cx_r2-3.5, boot_break_y, 3.5, H_draw_seg)
 
         # Structural elements -- same fix as the head segment above
-        self._draw_structural_elements(s, cx_l2, cx_r2, boot_break_y, bootCY,
-                                        CAS_W, H_draw_seg, K)
+        draw_structural_elements(s, self.inp, self.r, cx_l2, cx_r2, boot_break_y, bootCY,
+                                  CAS_W, H_draw_seg, K)
 
         belt_off2 = CAS_W * 0.20
         s.addLine(m(col2_cx-belt_off2), m(boot_break_y), m(col2_cx-belt_off2), m(bootCY), pen_visible(0.5))
@@ -1030,237 +1274,6 @@ class ElevationCADDraw:
                  f"Ø{D_boot_mm:.0f}mm · {(inp.get('takeup_type') or 'Screw').capitalize()}",
                  1.7, color=C.TEXT_MUTED)
 
-    def _draw_structural_elements(self, s, cx_l, cx_r, headCY, bootCY,
-                                   CAS_W, H_draw, K):
-        """Structural elements pass -- called after the casing outline is
-        already drawn so these sit on top of it cleanly.
-
-        Implemented increments (task #9):
-          1. Casing section joints / stiffener rings (real spacing data)
-          2. Inspection doors (600×600mm, boot + every 3rd ring)
-          3. Balloon callouts (ISO-style circled numbers)
-          4. Access platforms with handrails (OSHA 1910.23 / ISO 14122-3)
-          5. Caged ladder (ISO 14122-4) — THIS INCREMENT
-
-        Next increment:
-          - Structural support framework / base legs
-        """
-        r = self.r
-        H_m = float(self.inp.get("H_m") or 25)
-        BW_mm = float(r.get("belt_w") or 350)
-
-        # ── Stiffener/section joints ───────────────────────────────────
-        cs = r.get("casing_stiffener") or {}
-        stiff_spacing_mm = float(cs.get("recommended_mm") or 1200)
-        stiff_draw = stiff_spacing_mm / K
-        flange_t   = max(0.8, 4.0 / K)
-        flange_pen = pen_visible(0.4)
-        stiff_brush = QBrush(QColor("#d0d8c8"))
-
-        y = headCY
-        stiff_y_positions = []
-        while y + stiff_draw < bootCY - 2:
-            y += stiff_draw
-            stiff_y_positions.append(y)
-            s.addRect(QRectF(m(cx_l), m(y - flange_t), m(CAS_W), m(flange_t * 2)),
-                      flange_pen, stiff_brush)
-            s.addLine(m(cx_l), m(y), m(cx_r), m(y), pen_visible(0.4))
-
-        # ── Inspection doors ───────────────────────────────────────────
-        door_w_draw = max(4.0, min(600 / K, CAS_W * 0.5))
-        door_h_draw = max(3.5, min(600 / K, stiff_draw * 0.8 if stiff_draw > 0 else 6.0))
-        door_pen    = pen_visible(0.35)
-        door_brush  = QBrush(QColor("#dce4f0"))
-
-        def _draw_door(dy_centre):
-            dx     = cx_l
-            dy_top = dy_centre - door_h_draw / 2
-            dy_bot = dy_centre + door_h_draw / 2
-            if dy_top < headCY or dy_bot > bootCY:
-                return
-            s.addRect(QRectF(m(dx), m(dy_top), m(door_w_draw), m(door_h_draw)),
-                      door_pen, door_brush)
-            s.addLine(m(dx), m(dy_top), m(dx+door_w_draw), m(dy_bot), door_pen)
-            s.addLine(m(dx+door_w_draw), m(dy_top), m(dx), m(dy_bot), door_pen)
-
-        _draw_door(bootCY - door_h_draw * 0.8)
-        for i, sy in enumerate(stiff_y_positions):
-            if (i + 1) % 3 == 0:
-                _draw_door(sy)
-
-        # ── Access platforms with handrails ────────────────────────────
-        # OSHA 1910.23 / ISO 14122-3: max 6000mm between access platforms.
-        # Platforms coincide with the nearest stiffener ring so the
-        # structural load transfers cleanly into the casing stiffener.
-        # Real dimensions:
-        #   Grating platform: 1000mm each side of casing face
-        #   Top handrail:     1100mm above platform floor
-        #   Mid-rail:          550mm above platform floor
-        #   Toe board:         100mm above platform floor
-        #   Posts: one at the outer end of each platform + one at mid-span
-
-        MAX_PLATFORM_SPACING_MM = 6000.0
-        plat_real  = 1000.0            # grating width each side (mm)
-        rail_h_mm  = 1100.0            # top rail height (mm)
-        midr_h_mm  =  550.0            # mid-rail height (mm)
-        toe_h_mm   =  100.0            # toe board height (mm)
-        post_w_mm  =   50.0            # square hollow post width (mm)
-
-        # Drawing sizes (scaled)
-        plat_draw  = max(5.0, plat_real / K)
-        rail_h     = max(1.5, rail_h_mm / K)
-        midr_h     = max(0.8, midr_h_mm / K)
-        toe_h      = max(0.5, toe_h_mm  / K)
-        post_w     = max(0.6, post_w_mm / K)
-
-        # Choose platform levels: walk through stiffener positions and pick
-        # every ring that is ≥ MAX_PLATFORM_SPACING_MM below the previous
-        # platform. Always include the ring nearest 2/3 up the leg (a
-        # mandatory intermediate platform for elevators >12m tall per code).
-        platform_y_positions = []
-        last_plat_real_y = H_m * 1000   # start from bottom (boot = 0 reference)
-        # Build a mapping: stiffener index → real y from bottom
-        n_stiff = len(stiff_y_positions)
-        for i, sy in enumerate(reversed(stiff_y_positions)):
-            # Real height from boot = (n_stiff - i) * stiff_spacing_mm
-            real_y_from_boot = (n_stiff - i) * stiff_spacing_mm
-            if last_plat_real_y - real_y_from_boot >= MAX_PLATFORM_SPACING_MM:
-                platform_y_positions.append(sy)
-                last_plat_real_y = real_y_from_boot
-
-        # Always add a platform near head if last one is > 3m below it
-        if stiff_y_positions:
-            top_stiff = stiff_y_positions[0]
-            if not platform_y_positions or abs(platform_y_positions[-1] - top_stiff) > 3000/K:
-                if top_stiff > headCY + 2:
-                    platform_y_positions.append(top_stiff)
-
-        platform_pen   = QPen(QColor("#2d5a2d"), m(0.4), Qt.PenStyle.SolidLine)
-        platform_brush = QBrush(QColor("#c8dcc8"))   # muted green grating
-        rail_pen       = QPen(QColor("#2d5a2d"), m(0.35), Qt.PenStyle.SolidLine)
-        post_pen       = QPen(QColor("#2d5a2d"), m(0.4), Qt.PenStyle.SolidLine)
-
-        for py in platform_y_positions:
-            if py <= headCY + 2 or py >= bootCY - 2:
-                continue
-            # LEFT platform grating
-            s.addRect(QRectF(m(cx_l - plat_draw), m(py - toe_h),
-                              m(plat_draw), m(toe_h)),
-                      platform_pen, platform_brush)
-            # RIGHT platform grating
-            s.addRect(QRectF(m(cx_r), m(py - toe_h),
-                              m(plat_draw), m(toe_h)),
-                      platform_pen, platform_brush)
-
-            # Toe boards (front edge, both sides)
-            s.addLine(m(cx_l - plat_draw), m(py),
-                      m(cx_l - plat_draw), m(py - toe_h), post_pen)
-            s.addLine(m(cx_r + plat_draw), m(py),
-                      m(cx_r + plat_draw), m(py - toe_h), post_pen)
-
-            for side_l, side_r in [(cx_l - plat_draw, cx_l),
-                                    (cx_r, cx_r + plat_draw)]:
-                mid_x = (side_l + side_r) / 2
-                outer_x = side_l if side_l < cx_l else side_r
-
-                # Outer post (full height from floor to top rail)
-                s.addLine(m(outer_x), m(py),
-                           m(outer_x), m(py - rail_h), post_pen)
-                # Mid post
-                s.addLine(m(mid_x),   m(py),
-                           m(mid_x),   m(py - rail_h), post_pen)
-
-                # Top handrail
-                s.addLine(m(side_l), m(py - rail_h),
-                           m(side_r), m(py - rail_h), rail_pen)
-                # Mid-rail
-                s.addLine(m(side_l), m(py - midr_h),
-                           m(side_r), m(py - midr_h), rail_pen)
-
-            # Platform level label (right side, small, muted)
-            real_h_m = (n_stiff - stiff_y_positions.index(py) - 1) * stiff_spacing_mm / 1000
-            add_text(s, cx_r + plat_draw + 1.5, py - midr_h,
-                     f"EL +{real_h_m:.1f}m", 1.7, color=QColor("#2d5a2d"))
-
-        # ── Caged ladder (increment 4 of structural elements) ─────────
-        # ISO 14122-4 / OSHA 1910.23: vertical ladder on the right face
-        # of the casing, from boot to head, offset so it clears the casing
-        # wall. Cage (safety cage) required when height > 3m.
-        #
-        # Real dimensions:
-        #   Stringer spacing:     400mm (inside width of ladder)
-        #   Rung pitch:           250mm (step spacing)
-        #   Cage hoop pitch:      900mm (ISO 14122-4 maximum)
-        #   Cage hoop radius:     350mm from stringer centreline
-        #   Ladder offset from casing face: 150mm (clearance for cage)
-
-        STRINGER_SPACING_MM = 400.0
-        RUNG_PITCH_MM       = 250.0
-        CAGE_HOOP_PITCH_MM  = 900.0
-        CAGE_R_MM           = 350.0
-        LADDER_OFFSET_MM    = 150.0
-
-        str_w  = max(3.0, STRINGER_SPACING_MM / K)
-        rung_p = max(1.0, RUNG_PITCH_MM / K)
-        cage_p = max(3.0, CAGE_HOOP_PITCH_MM / K)
-        cage_r = max(2.5, CAGE_R_MM / K)
-        lad_off = max(3.0, LADDER_OFFSET_MM / K)
-
-        # Ladder centreline: right face of casing + offset
-        lad_cx = cx_r + lad_off
-        lad_l  = lad_cx - str_w / 2    # left stringer x
-        lad_r  = lad_cx + str_w / 2    # right stringer x
-
-        ladder_pen  = QPen(QColor("#2d5a2d"), m(0.35), Qt.PenStyle.SolidLine)
-        cage_pen    = QPen(QColor("#3a7a3a"), m(0.25), Qt.PenStyle.SolidLine)
-
-        # Stringers (full height, boot to head)
-        s.addLine(m(lad_l), m(headCY), m(lad_l), m(bootCY), ladder_pen)
-        s.addLine(m(lad_r), m(headCY), m(lad_r), m(bootCY), ladder_pen)
-
-        # Rungs
-        y = headCY + rung_p
-        while y < bootCY - rung_p * 0.3:
-            s.addLine(m(lad_l), m(y), m(lad_r), m(y), ladder_pen)
-            y += rung_p
-
-        # Cage hoops (semi-circular arcs, bowing rightward from ladder)
-        # In a 2D elevation view, a cage hoop is shown as a horizontal
-        # bar at each hoop level (the arc projects to a straight line in
-        # this projection), with short vertical stubs at the attachment
-        # points showing the hoop depth.
-        cage_stub = max(1.0, cage_r * 0.25)   # stub depth
-        y = headCY + cage_p
-        while y < bootCY - cage_p * 0.3:
-            # Horizontal bar (cage hoop arc, in elevation)
-            s.addLine(m(lad_l - cage_stub), m(y), m(lad_r + cage_r), m(y), cage_pen)
-            # Left + right attachment stubs
-            s.addLine(m(lad_l), m(y - cage_stub*0.5),
-                       m(lad_l), m(y + cage_stub*0.5), cage_pen)
-            s.addLine(m(lad_r + cage_r), m(y - cage_stub*0.5),
-                       m(lad_r + cage_r), m(y + cage_stub*0.5), cage_pen)
-            y += cage_p
-
-        # Ladder label
-        add_text(s, lad_r + cage_r + 1.5, (headCY + bootCY) / 2 - 3.0,
-                 "CAGE LADDER", 1.8, bold=True, color=QColor("#2d5a2d"))
-        add_text(s, lad_r + cage_r + 1.5, (headCY + bootCY) / 2 + 0.5,
-                 "ISO 14122-4", 1.5, color=QColor("#3a7a3a"))
-
-        # ── Balloon callouts ───────────────────────────────────────────
-        balloon_r   = 3.5
-        balloon_pen = pen_visible(0.25)
-        for by, num in [(headCY, "①"), (headCY + H_draw*0.50, "③"), (bootCY, "②")]:
-            bx = cx_r + 6.0
-            if by < headCY - 2 or by > bootCY + 8:
-                continue
-            s.addEllipse(QRectF(m(bx-balloon_r), m(by-balloon_r),
-                                 m(balloon_r*2), m(balloon_r*2)),
-                         balloon_pen, QBrush(QColor("#ffffff")))
-            s.addLine(m(cx_r), m(by), m(bx-balloon_r), m(by), pen_dim())
-            add_text(s, bx-balloon_r*0.55, by-balloon_r*0.85,
-                     num, 2.2, bold=True, color=C.BORDER)
-
     def _draw_casing_and_internals(self, midX, headCY, bootCY, cx_l, cx_r,
                                    CAS_W, H_draw, rH, rB, shaft_r, shaft_rB,
                                    ext, gb_w, gb_h, m_w, m_h,
@@ -1276,8 +1289,8 @@ class ElevationCADDraw:
         hatch_rect(s, cx_r-4, headCY, 4, H_draw)
 
         # Structural elements on top of casing outline
-        self._draw_structural_elements(s, cx_l, cx_r, headCY, bootCY,
-                                        CAS_W, H_draw, K)
+        draw_structural_elements(s, self.inp, self.r, cx_l, cx_r, headCY, bootCY,
+                                  CAS_W, H_draw, K)
 
         belt_off = CAS_W * 0.20
         bltL, bltR = midX - belt_off, midX + belt_off
