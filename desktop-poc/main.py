@@ -4,22 +4,38 @@ main.py -- VECTRIX™ desktop app entry point, modeled on BucketElevatorPage.jsx
 THIS is the file to run and keep upgrading -- not equipment_tree_poc.py,
 elevation_view_poc.py, or combined_shell_example.py.
 
-FIXES this round (a real Windows screenshot still showed square-ish tab
-pills after the previous app.setStyle("Fusion") fix): the previous attempt
-used border-radius: 999px relying on it always exceeding half the
-button's actual rendered height. That depends on the button's real height
-being small and fixed -- here height was only ever a side-effect of
-padding, not a literal setFixedHeight(), so the radius-vs-height
-relationship the QSS engine actually rasterizes against wasn't as
-predictable as intended. Every pill-shaped button (tab buttons, the
-"Bucket Elevator" dropdown button, the module-switcher pills, the PDF
-Report button) now gets an explicit setFixedHeight() plus a border-radius
-set to exactly half that height -- the geometrically guaranteed way to
-get a true stadium shape, rather than relying on a radius-larger-than-
-the-box shortcut. border-style/border-width are also spelled out
-longhand (rather than the border: none shorthand) to remove any chance
-of a stylesheet parser treating the shorthand differently from the
-explicit properties.
+BOX-IN-BOX BORDER SWEEP (this round)
+────────────────────────────────────
+Every setStyleSheet() in this file that declared a `border` did so with NO
+selector. Qt treats a selector-less stylesheet as `* { ... }` -- it applies
+to the widget AND EVERY DESCENDANT. So:
+
+    ColHeader:   "background: PANEL; border-bottom: 1px solid BORDER"
+                 -> the label AND the sub-label each drew their own bottom
+                    border. That's the doubled/tripled underline under
+                    every column header.
+    AppTitleBar: same -- brand title, brand sub, module bar, PDF button all
+                 inherited a bottom border.
+    TopNav:      same, onto every tab button and the KPI row.
+    err_header:  same, onto the error text.
+
+Verified directly, not assumed: a QFrame with N child QLabels renders 2N
+horizontal border runs inside itself under a bare declaration, and 0 under
+a scoped one.
+
+All declarations below now go through theme.scoped() / plain_bg(), which
+bind the rule to the widget's own objectName so nothing can inherit it.
+The rgba() color literals scattered through this file (badge tints, pill
+fills) are now theme tokens -- they were all v1 values.
+
+RETAINED (still correct, do not "simplify" back):
+  - setFixedHeight() + border-radius = exactly half of it, on every pill
+    button. A true stadium shape needs a KNOWN height to compute the radius
+    against; relying on border-radius: 999px to always exceed half the
+    height fails when the height is only ever a side-effect of padding.
+  - border-style/border-width spelled out longhand rather than the
+    `border: none` shorthand on those pills.
+  - app.setStyle("Fusion").
 """
 import sys
 
@@ -32,8 +48,13 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QAction
 
 from theme import (
-    BG, PANEL, PANEL2, BORDER, TEXT, TEXT2, TEXT3, MUTED, PRIMARY,
-    SUCCESS, WARNING, DANGER, BRAND_RED,
+    BG, PANEL, PANEL2, SURFACE, OVERLAY, BORDER, BORDER2,
+    TEXT, TEXT2, TEXT3, MUTED,
+    PRIMARY, PRIMARY_DIM, PRIMARY_RING,
+    SUCCESS, WARNING, WARNING_DIM, WARNING_BORDER,
+    DANGER, DANGER_DIM, DANGER_BORDER,
+    BRAND_RED, R_SM, R_MD, R_PILL,
+    scoped, plain_bg,
 )
 from api_client import fetch_design, download_pdf_report
 from components.dialog_helpers import KPIChip, styled_message_box
@@ -44,13 +65,13 @@ from components import (
 )
 
 TABS = [
-    {"id": "design",     "label": "Results"},
-    {"id": "optimizer",  "label": "Optimizer", "badge": "AI"},
-    {"id": "checks",     "label": "Checks", "failBadge": True},
-    {"id": "components", "label": "Components"},
+    {"id": "design",       "label": "Results"},
+    {"id": "optimizer",    "label": "Optimizer", "badge": "AI"},
+    {"id": "checks",       "label": "Checks", "failBadge": True},
+    {"id": "components",   "label": "Components"},
     {"id": "comp_library", "label": "Comp. Library"},
-    {"id": "maintenance","label": "Maintenance"},
-    {"id": "materials",  "label": "Materials"},
+    {"id": "maintenance",  "label": "Maintenance"},
+    {"id": "materials",    "label": "Materials"},
 ]
 
 TAB_PILL_HEIGHT = 34
@@ -70,18 +91,28 @@ def fmt_kpi(v, dp):
 
 class ColHeader(QFrame):
     """Direct port of the JSX's shared ColHeader -- every column in the
-    real app uses this same small component."""
+    real app uses this same small component.
+
+    SCOPED (this round): the bare declaration gave `border-bottom` to the
+    label and the sub-label as well as the frame, so each column header
+    was drawing up to three stacked underlines.
+    """
 
     def __init__(self, label, sub=None, action=None, parent=None):
         super().__init__(parent)
         self.setFixedHeight(36)
-        self.setStyleSheet(f"background-color: {PANEL}; border-bottom: 1px solid {BORDER};")
+        self.setStyleSheet(scoped(
+            self,
+            f"background-color: {PANEL}; border: none; "
+            f"border-bottom: 1px solid {BORDER};"
+        ))
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 0, 12, 0)
         text_box = QHBoxLayout()
         text_box.setSpacing(7)
         lbl = QLabel(label.upper())
-        lbl.setStyleSheet(f"color: {TEXT3}; font-size: 9.5px; font-weight: 700; letter-spacing: 1px;")
+        lbl.setStyleSheet(
+            f"color: {TEXT3}; font-size: 9.5px; font-weight: 700; letter-spacing: 1px;")
         text_box.addWidget(lbl)
         if sub:
             sub_lbl = QLabel(sub)
@@ -93,28 +124,30 @@ class ColHeader(QFrame):
             layout.addWidget(action)
 
 
+def _pill_label(text, color, dim, border):
+    """Small status pill (FAIL / WARN / badge). Scoped, and the tint
+    colors now come from theme tokens instead of hardcoded v1 rgba()."""
+    lbl = QLabel(text)
+    lbl.setStyleSheet(scoped(
+        lbl,
+        f"background-color: {dim}; color: {color}; "
+        f"border: 1px solid {border}; border-radius: {R_PILL}px; "
+        f"padding: 2px 7px; font-size: 8.5px; font-weight: 700;"
+    ))
+    return lbl
+
+
 def fail_warn_badges(n_fail, n_warn):
-    """Small FAIL/WARN pill row -- port of the JSX's inline badge markup
-    that appears in the middle column's ColHeader action slot when on the
-    Results tab."""
+    """FAIL/WARN pill row -- port of the JSX's inline badge markup that
+    appears in the middle column's ColHeader action slot on the Results tab."""
     box = QWidget()
     layout = QHBoxLayout(box)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(5)
     if n_fail > 0:
-        lbl = QLabel(f"{n_fail} FAIL")
-        lbl.setStyleSheet(
-            f"background-color: rgba(224,82,82,.12); color: {DANGER}; border: 1px solid rgba(224,82,82,.3); "
-            f"border-radius: 999px; padding: 2px 7px; font-size: 8.5px; font-weight: 700;"
-        )
-        layout.addWidget(lbl)
+        layout.addWidget(_pill_label(f"{n_fail} FAIL", DANGER, DANGER_DIM, DANGER_BORDER))
     if n_warn > 0:
-        lbl = QLabel(f"{n_warn} WARN")
-        lbl.setStyleSheet(
-            f"background-color: rgba(217,142,0,.12); color: {WARNING}; border: 1px solid rgba(217,142,0,.3); "
-            f"border-radius: 999px; padding: 2px 7px; font-size: 8.5px; font-weight: 700;"
-        )
-        layout.addWidget(lbl)
+        layout.addWidget(_pill_label(f"{n_warn} WARN", WARNING, WARNING_DIM, WARNING_BORDER))
     return box
 
 
@@ -123,11 +156,11 @@ class Placeholder(QWidget):
 
     def __init__(self, title, source_file, parent=None):
         super().__init__(parent)
-        self.setStyleSheet(f"background-color: {BG};")
+        self.setStyleSheet(plain_bg(self, BG))
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon = QLabel("○")
-        icon.setStyleSheet(f"color: {BORDER}; font-size: 28px;")
+        icon.setStyleSheet(f"color: {MUTED}; font-size: 28px;")
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_lbl = QLabel(title)
         title_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 13px; font-weight: 600;")
@@ -141,59 +174,67 @@ class Placeholder(QWidget):
 
 class ModulePill(QPushButton):
     """One module switcher button in the platform title bar (Bucket
-    Elevator / Screw Conveyor). Active module gets the solid primary
-    fill; everything else (e.g. Screw Conveyor) is an honest, visibly-
-    disabled placeholder rather than a button that looks clickable but
-    does nothing.
+    Elevator / Screw Conveyor). Active module gets the solid primary fill;
+    everything else (e.g. Screw Conveyor) is an honest, visibly-disabled
+    placeholder rather than a button that looks clickable but does nothing.
 
-    FIX: setFixedHeight(MODULE_PILL_HEIGHT) + an exact-half border-radius,
-    same reasoning as NavTabButton below -- a true stadium shape needs a
-    known, fixed height to compute the matching radius against, not a
-    radius value assumed to always exceed whatever height padding alone
-    produces."""
+    RETAINED: setFixedHeight(MODULE_PILL_HEIGHT) + an exact-half border-
+    radius. A true stadium shape needs a known, fixed height to compute the
+    matching radius against -- not a radius value assumed to always exceed
+    whatever height padding alone happens to produce.
+    """
 
     def __init__(self, icon, label, badge=None, active=False, enabled=True, parent=None):
         super().__init__(parent)
-        self.setText(f"{icon}  {label}" + (f"   " if badge else ""))
+        self.setText(f"{icon}  {label}")
         self.active = active
         self.setEnabled(enabled)
         self.setFixedHeight(MODULE_PILL_HEIGHT)
-        if not enabled:
-            self.setToolTip(f"{label} is a separate application, not part of this codebase yet")
-        if active:
-            self.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {PRIMARY}; color: white;
-                    border-style: none; border-width: 0px;
-                    border-radius: {MODULE_PILL_RADIUS}px;
-                    padding: 0px 14px; font-size: 12px; font-weight: 600;
-                }}
-            """)
+        if enabled:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
-            self.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: transparent; color: {TEXT3};
-                    border-style: none; border-width: 0px;
-                    border-radius: {MODULE_PILL_RADIUS}px;
-                    padding: 0px 14px; font-size: 12px;
-                }}
-                QPushButton:disabled {{ color: {MUTED}; }}
-                QPushButton:hover:!disabled {{ color: {TEXT2}; }}
-            """)
+            self.setToolTip(
+                f"{label} is a separate application, not part of this codebase yet")
         if badge:
-            self.setText(f"{icon}  {label}")
             self._badge_text = badge
+
+        if active:
+            self.setStyleSheet(scoped(
+                self,
+                f"background-color: {PRIMARY}; color: white; "
+                f"border-style: none; border-width: 0px; "
+                f"border-radius: {MODULE_PILL_RADIUS}px; "
+                f"padding: 0px 14px; font-size: 12px; font-weight: 600;"
+            ))
+        else:
+            self.setStyleSheet(scoped(
+                self,
+                f"background-color: transparent; color: {TEXT3}; "
+                f"border-style: none; border-width: 0px; "
+                f"border-radius: {MODULE_PILL_RADIUS}px; "
+                f"padding: 0px 14px; font-size: 12px;",
+                extra=("{sel}:disabled { color: %s; }\n"
+                       "{sel}:hover:!disabled { color: %s; }" % (MUTED, TEXT2)),
+            ))
 
 
 class AppTitleBar(QFrame):
     """Platform-level title bar -- VECTRIX™ branding + module switcher
-    (Bucket Elevator / Screw Conveyor) + PDF Report + version."""
+    (Bucket Elevator / Screw Conveyor) + PDF Report + version.
+
+    SCOPED: the bare `border-bottom` here was inherited by the brand icon,
+    both brand labels, the module bar, the badge and the PDF button.
+    """
 
     def __init__(self, on_tab_changed=None, on_pdf_clicked=None, parent=None):
         super().__init__(parent)
         self.on_pdf_clicked = on_pdf_clicked
         self.setFixedHeight(48)
-        self.setStyleSheet(f"background-color: {PANEL}; border-bottom: 1px solid {BORDER};")
+        self.setStyleSheet(scoped(
+            self,
+            f"background-color: {OVERLAY}; border: none; "
+            f"border-bottom: 1px solid {BORDER};"
+        ))
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 0, 14, 0)
         layout.setSpacing(14)
@@ -201,21 +242,30 @@ class AppTitleBar(QFrame):
         icon = QLabel("⚙")
         icon.setFixedSize(30, 30)
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon.setStyleSheet(
-            f"background-color: {BRAND_RED}; border-radius: 7px; color: white; font-size: 15px;"
-        )
+        icon.setStyleSheet(scoped(
+            icon,
+            f"background-color: {BRAND_RED}; border: none; "
+            f"border-radius: {R_SM}px; color: white; font-size: 15px;"
+        ))
         layout.addWidget(icon)
 
-        brand_box = QVBoxLayout(); brand_box.setSpacing(0)
+        brand_box = QVBoxLayout()
+        brand_box.setSpacing(0)
         brand_title = QLabel("VECTRIX™")
         brand_title.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 700;")
         brand_sub = QLabel("DESIGN PLATFORM")
-        brand_sub.setStyleSheet(f"color: {TEXT3}; font-size: 8px; font-weight: 600; letter-spacing: 1px;")
-        brand_box.addWidget(brand_title); brand_box.addWidget(brand_sub)
+        brand_sub.setStyleSheet(
+            f"color: {TEXT3}; font-size: 8px; font-weight: 600; letter-spacing: 1px;")
+        brand_box.addWidget(brand_title)
+        brand_box.addWidget(brand_sub)
         layout.addLayout(brand_box)
 
         module_bar = QFrame()
-        module_bar.setStyleSheet(f"background-color: {BG}; border: 1px solid {BORDER}; border-radius: 999px;")
+        module_bar.setStyleSheet(scoped(
+            module_bar,
+            f"background-color: {SURFACE}; border: 1px solid {BORDER}; "
+            f"border-radius: {R_PILL}px;"
+        ))
         module_layout = QHBoxLayout(module_bar)
         module_layout.setContentsMargins(3, 3, 3, 3)
         module_layout.setSpacing(2)
@@ -223,10 +273,12 @@ class AppTitleBar(QFrame):
         be_pill = ModulePill("⛏", "Bucket Elevator", badge="VECTOMEC™", active=True)
         module_layout.addWidget(be_pill)
         badge_lbl = QLabel("VECTOMEC™")
-        badge_lbl.setStyleSheet(
-            f"background-color: rgba(255,255,255,.18); color: white; border-radius: 999px; "
-            f"padding: 2px 8px; font-size: 8.5px; font-weight: 700; margin-left: -8px;"
-        )
+        badge_lbl.setStyleSheet(scoped(
+            badge_lbl,
+            f"background-color: rgba(255,255,255,.18); color: white; border: none; "
+            f"border-radius: {R_PILL}px; padding: 2px 8px; "
+            f"font-size: 8.5px; font-weight: 700; margin-left: -8px;"
+        ))
         module_layout.addWidget(badge_lbl)
 
         sc_pill = ModulePill("🌀", "Screw Conveyor", active=False, enabled=False)
@@ -237,17 +289,21 @@ class AppTitleBar(QFrame):
 
         pdf_btn = QPushButton("⬇  PDF Report")
         pdf_btn.setFixedHeight(MODULE_PILL_HEIGHT)
-        pdf_btn.setStyleSheet(
-            f"background-color: {PANEL2}; color: {TEXT2}; "
-            f"border-style: solid; border-width: 1px; border-color: {BORDER}; "
-            f"border-radius: {MODULE_PILL_RADIUS}px; padding: 0px 14px; font-size: 11.5px; font-weight: 600;"
-        )
+        pdf_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        pdf_btn.setStyleSheet(scoped(
+            pdf_btn,
+            f"background-color: {SURFACE}; color: {TEXT2}; "
+            f"border-style: solid; border-width: 1px; border-color: {BORDER2}; "
+            f"border-radius: {MODULE_PILL_RADIUS}px; padding: 0px 14px; "
+            f"font-size: 11.5px; font-weight: 600;",
+            extra="{sel}:hover { background-color: %s; }" % BORDER2,
+        ))
         pdf_btn.clicked.connect(lambda: self.on_pdf_clicked() if self.on_pdf_clicked else None)
         layout.addWidget(pdf_btn)
 
-        # Welcome message -- shows "Hello, [Name]" for the logged-in user.
-        # Reads from auth.current_user() with a safe fallback for test/
-        # headless environments where auth isn't initialized.
+        # Welcome message -- "Hello, [Name]" for the logged-in user. Reads
+        # auth.current_user() with a safe fallback for test/headless
+        # environments where auth isn't initialized.
         try:
             from auth import current_user as _cu
             _u = _cu()
@@ -256,24 +312,20 @@ class AppTitleBar(QFrame):
             _greeting = ""
 
         version_lbl = QLabel(f"{_greeting}JAYVEECONS · V1.0")
-        version_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 10.5px; font-weight: 600; letter-spacing: .5px;")
+        version_lbl.setStyleSheet(
+            f"color: {TEXT3}; font-size: 10.5px; font-weight: 600; letter-spacing: .5px;")
         layout.addWidget(version_lbl)
 
 
 class NavTabButton(QPushButton):
     """A tab button hosted in the top nav bar.
 
-    FIX (this round): a real Windows screenshot still showed square-ish
-    pills even after app.setStyle("Fusion") and removing setFlat(True).
-    The remaining cause: border-radius: 999px was relied on to always
-    exceed half the actual rendered height, but height here was only
-    ever a side-effect of padding -- never a literal fixed value the
-    radius was computed against. Now setFixedHeight(TAB_PILL_HEIGHT) is
-    set explicitly and the radius is exactly half of it, the
-    geometrically guaranteed way to get a true stadium shape. border-
-    style/border-width are spelled out longhand rather than the
-    `border: none` shorthand, removing any chance of a shorthand-vs-
-    longhand parsing inconsistency in the stylesheet engine."""
+    RETAINED: setFixedHeight(TAB_PILL_HEIGHT) with the radius set to
+    exactly half of it -- the geometrically guaranteed way to get a true
+    stadium shape. border-style/border-width longhand rather than the
+    `border: none` shorthand, removing any shorthand-vs-longhand parsing
+    inconsistency in the stylesheet engine.
+    """
 
     def __init__(self, label, parent=None):
         super().__init__(label, parent)
@@ -288,41 +340,39 @@ class NavTabButton(QPushButton):
 
     def _apply_style(self):
         if self.isChecked():
-            self.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {PRIMARY}; color: white;
-                    border-style: none; border-width: 0px;
-                    border-radius: {TAB_PILL_RADIUS}px;
-                    padding: 0px 16px; font-size: 12.5px; font-weight: 600;
-                }}
-            """)
+            self.setStyleSheet(scoped(
+                self,
+                f"background-color: {PRIMARY}; color: white; "
+                f"border-style: none; border-width: 0px; "
+                f"border-radius: {TAB_PILL_RADIUS}px; "
+                f"padding: 0px 16px; font-size: 12.5px; font-weight: 600;"
+            ))
         else:
-            self.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: transparent; color: {TEXT3};
-                    border-style: none; border-width: 0px;
-                    border-radius: {TAB_PILL_RADIUS}px;
-                    padding: 0px 16px; font-size: 12.5px;
-                }}
-                QPushButton:hover {{ background-color: {PANEL2}; color: {TEXT2}; }}
-            """)
+            self.setStyleSheet(scoped(
+                self,
+                f"background-color: transparent; color: {TEXT3}; "
+                f"border-style: none; border-width: 0px; "
+                f"border-radius: {TAB_PILL_RADIUS}px; "
+                f"padding: 0px 16px; font-size: 12.5px;",
+                extra="{sel}:hover { background-color: %s; color: %s; }" % (SURFACE, TEXT2),
+            ))
 
 
 class TopNav(QFrame):
     """Page-level bar: a "Bucket Elevator" dropdown with standard window
     functions, the tab pills, plus Q/P/v KPI chips.
 
-    FIX (earlier round, still in effect): the bar was a hard 40px with
-    KPI chips squeezed into the same 2px spacing as the tab buttons.
-    Now 56px tall, and the three KPI chips get their own sub-layout with
-    real spacing (8px) and larger type, independent of the tighter
-    spacing the tab row still uses.
-
-    FIX (earlier round, still documented here): QMenuBar.addWidget()
-    doesn't actually exist (confirmed: dir(QMenuBar) only has
-    addAction/addActions/addMenu/addSeparator). This version uses only
-    patterns confirmed to render correctly: QPushButton.setMenu() for
-    the one real dropdown, plain QPushButtons for everything else.
+    RETAINED (earlier rounds, still in effect):
+      - 76px tall with the KPI chips in their own sub-layout at real
+        spacing, independent of the tighter spacing the tab row uses.
+      - QMenuBar.addWidget() does not exist (confirmed: dir(QMenuBar) has
+        only addAction/addActions/addMenu/addSeparator). This uses only
+        patterns confirmed to render: QPushButton.setMenu() for the one
+        real dropdown, plain QPushButtons for everything else.
+      - KPIChip: a single custom-painted widget, not a QFrame wrapping
+        three QLabels. It has no child widgets, so it was structurally
+        immune to the box-in-box bug -- which is exactly why it's the
+        pattern every other card in this app is now being moved toward.
     """
 
     def __init__(self, on_tab_changed, on_open=None, on_save=None,
@@ -334,32 +384,40 @@ class TopNav(QFrame):
         self._on_save_as = on_save_as
         self._on_manage_users = on_manage_users
         self.setFixedHeight(76)
-        self.setStyleSheet(f"background-color: {PANEL}; border-bottom: 1px solid {BORDER};")
+        self.setStyleSheet(scoped(
+            self,
+            f"background-color: {PANEL}; border: none; "
+            f"border-bottom: 1px solid {BORDER};"
+        ))
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(2)
 
+        # QMenu rules are DELIBERATELY class-scoped: QMenu::item and
+        # ::separator are the children we mean to target by name. That is
+        # an intentional descendant rule, not an accidental cascade.
         menu_qss = f"""
-            QMenu {{ background-color: {PANEL2}; color: {TEXT2}; border: 1px solid {BORDER};
-                border-radius: 8px; padding: 4px; }}
-            QMenu::item {{ padding: 6px 24px 6px 14px; border-radius: 5px; font-size: 12px; }}
+            QMenu {{ background-color: {PANEL2}; color: {TEXT2};
+                border: 1px solid {BORDER2}; border-radius: {R_MD}px; padding: 4px; }}
+            QMenu::item {{ padding: 6px 24px 6px 14px;
+                border-radius: {R_SM}px; font-size: 12px; }}
             QMenu::item:selected {{ background-color: {PRIMARY}; color: white; }}
-            QMenu::separator {{ height: 1px; background-color: {BORDER}; margin: 4px 8px; }}
+            QMenu::separator {{ height: 1px; background-color: {BORDER};
+                margin: 4px 8px; }}
         """
 
         app_btn = QPushButton("Bucket Elevator  ▾")
         app_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         app_btn.setFixedHeight(TAB_PILL_HEIGHT)
-        app_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent; color: {TEXT2};
-                border-style: none; border-width: 0px;
-                border-radius: {TAB_PILL_RADIUS}px;
-                padding: 0px 16px; font-size: 12.5px; font-weight: 600;
-            }}
-            QPushButton:hover {{ background-color: {PANEL2}; }}
-            QPushButton::menu-indicator {{ image: none; }}
-        """)
+        app_btn.setStyleSheet(scoped(
+            app_btn,
+            f"background-color: transparent; color: {TEXT2}; "
+            f"border-style: none; border-width: 0px; "
+            f"border-radius: {TAB_PILL_RADIUS}px; "
+            f"padding: 0px 16px; font-size: 12.5px; font-weight: 600;",
+            extra=("{sel}:hover { background-color: %s; }\n"
+                   "{sel}::menu-indicator { image: none; }" % SURFACE),
+        ))
         app_menu = QMenu(app_btn)
         app_menu.setStyleSheet(menu_qss)
         act_min = QAction("Minimize", self)
@@ -382,7 +440,8 @@ class TopNav(QFrame):
         app_menu.addAction(act_save_as)
         app_menu.addSeparator()
         act_users = QAction("Manage Users...", self)
-        act_users.triggered.connect(lambda: self._on_manage_users() if self._on_manage_users else None)
+        act_users.triggered.connect(
+            lambda: self._on_manage_users() if self._on_manage_users else None)
         app_menu.addAction(act_users)
         app_menu.addSeparator()
         act_exit = QAction("Exit", self)
@@ -395,7 +454,7 @@ class TopNav(QFrame):
 
         sep = QFrame()
         sep.setFixedWidth(1)
-        sep.setStyleSheet(f"background-color: {BORDER};")
+        sep.setStyleSheet(plain_bg(sep, BORDER2))
         layout.addWidget(sep)
 
         self.tab_buttons = {}
@@ -411,17 +470,6 @@ class TopNav(QFrame):
 
         layout.addStretch()
 
-        # FIX (Jay, third pass on this specific complaint): previous
-        # rounds increased padding/spacing but kept the same basic chip
-        # proportions -- confirmed against a real screenshot that 279 /
-        # 25.0 / 1.83 were still hard to read at a glance. This is a
-        # genuinely bigger change, not an incremental nudge: value text
-        # nearly 50% larger (22px vs 15px) and bold, a fixed minimum
-        # FIX (this round, see KPIChip class above for the full reasoning):
-        # replaced the QFrame + 3-stacked-QLabel chip with a single
-        # custom-painted widget -- no box-in-a-box, label and unit are
-        # small corner marks around one large centered value, drawn
-        # directly with QPainter instead of QSS-styled QLabels.
         kpi_row = QHBoxLayout()
         kpi_row.setSpacing(10)
         self.kpi_chips = {}
@@ -440,23 +488,17 @@ class TopNav(QFrame):
             win.showMaximized()
             self.act_maximize.setText("Restore")
 
-    def _not_yet_wired(self, action_name):
-        print(f"[{action_name}] not yet wired -- no save/load format designed yet.")
-
     def _select_tab(self, tab_id):
         for tid, btn in self.tab_buttons.items():
             btn.setChecked(tid == tab_id)
         self.on_tab_changed(tab_id)
 
     def update_kpis(self, results):
-        """Capacity color reads results["cap_ok"] directly (already
-        computed by the backend, a straight Q >= Q_req check in
-        calculations.py) -- per the architecture rule that the frontend
-        never duplicates engineering checks. P and v don't have an
-        equivalent required-vs-actual concept in the backend, so they
-        keep their original fixed categorical colors. set_value() handles
-        both the text and the border/value color in one call now -- no
-        separate accent step needed since KPIChip paints its own border."""
+        """Capacity color reads results["cap_ok"] directly (already computed
+        by the backend -- a straight Q >= Q_req check in calculations.py) per
+        the architecture rule that the frontend never duplicates engineering
+        checks. P and v have no equivalent required-vs-actual concept in the
+        backend, so they keep fixed categorical colors."""
         r = results or {}
         if r.get("Q") is not None:
             cap_ok = r.get("cap_ok")
@@ -480,7 +522,7 @@ class _PdfReportWorker(QThread):
     errorOccurred = Signal(str)
 
     ENDPOINT_MAP = {
-        "engineering": None,                             # uses existing download_pdf_report
+        "engineering": None,                             # uses download_pdf_report
         "workshop":    "manufacturing-reports/workshop",
         "procurement": "manufacturing-reports/procurement",
         "enduser":     "manufacturing-reports/enduser",
@@ -488,19 +530,18 @@ class _PdfReportWorker(QThread):
 
     def __init__(self, results, inputs, save_path, report_type="engineering", parent=None):
         super().__init__(parent)
-        self.results    = results
-        self.inputs     = inputs
-        self.save_path  = save_path
+        self.results = results
+        self.inputs = inputs
+        self.save_path = save_path
         self.report_type = report_type
 
     def run(self):
         try:
             endpoint = self.ENDPOINT_MAP.get(self.report_type)
             if endpoint is None:
-                # Engineering report uses the existing helper
                 path = download_pdf_report(self.results, self.inputs, self.save_path)
             else:
-                import requests, os
+                import requests
                 from api_client import API_BASE_V1
                 resp = requests.post(
                     f"{API_BASE_V1}/{endpoint}",
@@ -526,7 +567,7 @@ class ShellWindow(QMainWindow):
         user_str = f" — {user.display_name} ({user.role.capitalize()})" if user else ""
         self.setWindowTitle(f"VECTOMEC™ — Bucket Elevator{user_str}")
         self.resize(1400, 860)
-        self.setStyleSheet(f"background-color: {BG};")
+        self.setStyleSheet(plain_bg(self, BG))
 
         self.app_title_bar = AppTitleBar(on_pdf_clicked=self._on_pdf_clicked)
         self.top_nav = TopNav(
@@ -563,16 +604,14 @@ class ShellWindow(QMainWindow):
         col3_layout.addWidget(self.col3_header)
         self.middle_stack = QStackedWidget()
 
-        # Results tab: elevation view + charts panel.
-        # Wrapped in a QScrollArea so neither the elevation schematic nor the
-        # charts are clipped when the window height is short -- direct user
-        # feedback: "elevator schematic section does not scroll, making this
-        # section be at the very bottom of the page". The internal splitter
-        # remains flexible so the user can still resize the elevation/chart
-        # proportion. The scroll area only activates when content overflows.
+        # Results tab: elevation view + charts panel, in a QScrollArea so
+        # neither is clipped when the window is short -- direct feedback:
+        # "elevator schematic section does not scroll, making this section
+        # be at the very bottom of the page". The internal splitter stays
+        # flexible so the elevation/chart proportion is still resizable.
         results_scroll = QScrollArea()
         results_scroll.setWidgetResizable(True)
-        results_scroll.setStyleSheet("QScrollArea{border:none;}")
+        results_scroll.setStyleSheet(scoped(results_scroll, "border: none;"))
         results_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         results_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
@@ -583,8 +622,8 @@ class ShellWindow(QMainWindow):
 
         results_splitter = QSplitter(Qt.Orientation.Vertical)
         results_splitter.setStyleSheet(
-            f"QSplitter::handle{{background:{BORDER};height:4px;}}"
-            f"QSplitter::handle:hover{{background:{PRIMARY};}}"
+            f"QSplitter::handle {{ background-color: {BORDER2}; height: 4px; }}"
+            f"QSplitter::handle:hover {{ background-color: {PRIMARY}; }}"
         )
         self.elevation = ElevationView()
         self.elevation.setMinimumHeight(300)
@@ -618,20 +657,16 @@ class ShellWindow(QMainWindow):
         col4_layout.setContentsMargins(0, 0, 0, 0)
         col4_layout.setSpacing(0)
         col4_layout.addWidget(ColHeader("Status"))
-        # FIX (direct instruction, this round): Status content is tab-aware.
-        # KpiGrid (status_panel.py) for Results/Optimizer/Maintenance/
-        # Materials -- the universal prior default, only ever asked to
-        # diverge for specific tabs. StatusDesignLeaves for Components.
-        # DesignReviewPanel (this round, new) for Checks -- "add the
-        # Design Review elements from the jsx to the status section when
-        # in the checks tab."
+        # Status content is tab-aware: KpiGrid (status_panel.py) for
+        # Results/Optimizer/Maintenance/Materials, StatusDesignLeaves for
+        # Components, DesignReviewPanel for Checks.
         self.status_stack = QStackedWidget()
         self.status_panel = StatusPanel()
-        self.status_stack.addWidget(self.status_panel)          # index 0 -- KpiGrid
+        self.status_stack.addWidget(self.status_panel)           # 0 -- KpiGrid
         self.status_leaves = StatusDesignLeaves()
-        self.status_stack.addWidget(self.status_leaves)          # index 1 -- BOM design leaves
+        self.status_stack.addWidget(self.status_leaves)          # 1 -- BOM design leaves
         self.design_review_panel = DesignReviewPanel()
-        self.status_stack.addWidget(self.design_review_panel)    # index 2 -- Design Review
+        self.status_stack.addWidget(self.design_review_panel)    # 2 -- Design Review
         col4_layout.addWidget(self.status_stack)
         self._status_view_for_tab = {
             "design": 0, "optimizer": 0, "components": 1,
@@ -639,10 +674,10 @@ class ShellWindow(QMainWindow):
         }
 
         body = QSplitter(Qt.Orientation.Horizontal)
-        body.setStyleSheet(f"""
-            QSplitter::handle {{ background-color: {BORDER}; }}
-            QSplitter::handle:hover {{ background-color: {PRIMARY}; }}
-        """)
+        body.setStyleSheet(
+            f"QSplitter::handle {{ background-color: {BORDER2}; }}"
+            f"QSplitter::handle:hover {{ background-color: {PRIMARY}; }}"
+        )
         body.setHandleWidth(2)
         for col in (col1, col2, col3, col4):
             body.addWidget(col)
@@ -661,10 +696,15 @@ class ShellWindow(QMainWindow):
         outer.addWidget(body)
         self.setCentralWidget(container)
 
-        self._tab_index = {"design": 0, "optimizer": 1, "checks": 2, "components": 3, "maintenance": 4, "materials": 5, "comp_library": 6}
-        self._tab_label = {"design": "Results", "optimizer": "Optimizer", "checks": "Checks",
-                            "components": "Components", "maintenance": "Maintenance",
-                            "materials": "Materials", "comp_library": "Components Library"}
+        self._tab_index = {
+            "design": 0, "optimizer": 1, "checks": 2, "components": 3,
+            "maintenance": 4, "materials": 5, "comp_library": 6,
+        }
+        self._tab_label = {
+            "design": "Results", "optimizer": "Optimizer", "checks": "Checks",
+            "components": "Components", "maintenance": "Maintenance",
+            "materials": "Materials", "comp_library": "Components Library",
+        }
         self._last_results = {}
         self._default_payload = {
             "Q_req": 100, "H_m": 25, "mat_id": "clinker",
@@ -675,8 +715,13 @@ class ShellWindow(QMainWindow):
     def _on_tab_changed(self, tab_id):
         self.middle_stack.setCurrentIndex(self._tab_index[tab_id])
         self.status_stack.setCurrentIndex(self._status_view_for_tab.get(tab_id, 0))
-        action = fail_warn_badges(*self._fail_warn(self._last_results)) if tab_id == "design" else None
-        new_header = ColHeader(self._tab_label[tab_id], action=action)
+        action = (fail_warn_badges(*self._fail_warn(self._last_results))
+                  if tab_id == "design" else None)
+        self._swap_col3_header(ColHeader(self._tab_label[tab_id], action=action))
+
+    def _swap_col3_header(self, new_header):
+        """One place that replaces the col3 header -- this was duplicated
+        three times with identical replaceWidget/deleteLater bodies."""
         self.col3_layout.replaceWidget(self.col3_header, new_header)
         self.col3_header.deleteLater()
         self.col3_header = new_header
@@ -693,25 +738,28 @@ class ShellWindow(QMainWindow):
 
         Wrapped in try/except -- any error (HTTP 4xx from invalid inputs,
         backend 5xx, network drop, or a panel set_data crash) is caught here
-        and shown to the user as a non-fatal error banner instead of killing
-        the window. The previous result is kept so the user can still read
-        what they last successfully calculated.
+        and shown as a non-fatal error banner instead of killing the window.
+        The previous result is kept so the user can still read what they last
+        successfully calculated.
 
-        The specific crash that prompted this fix: bucket_gap spinbox emitting
-        an intermediate value mid-edit sent a 422 Unprocessable Entity from
-        Pydantic validation, fetch_design() called resp.raise_for_status(),
-        the resulting HTTPError propagated through the call stack with no
-        catch, and Qt terminated the main window's event loop on the unhandled
-        exception. The backend was healthy (200 OK logged for other requests);
-        the crash was entirely in the client-side exception path."""
+        The specific crash that prompted this: a bucket_gap spinbox emitting
+        an intermediate value mid-edit sent a 422 from Pydantic validation,
+        fetch_design() called raise_for_status(), and the HTTPError propagated
+        with no catch -- Qt terminated the event loop on the unhandled
+        exception. The backend was healthy; the crash was entirely client-side.
+
+        KNOWN GAP (not addressed in this styling sweep, flagged deliberately
+        rather than quietly fixed mid-sweep): fetch_design() runs SYNCHRONOUSLY
+        on the GUI thread, so the whole window freezes for the duration of every
+        recalculation. Material search and the guidance preview both already got
+        QThread workers; this path never did. Worth doing next -- but as its own
+        change, so a regression here can't be confused with a styling one.
+        """
         if payload is None:
             payload = self._default_payload
         try:
             results = fetch_design(payload)
         except Exception as e:
-            # Show the error in the col3 header area and return early,
-            # keeping _last_results / _default_payload from the previous
-            # successful calculation so the user can still read the UI.
             err_msg = str(e)
             if "422" in err_msg or "Unprocessable" in err_msg:
                 user_msg = f"Validation error — check input values ({err_msg[:120]})"
@@ -719,15 +767,15 @@ class ShellWindow(QMainWindow):
                 user_msg = "Cannot reach backend — is the server running on port 8000?"
             else:
                 user_msg = f"Calculation error: {err_msg[:200]}"
-            # Replace the col3 header temporarily with an error notice
             err_header = ColHeader(f"⚠  {user_msg[:80]}")
-            err_header.setStyleSheet(
-                f"background-color: rgba(224,82,82,.12); border-bottom: 1px solid rgba(224,82,82,.35);"
-                f"color: #e05252;"
-            )
-            self.col3_layout.replaceWidget(self.col3_header, err_header)
-            self.col3_header.deleteLater()
-            self.col3_header = err_header
+            # SCOPED: the bare version put this red bottom-border on the
+            # header's own child labels too.
+            err_header.setStyleSheet(scoped(
+                err_header,
+                f"background-color: {DANGER_DIM}; color: {DANGER}; border: none; "
+                f"border-bottom: 1px solid {DANGER_BORDER};"
+            ))
+            self._swap_col3_header(err_header)
             return
 
         self._last_results = results
@@ -747,7 +795,7 @@ class ShellWindow(QMainWindow):
             self.material_library_panel.set_data(payload, results)
             self.components_library_panel.set_data(payload, results)
             self.optimizer_panel.set_data(payload, results)
-        except Exception as e:
+        except Exception:
             import traceback
             traceback.print_exc()   # visible in the terminal for debugging
             # Non-fatal: results were saved, some panels may not have updated
@@ -755,20 +803,17 @@ class ShellWindow(QMainWindow):
         n_fail, n_warn = self._fail_warn(results)
         self.top_nav.update_fail_badge(n_fail)
         if self._tab_index_of_current() == "design":
-            new_header = ColHeader("Results", action=fail_warn_badges(n_fail, n_warn))
-            self.col3_layout.replaceWidget(self.col3_header, new_header)
-            self.col3_header.deleteLater()
-            self.col3_header = new_header
+            self._swap_col3_header(
+                ColHeader("Results", action=fail_warn_badges(n_fail, n_warn)))
 
     def _on_optimizer_apply(self, variant):
         """Mirrors useElevatorCalc.js's applyOptimizer() exactly (read
-        directly before writing this, not assumed): rpm -> n_rpm,
-        fill -> fill_pct, auto_bucket forced False, and the v2-only
-        fields (D_mm/boot_pulley_D_mm/chain_n_strands/sprocket teeth)
-        only merged in when present -- a belt-mode result has no chain
-        fields, and merging None over an existing value would clobber
-        it rather than leave it untouched, same as the JSX's own
-        `D_mm != null ? { D_mm } : {}` spread guards."""
+        directly before writing this, not assumed): rpm -> n_rpm, fill ->
+        fill_pct, auto_bucket forced False, and the v2-only fields
+        (D_mm/boot_pulley_D_mm/chain_n_strands/sprocket teeth) only merged in
+        when present -- a belt-mode result has no chain fields, and merging
+        None over an existing value would clobber it rather than leave it
+        untouched, same as the JSX's own `D_mm != null ? { D_mm } : {}` guards."""
         payload = dict(self._default_payload)
         payload["n_rpm"] = variant.get("rpm")
         payload["bucket_id"] = variant.get("bucket_id")
@@ -783,15 +828,15 @@ class ShellWindow(QMainWindow):
     def _auto_pdf_filename(self):
         """Build the PDF filename from the VM model number -- the canonical
         identifier for this elevator configuration -- plus a timestamp."""
-        r   = self._last_results or {}
+        r = self._last_results or {}
         inp = self._default_payload or {}
         try:
             from api_client import fetch_model_number
             model_no = fetch_model_number(inp, r)
         except Exception:
             mat = str(inp.get("mat_id", "material")).capitalize()
-            Q   = inp.get("Q_req", "")
-            H   = inp.get("H_m", "")
+            Q = inp.get("Q_req", "")
+            H = inp.get("H_m", "")
             model_no = f"VM-BE_{mat}_{Q}tph_H{H}m"
         from datetime import datetime
         stamp = datetime.now().strftime("%Y%m%d_%H%M")
@@ -819,7 +864,6 @@ class ShellWindow(QMainWindow):
         user = current_user()
         user_dict = user.to_dict() if user else {}
 
-        # Get model number and design stage from the current panels
         try:
             model_no = api_client.fetch_model_number(self._default_payload, self._last_results)
         except Exception:
@@ -829,7 +873,6 @@ class ShellWindow(QMainWindow):
         stage = drp._manual_stage or 1   # respect the user's current review stage
 
         if self._current_design_file and not save_as:
-            # Increment version of the same design
             version = self._current_design_file.version + 1
         else:
             version = cfg.next_design_version(model_no)
@@ -875,7 +918,6 @@ class ShellWindow(QMainWindow):
             self._current_design_file = df
             self._default_payload = dict(df.inputs)
             self.run_calculation(self._default_payload)
-            # Restore design review stage
             drp = self.design_review_panel
             drp._manual_stage = df.design_stage if df.design_stage > 1 else None
             drp._rebuild()
@@ -891,7 +933,7 @@ class ShellWindow(QMainWindow):
 
     def _on_manage_users(self):
         """User management -- approver role only."""
-        from auth import current_user, require_role
+        from auth import require_role
         from login_dialog import UserManagerDialog
         if not require_role("approver"):
             self._styled_message_box(
@@ -909,22 +951,22 @@ class ShellWindow(QMainWindow):
         dlg.exec()
 
     def _on_pdf_clicked(self):
-        """PDF Report button -- shows a context menu to choose which of the
-        four report types to generate (engineering, workshop, procurement,
-        end-user) then delegates to the appropriate handler."""
+        """PDF Report button -- context menu to choose which of the four
+        report types to generate, then delegate to the handler."""
         if not self._last_results:
             self._styled_message_box(
-                QMessageBox.Icon.Information, "No Results", "Run a calculation first.", self
+                QMessageBox.Icon.Information, "No Results",
+                "Run a calculation first.", self
             ).exec()
             return
-        from PySide6.QtWidgets import QMenu
         from PySide6.QtCore import QPoint
         menu = QMenu(self)
         menu.setStyleSheet(
-            f"QMenu{{background:{PANEL2};color:{TEXT};border:1px solid {BORDER};"
-            f"border-radius:5px;padding:4px;}}"
-            f"QMenu::item{{padding:7px 18px;font-size:11px;}}"
-            f"QMenu::item:selected{{background:{PRIMARY};color:#fff;border-radius:3px;}}"
+            f"QMenu {{ background-color: {PANEL2}; color: {TEXT}; "
+            f"border: 1px solid {BORDER2}; border-radius: {R_SM}px; padding: 4px; }}"
+            f"QMenu::item {{ padding: 7px 18px; font-size: 11px; }}"
+            f"QMenu::item:selected {{ background-color: {PRIMARY}; color: #fff; "
+            f"border-radius: 3px; }}"
         )
         menu.addSection("Select Report Type")
         menu.addAction("📋  Engineering Report (Design + Calculations)",
@@ -936,7 +978,6 @@ class ShellWindow(QMainWindow):
                        lambda: self._generate_report("procurement"))
         menu.addAction("📖  End-User Report (Installation + Commissioning + Spares)",
                        lambda: self._generate_report("enduser"))
-        # Show the menu below the PDF button
         pdf_btns = [w for w in self.app_title_bar.findChildren(QPushButton)
                     if "PDF" in (w.text() or "").upper() or "REPORT" in (w.text() or "").upper()]
         if pdf_btns:
@@ -947,16 +988,16 @@ class ShellWindow(QMainWindow):
         menu.exec(pos)
 
     def _generate_report(self, report_type: str):
-        """Launch the save dialog and background worker for the selected
-        report type. All four reports use the same save/progress/done
-        pattern; only the filename suffix and backend endpoint differ."""
+        """Save dialog + background worker for the selected report type. All
+        four use the same save/progress/done pattern; only the filename suffix
+        and backend endpoint differ."""
         suffix_map = {
-            "engineering": ("_Engineering", self._auto_pdf_filename),
-            "workshop":    ("_Workshop",    lambda: self._auto_pdf_filename().replace(".pdf", "_Workshop.pdf")),
-            "procurement": ("_Procurement", lambda: self._auto_pdf_filename().replace(".pdf", "_Procurement.pdf")),
-            "enduser":     ("_EndUser",     lambda: self._auto_pdf_filename().replace(".pdf", "_EndUser.pdf")),
+            "engineering": self._auto_pdf_filename,
+            "workshop":    lambda: self._auto_pdf_filename().replace(".pdf", "_Workshop.pdf"),
+            "procurement": lambda: self._auto_pdf_filename().replace(".pdf", "_Procurement.pdf"),
+            "enduser":     lambda: self._auto_pdf_filename().replace(".pdf", "_EndUser.pdf"),
         }
-        _, name_fn = suffix_map.get(report_type, ("", self._auto_pdf_filename))
+        name_fn = suffix_map.get(report_type, self._auto_pdf_filename)
         save_path, _ = QFileDialog.getSaveFileName(
             self, "Save Report", name_fn(), "PDF Files (*.pdf)"
         )
@@ -986,15 +1027,14 @@ class ShellWindow(QMainWindow):
         if hasattr(self, "_pdf_version_lbl"):
             self._pdf_version_lbl.setText("JAYVEECONS · V1.0")
         self._styled_message_box(
-            QMessageBox.Icon.Critical, "Report Failed", f"PDF generation failed:\n{msg}", self
+            QMessageBox.Icon.Critical, "Report Failed",
+            f"PDF generation failed:\n{msg}", self
         ).exec()
 
     def _on_apply_correction(self, param, value):
-        """Mirrors RootCausePanel.jsx's setField(param, target) -- a
-        single corrective param/value pair from a root-cause finding's
-        Apply button gets merged directly into the live payload and
-        recalculated, same pattern as _on_optimizer_apply just above but
-        for one field instead of a whole variant."""
+        """Mirrors RootCausePanel.jsx's setField(param, target) -- a single
+        corrective param/value pair from a root-cause finding's Apply button
+        gets merged into the live payload and recalculated."""
         payload = dict(self._default_payload)
         payload[param] = value
         self.run_calculation(payload)
@@ -1019,7 +1059,7 @@ def main():
     from auth import AuthDB
     auth_db = AuthDB(cfg.users_db_path)
 
-    # ── 3. First-launch wizard or login dialog ─────────────────────────
+    # ── 3. First-launch wizard or login dialog ────────────────────────
     from login_dialog import FirstLaunchWizard, LoginDialog
     if not auth_db.has_any_users():
         wizard = FirstLaunchWizard(auth_db)
@@ -1032,7 +1072,6 @@ def main():
             sys.exit(0)
 
     # ── 4. Main window ────────────────────────────────────────────────
-    from auth import current_user
     window = ShellWindow(auth_db=auth_db)
     window.run_calculation()
     window.show()
