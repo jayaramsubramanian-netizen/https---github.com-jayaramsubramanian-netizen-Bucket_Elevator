@@ -32,7 +32,11 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
 from PySide6.QtCore import Qt, QRectF, QPointF, QTimer
 from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QPainterPath, QPolygonF, QTransform, QCursor
 
-from theme import DRAWING as C, PANEL, PANEL2, BORDER, TEXT, TEXT2, TEXT3, PRIMARY, SUCCESS, WARNING, DANGER
+from theme import (
+    DRAWING as C, PANEL, PANEL2, SURFACE, BORDER, BORDER2,
+    TEXT, TEXT2, TEXT3, PRIMARY, PRIMARY_DIM, SUCCESS, WARNING, DANGER,
+    R_SM, scoped, plain_bg,
+)
 from .dialog_helpers import KPIChip
 
 
@@ -61,7 +65,11 @@ VIEWS = [
     ("cad",       "Eng. Drawing"),   # ISO A3 QGraphicsScene CAD view
     ("cad_side",  "Side Eng. Drawing"),  # ISO A3 side elevation CAD view
     ("cad_head",  "Head Detail"),        # ISO A3 head + discharge chute + trajectory
-    ("cad_bucket","Bucket Detail"),      # ISO A3 bucket front/profile/bolt-hole detail
+    ("cad_bucket","Bucket Drawing"),     # ISO A3 bucket front/profile/bolt-hole detail
+    # ^ was ALSO labelled "Bucket Detail" -- identical to the QPainter
+    #   "bucket" tab above it. Two visually identical tabs in one bar doing
+    #   different things. Renamed to match how cad/cad_side are already
+    #   distinguished ("Eng. Drawing").
 ]
 
 SVG_W, SVG_H = 580, 460   # matches the JSX's fixed internal drawing canvas size
@@ -323,7 +331,6 @@ class _SchematicCanvas(QWidget):
         chuteTipX = chuteBaseX + math.sin(thetaRad) * chuteLen
         chuteTipY = chuteBaseY - math.cos(thetaRad) * chuteLen
 
-        self.hover_rect = QRectF   # local shorthand
         self._hover_regions["casing"] = QRectF(cx - casW, topY, casW * 2, elevH)
 
         p.setPen(QPen(qc(C["casing"]), 2))
@@ -1013,16 +1020,27 @@ class _ViewTabBtn(QPushButton):
         self._style(False)
 
     def _style(self, checked):
+        # SCOPED. The parent tab_bar carried a BARE `border-bottom`, which Qt
+        # reads as `* { ... }` -- so it landed on every one of these buttons,
+        # and the active tab drew a 1px inherited border UNDERNEATH its own 2px
+        # primary underline. That is the doubled underline.
+        # (The rgba(59,130,246,.12) tint was already correct v2 -- rare in this
+        # codebase -- so only the selector changes, not the colour.)
         if checked:
-            self.setStyleSheet(
-                f"QPushButton{{background:rgba(59,130,246,.12);color:{PRIMARY};border:none;"
-                f"border-bottom:2px solid {PRIMARY};padding:3px 10px;font-size:10px;font-weight:700;}}"
-            )
+            self.setStyleSheet(scoped(
+                self,
+                f"background-color: {PRIMARY_DIM}; color: {PRIMARY}; border: none; "
+                f"border-bottom: 2px solid {PRIMARY}; padding: 3px 10px; "
+                f"font-size: 10px; font-weight: 700;"
+            ))
         else:
-            self.setStyleSheet(
-                f"QPushButton{{background:transparent;color:{TEXT3};border:none;"
-                f"border-bottom:2px solid transparent;padding:3px 10px;font-size:10px;}}"
-            )
+            self.setStyleSheet(scoped(
+                self,
+                f"background-color: transparent; color: {TEXT3}; border: none; "
+                f"border-bottom: 2px solid transparent; padding: 3px 10px; "
+                f"font-size: 10px;",
+                extra="{sel}:hover { color: %s; }" % TEXT2,
+            ))
 
 
 class ElevationView(QWidget):
@@ -1037,7 +1055,7 @@ class ElevationView(QWidget):
         self.inputs = inputs or {}
         self.results = results or {}
         self.setMinimumSize(560, 640)
-        self.setStyleSheet(f"background-color:{C['bg']};")
+        self.setStyleSheet(plain_bg(self, C['bg']))
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -1046,7 +1064,11 @@ class ElevationView(QWidget):
         # ── Tab bar ──────────────────────────────────────────────────
         tab_bar = QFrame()
         tab_bar.setFixedHeight(34)
-        tab_bar.setStyleSheet(f"background:{PANEL2};border-bottom:1px solid {BORDER};")
+        tab_bar.setStyleSheet(scoped(
+            tab_bar,
+            f"background-color: {PANEL2}; border: none; "
+            f"border-bottom: 1px solid {BORDER};"
+        ))
         tbl = QHBoxLayout(tab_bar)
         tbl.setContentsMargins(10, 0, 10, 0)
         tbl.setSpacing(2)
@@ -1064,22 +1086,26 @@ class ElevationView(QWidget):
         tbl.addWidget(self._zoom_lbl)
         reset_btn = QPushButton("⊡ Reset")
         reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        reset_btn.setStyleSheet(
-            f"QPushButton{{background:transparent;color:{TEXT3};border:1px solid {BORDER};"
-            f"border-radius:3px;padding:2px 8px;font-size:9px;}}"
-            f"QPushButton:hover{{background:{PANEL2};}}"
-        )
+        reset_btn.setStyleSheet(scoped(
+            reset_btn,
+            f"background-color: transparent; color: {TEXT3}; "
+            f"border: 1px solid {BORDER2}; border-radius: 3px; "
+            f"padding: 2px 8px; font-size: 9px;",
+            extra="{sel}:hover { background-color: %s; color: %s; }" % (SURFACE, TEXT),
+        ))
         reset_btn.clicked.connect(self._reset_view)
         tbl.addWidget(reset_btn)
         for label, factor in [("+", 1.2), ("−", 0.8)]:
             zb = QPushButton(label)
             zb.setFixedSize(22, 22)
             zb.setCursor(Qt.CursorShape.PointingHandCursor)
-            zb.setStyleSheet(
-                f"QPushButton{{background:transparent;color:{TEXT3};border:1px solid {BORDER};"
-                f"border-radius:3px;font-size:13px;margin-left:3px;}}"
-                f"QPushButton:hover{{background:{PANEL2};}}"
-            )
+            zb.setStyleSheet(scoped(
+                zb,
+                f"background-color: transparent; color: {TEXT3}; "
+                f"border: 1px solid {BORDER2}; border-radius: 3px; "
+                f"font-size: 13px; margin-left: 3px;",
+                extra="{sel}:hover { background-color: %s; color: %s; }" % (SURFACE, TEXT),
+            ))
             zb.clicked.connect(lambda _, f=factor: self._zoom_by(f))
             tbl.addWidget(zb)
         outer.addWidget(tab_bar)
@@ -1094,7 +1120,7 @@ class ElevationView(QWidget):
         self._view_stack = _SWid()
 
         canvas_container = QWidget()
-        canvas_container.setStyleSheet(f"background:{C['bg']};")
+        canvas_container.setStyleSheet(plain_bg(canvas_container, C['bg']))
         self.canvas = _SchematicCanvas(canvas_container)
         self._cad_widget = ElevationCADWidget()
         self._cad_side_widget = SideElevationCADWidget()
@@ -1110,7 +1136,8 @@ class ElevationView(QWidget):
         self.canvas.setCursor(Qt.CursorShape.OpenHandCursor)
 
         self._stat_overlay = QFrame(canvas_container)
-        self._stat_overlay.setStyleSheet("background: transparent;")
+        self._stat_overlay.setStyleSheet(scoped(
+            self._stat_overlay, "background-color: transparent; border: none;"))
         stat_layout = QVBoxLayout(self._stat_overlay)
         stat_layout.setContentsMargins(0, 0, 0, 0)
         stat_layout.setSpacing(6)
@@ -1137,7 +1164,11 @@ class ElevationView(QWidget):
         # ── Status bar ────────────────────────────────────────────────
         status_bar = QFrame()
         status_bar.setFixedHeight(22)
-        status_bar.setStyleSheet(f"background:{C['bg']};border-top:1px solid {BORDER};")
+        status_bar.setStyleSheet(scoped(
+            status_bar,
+            f"background-color: {C['bg']}; border: none; "
+            f"border-top: 1px solid {BORDER};"
+        ))
         sl = QHBoxLayout(status_bar)
         sl.setContentsMargins(10, 0, 10, 0)
         hint = QLabel("Scroll to zoom · Drag to pan · Double-click to reset")
@@ -1211,7 +1242,8 @@ class ElevationView(QWidget):
                   (SUCCESS if (r.get("Q") or 0) >= (q_req or 0) else DANGER) if r.get("Q") is not None else TEXT3),
             "motor_kw": (str(r.get("motor_kw", "—")), SUCCESS),
             "theta_rel": (f(r.get("theta_rel"), 1), WARNING),
-            "cr": (f(cr, 3), SUCCESS if (cr is not None and 1.0 <= cr <= 1.8) else WARNING),
+            "cr": (f(cr, 3), SUCCESS if r.get("cr_ok") else WARNING),
+
         }
         for key, (text, color) in stats.items():
             self._stat_chips[key].set_value(text, color)

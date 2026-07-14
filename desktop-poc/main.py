@@ -4,37 +4,56 @@ main.py -- VECTRIX™ desktop app entry point, modeled on BucketElevatorPage.jsx
 THIS is the file to run and keep upgrading -- not equipment_tree_poc.py,
 elevation_view_poc.py, or combined_shell_example.py.
 
-BOX-IN-BOX BORDER SWEEP (this round)
-────────────────────────────────────
-Every setStyleSheet() in this file that declared a `border` did so with NO
-selector. Qt treats a selector-less stylesheet as `* { ... }` -- it applies
-to the widget AND EVERY DESCENDANT. So:
+THIS ROUND: run_calculation() NO LONGER RUNS ON THE GUI THREAD
+──────────────────────────────────────────────────────────────
+fetch_design() was previously called synchronously inside run_calculation(),
+which is wired to the input sidebar's inputsChanged signal. So every
+recalculation froze the entire window for the duration of the HTTP round-trip
+-- and this is the most frequently hit path in the app. Material search and the
+guidance preview already had QThread workers; this one never did.
 
-    ColHeader:   "background: PANEL; border-bottom: 1px solid BORDER"
-                 -> the label AND the sub-label each drew their own bottom
-                    border. That's the doubled/tripled underline under
-                    every column header.
-    AppTitleBar: same -- brand title, brand sub, module bar, PDF button all
-                 inherited a bottom border.
-    TopNav:      same, onto every tab button and the KPI row.
-    err_header:  same, onto the error text.
+WHY A GENERATION COUNTER, NOT CANCEL-AND-WAIT
+─────────────────────────────────────────────
+The other threaded panels here (MaterialSearchWidget, ComponentsLibraryPanel,
+MaterialLibraryPanel) use cancel-and-supersede: disconnect the in-flight worker,
+quit(), wait(), start a new one. That pattern is WRONG for this path, and I
+verified why rather than assuming it:
 
-Verified directly, not assumed: a QFrame with N child QLabels renders 2N
-horizontal border runs inside itself under a bare declaration, and 0 under
-a scoped one.
+    QThread.quit() only asks an event loop to exit. A worker blocked inside a
+    network call has no event loop, so quit() does nothing -- and wait() then
+    blocks the CALLER until the request finishes on its own.
 
-All declarations below now go through theme.scoped() / plain_bg(), which
-bind the rule to the widget's own objectName so nothing can inherit it.
-The rgba() color literals scattered through this file (badge tints, pill
-fills) are now theme tokens -- they were all v1 values.
+Measured directly: quit()+wait() against a worker blocked in a 1.0s call held
+the calling thread for 0.95s. Using it here would reintroduce precisely the
+freeze we are removing, just relocated.
+
+So instead, every request carries a generation number. Workers are never
+cancelled (they cannot be); they run to completion and their results are simply
+DISCARDED if a newer request was issued in the meantime. Nothing blocks, and a
+slow early response can never overwrite a fast later one -- which would
+otherwise leave the UI showing results for inputs the user already changed.
+Workers are held in a list and reaped on finished(), because a QThread that gets
+garbage-collected while running is a hard crash.
+
+CONSEQUENCE FOR CALLERS (important)
+───────────────────────────────────
+run_calculation() now RETURNS IMMEDIATELY. Anything that relied on results being
+populated by the time it returned had to be restructured -- see _on_open_design().
+
+BOX-IN-BOX BORDER SWEEP (earlier round, still in force)
+───────────────────────────────────────────────────────
+Every setStyleSheet() here that declared a `border` did so with NO selector. Qt
+treats a selector-less stylesheet as `* { ... }` -- it applies to the widget AND
+EVERY DESCENDANT (ColHeader's label + sub-label each drew their own bottom
+border; AppTitleBar's brand labels, module bar and PDF button all inherited one;
+TopNav's onto every tab button). All declarations go through theme.scoped() /
+plain_bg(), which bind each rule to the widget's own objectName.
 
 RETAINED (still correct, do not "simplify" back):
-  - setFixedHeight() + border-radius = exactly half of it, on every pill
-    button. A true stadium shape needs a KNOWN height to compute the radius
-    against; relying on border-radius: 999px to always exceed half the
-    height fails when the height is only ever a side-effect of padding.
-  - border-style/border-width spelled out longhand rather than the
-    `border: none` shorthand on those pills.
+  - setFixedHeight() + border-radius = exactly half of it, on every pill button.
+    A true stadium shape needs a KNOWN height to compute the radius against.
+  - border-style/border-width longhand rather than the `border: none` shorthand
+    on those pills.
   - app.setStyle("Fusion").
 """
 import sys
@@ -90,12 +109,11 @@ def fmt_kpi(v, dp):
 
 
 class ColHeader(QFrame):
-    """Direct port of the JSX's shared ColHeader -- every column in the
-    real app uses this same small component.
+    """Direct port of the JSX's shared ColHeader.
 
-    SCOPED (this round): the bare declaration gave `border-bottom` to the
-    label and the sub-label as well as the frame, so each column header
-    was drawing up to three stacked underlines.
+    SCOPED: the bare declaration gave `border-bottom` to the label and the
+    sub-label as well as the frame, so each column header drew up to three
+    stacked underlines.
     """
 
     def __init__(self, label, sub=None, action=None, parent=None):
@@ -125,8 +143,8 @@ class ColHeader(QFrame):
 
 
 def _pill_label(text, color, dim, border):
-    """Small status pill (FAIL / WARN / badge). Scoped, and the tint
-    colors now come from theme tokens instead of hardcoded v1 rgba()."""
+    """Small status pill (FAIL / WARN / badge). Scoped, and the tint colors come
+    from theme tokens instead of hardcoded v1 rgba()."""
     lbl = QLabel(text)
     lbl.setStyleSheet(scoped(
         lbl,
@@ -138,8 +156,8 @@ def _pill_label(text, color, dim, border):
 
 
 def fail_warn_badges(n_fail, n_warn):
-    """FAIL/WARN pill row -- port of the JSX's inline badge markup that
-    appears in the middle column's ColHeader action slot on the Results tab."""
+    """FAIL/WARN pill row -- port of the JSX's inline badge markup in the middle
+    column's ColHeader action slot on the Results tab."""
     box = QWidget()
     layout = QHBoxLayout(box)
     layout.setContentsMargins(0, 0, 0, 0)
@@ -173,15 +191,14 @@ class Placeholder(QWidget):
 
 
 class ModulePill(QPushButton):
-    """One module switcher button in the platform title bar (Bucket
-    Elevator / Screw Conveyor). Active module gets the solid primary fill;
-    everything else (e.g. Screw Conveyor) is an honest, visibly-disabled
-    placeholder rather than a button that looks clickable but does nothing.
+    """One module switcher button in the platform title bar. The active module
+    gets the solid primary fill; everything else (e.g. Screw Conveyor) is an
+    honest, visibly-disabled placeholder rather than a button that looks
+    clickable but does nothing.
 
-    RETAINED: setFixedHeight(MODULE_PILL_HEIGHT) + an exact-half border-
-    radius. A true stadium shape needs a known, fixed height to compute the
-    matching radius against -- not a radius value assumed to always exceed
-    whatever height padding alone happens to produce.
+    RETAINED: setFixedHeight(MODULE_PILL_HEIGHT) + an exact-half border-radius.
+    A true stadium shape needs a known, fixed height to compute the matching
+    radius against.
     """
 
     def __init__(self, icon, label, badge=None, active=False, enabled=True, parent=None):
@@ -219,11 +236,11 @@ class ModulePill(QPushButton):
 
 
 class AppTitleBar(QFrame):
-    """Platform-level title bar -- VECTRIX™ branding + module switcher
-    (Bucket Elevator / Screw Conveyor) + PDF Report + version.
+    """Platform-level title bar -- VECTRIX™ branding + module switcher + PDF
+    Report + version.
 
-    SCOPED: the bare `border-bottom` here was inherited by the brand icon,
-    both brand labels, the module bar, the badge and the PDF button.
+    SCOPED: the bare `border-bottom` here was inherited by the brand icon, both
+    brand labels, the module bar, the badge and the PDF button.
     """
 
     def __init__(self, on_tab_changed=None, on_pdf_clicked=None, parent=None):
@@ -302,8 +319,8 @@ class AppTitleBar(QFrame):
         layout.addWidget(pdf_btn)
 
         # Welcome message -- "Hello, [Name]" for the logged-in user. Reads
-        # auth.current_user() with a safe fallback for test/headless
-        # environments where auth isn't initialized.
+        # auth.current_user() with a safe fallback for test/headless environments
+        # where auth isn't initialized.
         try:
             from auth import current_user as _cu
             _u = _cu()
@@ -311,20 +328,23 @@ class AppTitleBar(QFrame):
         except Exception:
             _greeting = ""
 
-        version_lbl = QLabel(f"{_greeting}JAYVEECONS · V1.0")
-        version_lbl.setStyleSheet(
+        self.version_lbl = QLabel(f"{_greeting}JAYVEECONS · V1.0")
+        # FIXED: _generate_report() used to find this label by scanning for the
+        # substring "JAYVEECONS", then restore it by hard-coding
+        # "JAYVEECONS · V1.0" -- silently DELETING the "Hello, <name>" greeting
+        # after the first PDF export. The label and its real text are held here
+        # so it can be restored verbatim.
+        self._version_text = self.version_lbl.text()
+        self.version_lbl.setStyleSheet(
             f"color: {TEXT3}; font-size: 10.5px; font-weight: 600; letter-spacing: .5px;")
-        layout.addWidget(version_lbl)
+        layout.addWidget(self.version_lbl)
 
 
 class NavTabButton(QPushButton):
     """A tab button hosted in the top nav bar.
 
-    RETAINED: setFixedHeight(TAB_PILL_HEIGHT) with the radius set to
-    exactly half of it -- the geometrically guaranteed way to get a true
-    stadium shape. border-style/border-width longhand rather than the
-    `border: none` shorthand, removing any shorthand-vs-longhand parsing
-    inconsistency in the stylesheet engine.
+    RETAINED: setFixedHeight(TAB_PILL_HEIGHT) with the radius set to exactly half
+    of it -- the geometrically guaranteed way to get a true stadium shape.
     """
 
     def __init__(self, label, parent=None):
@@ -363,16 +383,13 @@ class TopNav(QFrame):
     functions, the tab pills, plus Q/P/v KPI chips.
 
     RETAINED (earlier rounds, still in effect):
-      - 76px tall with the KPI chips in their own sub-layout at real
-        spacing, independent of the tighter spacing the tab row uses.
-      - QMenuBar.addWidget() does not exist (confirmed: dir(QMenuBar) has
-        only addAction/addActions/addMenu/addSeparator). This uses only
-        patterns confirmed to render: QPushButton.setMenu() for the one
-        real dropdown, plain QPushButtons for everything else.
-      - KPIChip: a single custom-painted widget, not a QFrame wrapping
-        three QLabels. It has no child widgets, so it was structurally
-        immune to the box-in-box bug -- which is exactly why it's the
-        pattern every other card in this app is now being moved toward.
+      - 76px tall with the KPI chips in their own sub-layout.
+      - QMenuBar.addWidget() does not exist (confirmed). This uses only patterns
+        confirmed to render: QPushButton.setMenu() for the one real dropdown.
+      - KPIChip: a single custom-painted widget, not a QFrame wrapping three
+        QLabels. It has no child widgets, so it was structurally immune to the
+        box-in-box bug -- which is exactly why it's the pattern every other card
+        in this app is being moved toward.
     """
 
     def __init__(self, on_tab_changed, on_open=None, on_save=None,
@@ -393,9 +410,9 @@ class TopNav(QFrame):
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(2)
 
-        # QMenu rules are DELIBERATELY class-scoped: QMenu::item and
-        # ::separator are the children we mean to target by name. That is
-        # an intentional descendant rule, not an accidental cascade.
+        # QMenu rules are DELIBERATELY class-scoped: QMenu::item and ::separator
+        # are the children we mean to target by name. An intentional descendant
+        # rule, not an accidental cascade.
         menu_qss = f"""
             QMenu {{ background-color: {PANEL2}; color: {TEXT2};
                 border: 1px solid {BORDER2}; border-radius: {R_MD}px; padding: 4px; }}
@@ -494,11 +511,11 @@ class TopNav(QFrame):
         self.on_tab_changed(tab_id)
 
     def update_kpis(self, results):
-        """Capacity color reads results["cap_ok"] directly (already computed
-        by the backend -- a straight Q >= Q_req check in calculations.py) per
-        the architecture rule that the frontend never duplicates engineering
-        checks. P and v have no equivalent required-vs-actual concept in the
-        backend, so they keep fixed categorical colors."""
+        """Capacity color reads results["cap_ok"] directly (already computed by
+        the backend -- a straight Q >= Q_req check in calculations.py) per the
+        architecture rule that the frontend never duplicates engineering checks.
+        P and v have no equivalent required-vs-actual concept in the backend, so
+        they keep fixed categorical colors."""
         r = results or {}
         if r.get("Q") is not None:
             cap_ok = r.get("cap_ok")
@@ -515,9 +532,42 @@ class TopNav(QFrame):
         self.tab_buttons["checks"].setText(text)
         self.tab_buttons["checks"]._apply_style()
 
+    def set_calculating(self, busy):
+        """Honest, non-blocking busy hint. The window stays fully interactive
+        now, so this only needs to say a refresh is in flight."""
+        for btn in self.tab_buttons.values():
+            btn.setToolTip("Calculating…" if busy else "")
+
+
+class _CalcWorker(QThread):
+    """Runs fetch_design() off the GUI thread.
+
+    Carries its own generation number back with the result so ShellWindow can
+    discard a stale response. The worker is NOT cancellable -- a blocked network
+    call cannot be interrupted -- so supersession is handled by discarding, not
+    by killing. See the module docstring for why cancel-and-wait would just
+    reintroduce the freeze.
+    """
+
+    done = Signal(int, dict, dict)      # gen, payload, results
+    failed = Signal(int, dict, str)     # gen, payload, error message
+
+    def __init__(self, gen, payload, parent=None):
+        super().__init__(parent)
+        self.gen = gen
+        self.payload = payload
+
+    def run(self):
+        try:
+            results = fetch_design(self.payload)
+            self.done.emit(self.gen, self.payload, results)
+        except Exception as e:
+            self.failed.emit(self.gen, self.payload, f"{type(e).__name__}: {e}")
+
 
 class _PdfReportWorker(QThread):
     """Background thread for all four PDF report types."""
+
     done = Signal(str)
     errorOccurred = Signal(str)
 
@@ -604,10 +654,8 @@ class ShellWindow(QMainWindow):
         col3_layout.addWidget(self.col3_header)
         self.middle_stack = QStackedWidget()
 
-        # Results tab: elevation view + charts panel, in a QScrollArea so
-        # neither is clipped when the window is short -- direct feedback:
-        # "elevator schematic section does not scroll, making this section
-        # be at the very bottom of the page". The internal splitter stays
+        # Results tab: elevation view + charts panel, in a QScrollArea so neither
+        # is clipped when the window is short. The internal splitter stays
         # flexible so the elevation/chart proportion is still resizable.
         results_scroll = QScrollArea()
         results_scroll.setWidgetResizable(True)
@@ -712,6 +760,14 @@ class ShellWindow(QMainWindow):
             "D_mm": 500, "n_rpm": 70, "fill_pct": 75,
         }
 
+        # ── Async calculation state ──────────────────────────────────
+        # _calc_gen is bumped for every request. A worker's result is applied ONLY
+        # if its gen still matches the current one -- otherwise a newer request
+        # has been issued since, and this response is stale and gets discarded.
+        self._calc_gen = 0
+        self._calc_workers = []   # holds running QThreads (GC would kill them)
+
+    # ── Tab / header plumbing ────────────────────────────────────────
     def _on_tab_changed(self, tab_id):
         self.middle_stack.setCurrentIndex(self._tab_index[tab_id])
         self.status_stack.setCurrentIndex(self._status_view_for_tab.get(tab_id, 0))
@@ -720,8 +776,8 @@ class ShellWindow(QMainWindow):
         self._swap_col3_header(ColHeader(self._tab_label[tab_id], action=action))
 
     def _swap_col3_header(self, new_header):
-        """One place that replaces the col3 header -- this was duplicated
-        three times with identical replaceWidget/deleteLater bodies."""
+        """One place that replaces the col3 header -- this was duplicated three
+        times with identical replaceWidget/deleteLater bodies."""
         self.col3_layout.replaceWidget(self.col3_header, new_header)
         self.col3_header.deleteLater()
         self.col3_header = new_header
@@ -733,50 +789,82 @@ class ShellWindow(QMainWindow):
         n_warn = sum(1 for c in checks if c.get("type") == "warn")
         return n_fail, n_warn
 
+    # ── Calculation (now ASYNC) ──────────────────────────────────────
     def run_calculation(self, payload=None):
-        """Run a full recalculation and push results to every panel.
+        """Kick off a recalculation on a background thread and RETURN IMMEDIATELY.
 
-        Wrapped in try/except -- any error (HTTP 4xx from invalid inputs,
-        backend 5xx, network drop, or a panel set_data crash) is caught here
-        and shown as a non-fatal error banner instead of killing the window.
-        The previous result is kept so the user can still read what they last
-        successfully calculated.
+        This used to call fetch_design() inline, freezing the whole window for the
+        duration of every recalculation -- and it fires on every input change, so
+        it was the most-hit blocking path in the app.
 
-        The specific crash that prompted this: a bucket_gap spinbox emitting
-        an intermediate value mid-edit sent a 422 from Pydantic validation,
-        fetch_design() called raise_for_status(), and the HTTPError propagated
-        with no catch -- Qt terminated the event loop on the unhandled
-        exception. The backend was healthy; the crash was entirely client-side.
+        Supersession: each request carries a generation number. Workers cannot be
+        cancelled (a blocked network call can't be interrupted -- quit()+wait()
+        would simply block the GUI thread instead, verified directly), so a stale
+        worker is allowed to finish and its result is DISCARDED on arrival. Only
+        the newest generation is ever applied, so an out-of-order response can't
+        leave the UI showing results for inputs the user has already changed.
 
-        KNOWN GAP (not addressed in this styling sweep, flagged deliberately
-        rather than quietly fixed mid-sweep): fetch_design() runs SYNCHRONOUSLY
-        on the GUI thread, so the whole window freezes for the duration of every
-        recalculation. Material search and the guidance preview both already got
-        QThread workers; this path never did. Worth doing next -- but as its own
-        change, so a regression here can't be confused with a styling one.
+        CALLERS: this no longer blocks, so nothing may assume results are
+        populated when it returns. See _on_open_design().
         """
         if payload is None:
             payload = self._default_payload
+
+        self._calc_gen += 1
+        gen = self._calc_gen
+        self.top_nav.set_calculating(True)
+
+        worker = _CalcWorker(gen, payload, parent=self)
+        worker.done.connect(self._on_calc_done)
+        worker.failed.connect(self._on_calc_failed)
+        worker.finished.connect(lambda w=worker: self._reap_worker(w))
+        self._calc_workers.append(worker)
+        worker.start()
+
+    def _reap_worker(self, worker):
+        """A QThread garbage-collected while still running is a hard crash, so
+        workers are kept in _calc_workers until they signal finished()."""
         try:
-            results = fetch_design(payload)
-        except Exception as e:
-            err_msg = str(e)
-            if "422" in err_msg or "Unprocessable" in err_msg:
-                user_msg = f"Validation error — check input values ({err_msg[:120]})"
-            elif "ConnectionError" in type(e).__name__ or "Connection" in err_msg:
-                user_msg = "Cannot reach backend — is the server running on port 8000?"
-            else:
-                user_msg = f"Calculation error: {err_msg[:200]}"
-            err_header = ColHeader(f"⚠  {user_msg[:80]}")
-            # SCOPED: the bare version put this red bottom-border on the
-            # header's own child labels too.
-            err_header.setStyleSheet(scoped(
-                err_header,
-                f"background-color: {DANGER_DIM}; color: {DANGER}; border: none; "
-                f"border-bottom: 1px solid {DANGER_BORDER};"
-            ))
-            self._swap_col3_header(err_header)
-            return
+            self._calc_workers.remove(worker)
+        except ValueError:
+            pass
+        worker.deleteLater()
+
+    def _on_calc_failed(self, gen, payload, err_msg):
+        if gen != self._calc_gen:
+            return   # stale: a newer request is already in flight
+        self.top_nav.set_calculating(False)
+
+        if "422" in err_msg or "Unprocessable" in err_msg:
+            user_msg = f"Validation error — check input values ({err_msg[:120]})"
+        elif "ConnectionError" in err_msg or "Connection" in err_msg:
+            user_msg = "Cannot reach backend — is the server running on port 8000?"
+        else:
+            user_msg = f"Calculation error: {err_msg[:200]}"
+
+        err_header = ColHeader(f"⚠  {user_msg[:80]}")
+        # SCOPED: the bare version put this red bottom-border on the header's own
+        # child labels too.
+        err_header.setStyleSheet(scoped(
+            err_header,
+            f"background-color: {DANGER_DIM}; color: {DANGER}; border: none; "
+            f"border-bottom: 1px solid {DANGER_BORDER};"
+        ))
+        self._swap_col3_header(err_header)
+        # The previous result is deliberately KEPT, so the user can still read
+        # whatever they last successfully calculated.
+        #
+        # The crash this originally guarded against: a bucket_gap spinbox emitting
+        # an intermediate value mid-edit sent a 422 from Pydantic validation,
+        # fetch_design() called raise_for_status(), and the HTTPError propagated
+        # with no catch -- Qt terminated the event loop on the unhandled exception.
+        # The backend was healthy; the crash was entirely client-side. The except
+        # now lives inside _CalcWorker.run(), which turns it into a signal.
+
+    def _on_calc_done(self, gen, payload, results):
+        if gen != self._calc_gen:
+            return   # stale: a newer request superseded this one
+        self.top_nav.set_calculating(False)
 
         self._last_results = results
         self._default_payload = payload
@@ -807,13 +895,10 @@ class ShellWindow(QMainWindow):
                 ColHeader("Results", action=fail_warn_badges(n_fail, n_warn)))
 
     def _on_optimizer_apply(self, variant):
-        """Mirrors useElevatorCalc.js's applyOptimizer() exactly (read
-        directly before writing this, not assumed): rpm -> n_rpm, fill ->
-        fill_pct, auto_bucket forced False, and the v2-only fields
-        (D_mm/boot_pulley_D_mm/chain_n_strands/sprocket teeth) only merged in
-        when present -- a belt-mode result has no chain fields, and merging
-        None over an existing value would clobber it rather than leave it
-        untouched, same as the JSX's own `D_mm != null ? { D_mm } : {}` guards."""
+        """Mirrors useElevatorCalc.js's applyOptimizer(): rpm -> n_rpm, fill ->
+        fill_pct, auto_bucket forced False, and the v2-only fields only merged in
+        when present -- a belt-mode result has no chain fields, and merging None
+        over an existing value would clobber it rather than leave it untouched."""
         payload = dict(self._default_payload)
         payload["n_rpm"] = variant.get("rpm")
         payload["bucket_id"] = variant.get("bucket_id")
@@ -902,7 +987,21 @@ class ShellWindow(QMainWindow):
             ).exec()
 
     def _on_open_design(self):
-        """Open Design handler -- shows the file browser dialog."""
+        """Open Design handler -- shows the file browser dialog.
+
+        RESTRUCTURED for the async calculation. The old order was:
+
+            self.run_calculation(payload)          # was synchronous
+            drp._manual_stage = df.design_stage    # set AFTER
+            drp._rebuild()                         # manual rebuild
+
+        With run_calculation() now returning immediately that becomes a race: the
+        manual _rebuild() would run against the OLD results, and the incoming
+        set_data() would then rebuild again. The stage is now set BEFORE the
+        calculation is kicked off, and the manual _rebuild() call is gone --
+        set_data() already rebuilds, so it was a redundant double-rebuild even in
+        the synchronous version.
+        """
         from app_config import AppConfig
         from open_design_dialog import OpenDesignDialog
 
@@ -917,10 +1016,11 @@ class ShellWindow(QMainWindow):
         try:
             self._current_design_file = df
             self._default_payload = dict(df.inputs)
+            # Stage FIRST -- the recalculation's set_data() will rebuild the review
+            # panel, and it must see the loaded stage, not the previous one.
+            self.design_review_panel._manual_stage = (
+                df.design_stage if df.design_stage > 1 else None)
             self.run_calculation(self._default_payload)
-            drp = self.design_review_panel
-            drp._manual_stage = df.design_stage if df.design_stage > 1 else None
-            drp._rebuild()
             self._styled_message_box(
                 QMessageBox.Icon.Information, "Design Loaded",
                 f"Opened: {df.model_number}  v{df.version:03d}  [{df.stage_label}]", self
@@ -951,8 +1051,8 @@ class ShellWindow(QMainWindow):
         dlg.exec()
 
     def _on_pdf_clicked(self):
-        """PDF Report button -- context menu to choose which of the four
-        report types to generate, then delegate to the handler."""
+        """PDF Report button -- context menu to choose which of the four report
+        types to generate, then delegate to the handler."""
         if not self._last_results:
             self._styled_message_box(
                 QMessageBox.Icon.Information, "No Results",
@@ -988,9 +1088,9 @@ class ShellWindow(QMainWindow):
         menu.exec(pos)
 
     def _generate_report(self, report_type: str):
-        """Save dialog + background worker for the selected report type. All
-        four use the same save/progress/done pattern; only the filename suffix
-        and backend endpoint differ."""
+        """Save dialog + background worker for the selected report type. All four
+        use the same save/progress/done pattern; only the filename suffix and the
+        backend endpoint differ."""
         suffix_map = {
             "engineering": self._auto_pdf_filename,
             "workshop":    lambda: self._auto_pdf_filename().replace(".pdf", "_Workshop.pdf"),
@@ -1010,22 +1110,23 @@ class ShellWindow(QMainWindow):
         self._pdf_worker.done.connect(self._on_pdf_done)
         self._pdf_worker.errorOccurred.connect(self._on_pdf_error)
         self._pdf_worker.start()
-        for lbl in self.app_title_bar.findChildren(QLabel):
-            if "JAYVEECONS" in (lbl.text() or ""):
-                lbl.setText("Generating PDF…")
-                self._pdf_version_lbl = lbl
-                break
+        # FIXED: this used to scan every QLabel for the substring "JAYVEECONS" and
+        # then restore it by hard-coding "JAYVEECONS · V1.0" -- silently deleting
+        # the "Hello, <name>" greeting after the first export. The label and its
+        # real text now live on AppTitleBar.
+        self.app_title_bar.version_lbl.setText("Generating PDF…")
+
+    def _restore_version_label(self):
+        self.app_title_bar.version_lbl.setText(self.app_title_bar._version_text)
 
     def _on_pdf_done(self, path):
-        if hasattr(self, "_pdf_version_lbl"):
-            self._pdf_version_lbl.setText("JAYVEECONS · V1.0")
+        self._restore_version_label()
         self._styled_message_box(
             QMessageBox.Icon.Information, "Report Saved", f"PDF saved to:\n{path}", self
         ).exec()
 
     def _on_pdf_error(self, msg):
-        if hasattr(self, "_pdf_version_lbl"):
-            self._pdf_version_lbl.setText("JAYVEECONS · V1.0")
+        self._restore_version_label()
         self._styled_message_box(
             QMessageBox.Icon.Critical, "Report Failed",
             f"PDF generation failed:\n{msg}", self
@@ -1033,8 +1134,8 @@ class ShellWindow(QMainWindow):
 
     def _on_apply_correction(self, param, value):
         """Mirrors RootCausePanel.jsx's setField(param, target) -- a single
-        corrective param/value pair from a root-cause finding's Apply button
-        gets merged into the live payload and recalculated."""
+        corrective param/value pair from a root-cause finding's Apply button gets
+        merged into the live payload and recalculated."""
         payload = dict(self._default_payload)
         payload[param] = value
         self.run_calculation(payload)
@@ -1045,6 +1146,19 @@ class ShellWindow(QMainWindow):
             if i == idx:
                 return tid
         return "design"
+
+    def closeEvent(self, event):
+        """Let any in-flight calculation finish before the process tears down --
+        destroying a still-running QThread is a hard crash in Qt.
+
+        This is the ONE place a wait() is acceptable: the window is closing, so
+        there is no interactivity left to protect. Bounded to 3s per worker so a
+        hung backend can't wedge the app shut."""
+        self._calc_gen += 1   # invalidate everything still in flight
+        for w in list(self._calc_workers):
+            if w.isRunning():
+                w.wait(3000)
+        super().closeEvent(event)
 
 
 def main():
@@ -1073,8 +1187,11 @@ def main():
 
     # ── 4. Main window ────────────────────────────────────────────────
     window = ShellWindow(auth_db=auth_db)
-    window.run_calculation()
     window.show()
+    # Kicked off AFTER show() now: run_calculation() is asynchronous, so the
+    # window paints immediately and the first result lands a moment later --
+    # rather than the app appearing to hang on a blank screen during startup.
+    window.run_calculation()
     sys.exit(app.exec())
 
 

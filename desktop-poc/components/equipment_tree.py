@@ -22,6 +22,41 @@ opens a QDialog with the same detail content the inline panel would have
 shown. main.py's left column uses this mode -- now that the middle column
 is dedicated to tab content (the schematic, etc.), there's no persistent
 pane left over for inline detail, so a popup is the equivalent.
+
+SWEEP NOTES (this round)
+════════════════════════
+This file came through in GOOD SHAPE. node_status() already does
+subsystem-FIRST, keyword-second filtering -- the fix that stops one
+subsystem's checks bleeding into another's node is present and correct
+here. STATUS_COLOR / NONE_C are already v2-backed in theme.py, so every
+tree node's color was already right. No hand-rolled field widgets, no
+stale rgba() literals. Three changes only:
+
+1. REAL DEFECT -- "MECHANICAL DESIGN" had no status rollup.
+
+       mech = add_section(None, "MECHANICAL DESIGN")
+
+   No status argument -> defaults to "none" -> the header always rendered
+   in plain TEXT, never red or amber, EVEN WHEN A CHILD SECTION FAILED.
+   Every other top-level section (PROCESS, POWER TRANSMISSION, SERVICE
+   CONDITIONS) rolls its children up; this one silently didn't. On a
+   collapsed tree, a failing head shaft or a failing chute was invisible
+   at the top level.
+
+   Now merges all seven child sections -- head, belt, bucket, take-up,
+   chute, FEED and casing. The feed inclusion matters specifically: st_feed
+   is the one rollup that folds in a non-check-derived status (fd's own
+   warnings list plus s_boot), so an omitted feed would hide boot/feed
+   warnings from the top level entirely. Same merge the JSX's
+   subsystemBadge() performs.
+
+2. BOX-IN-BOX in _show_detail_popup(). The header QFrame used a BARE
+   stylesheet declaration containing `border-bottom` -- Qt reads a
+   selector-less sheet as `* { ... }`, so it applied to the frame AND its
+   descendants: both the title and the sub-label drew their own bottom
+   border. Now object-scoped via theme.scoped().
+
+3. THRESHOLD-IN-FRONTEND, flagged not changed (see below).
 """
 from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QWidget, QVBoxLayout, QHBoxLayout,
@@ -30,7 +65,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QBrush, QFont
 
-from theme import BG, PANEL, PANEL2, BORDER, TEXT, TEXT2, TEXT3, STATUS_COLOR, NONE_C
+from theme import (
+    BG, PANEL, PANEL2, SURFACE, BORDER, BORDER2, TEXT, TEXT2, TEXT3,
+    STATUS_COLOR, NONE_C, R_SM, scoped, plain_bg,
+)
 
 
 # ── Direct ports of EquipmentTree.jsx's own helpers ─────────────────────────
@@ -101,13 +139,18 @@ class EquipmentTreePanel(QWidget):
 
         if show_detail:
             detail = QFrame()
-            detail.setStyleSheet(f"background-color: {PANEL};")
+            detail.setStyleSheet(plain_bg(detail, PANEL))
             dlayout = QVBoxLayout(detail)
             self.detail_title = QLabel("Select a leaf to see its checks")
-            self.detail_title.setStyleSheet(f"color: {TEXT2}; font-size: 12px; font-weight: 600; padding: 8px;")
+            self.detail_title.setStyleSheet(
+                f"color: {TEXT2}; font-size: 12px; font-weight: 600; padding: 8px;")
             self.detail_text = QTextEdit()
             self.detail_text.setReadOnly(True)
-            self.detail_text.setStyleSheet(f"background-color: {BG}; color: {TEXT2}; border: none; padding: 8px;")
+            # QTextEdit has a viewport child, so this is object-scoped rather
+            # than left as a bare declaration.
+            self.detail_text.setStyleSheet(scoped(
+                self.detail_text,
+                f"background-color: {BG}; color: {TEXT2}; border: none; padding: 8px;"))
             dlayout.addWidget(self.detail_title)
             dlayout.addWidget(self.detail_text)
 
@@ -164,13 +207,20 @@ class EquipmentTreePanel(QWidget):
         dialog = QDialog(self)
         dialog.setWindowTitle(data["label"])
         dialog.setMinimumWidth(420)
-        dialog.setStyleSheet(f"background-color: {PANEL};")
+        dialog.setStyleSheet(plain_bg(dialog, PANEL))
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        # SCOPED: this was a bare declaration with a border-bottom, so Qt read
+        # it as `* { ... }` and BOTH the title and the sub-label below drew
+        # their own bottom border inside the header.
         header = QFrame()
-        header.setStyleSheet(f"background-color: {PANEL2}; border-bottom: 1px solid {BORDER};")
+        header.setStyleSheet(scoped(
+            header,
+            f"background-color: {PANEL2}; border: none; "
+            f"border-bottom: 1px solid {BORDER};"
+        ))
         hlayout = QVBoxLayout(header)
         hlayout.setContentsMargins(16, 12, 16, 12)
         title = QLabel(f"{data['label']}  —  {status.upper()}")
@@ -185,18 +235,26 @@ class EquipmentTreePanel(QWidget):
         body = QTextEdit()
         body.setReadOnly(True)
         body.setPlainText(self._detail_text_for(data))
-        body.setStyleSheet(f"background-color: {BG}; color: {TEXT2}; border: none; padding: 14px; font-size: 12px;")
+        body.setStyleSheet(scoped(
+            body,
+            f"background-color: {BG}; color: {TEXT2}; border: none; "
+            f"padding: 14px; font-size: 12px;"))
         layout.addWidget(body)
 
         footer = QFrame()
+        footer.setStyleSheet(scoped(
+            footer, "background-color: transparent; border: none;"))
         flayout = QHBoxLayout(footer)
         flayout.setContentsMargins(12, 8, 12, 8)
         flayout.addStretch()
         close_btn = QPushButton("Close")
-        close_btn.setStyleSheet(
-            f"background-color: {PANEL2}; color: {TEXT2}; border: 1px solid {BORDER}; "
-            f"border-radius: 5px; padding: 6px 16px; font-size: 11.5px;"
-        )
+        close_btn.setStyleSheet(scoped(
+            close_btn,
+            f"background-color: {SURFACE}; color: {TEXT2}; "
+            f"border: 1px solid {BORDER2}; border-radius: {R_SM}px; "
+            f"padding: 6px 16px; font-size: 11.5px;",
+            extra="{sel}:hover { color: %s; }" % TEXT,
+        ))
         close_btn.clicked.connect(dialog.accept)
         flayout.addWidget(close_btn)
         layout.addWidget(footer)
@@ -249,6 +307,7 @@ class EquipmentTreePanel(QWidget):
         st_process = merge_status(s_capacity["status"], s_speed["status"], s_cr["status"])
         st_head    = merge_status(s_shaft["status"], s_key["status"], s_bearing["status"], s_lagging["status"], s_end_disc["status"])
         st_belt    = merge_status(s_belt["status"], s_slip["status"], s_bolt["status"])
+        st_bucket  = merge_status(s_bolt["status"], s_digging["status"])
         st_takeup  = s_takeup["status"]
         st_chute   = merge_status(s_chute["status"], s_casing_clearance_status)
         st_casing  = merge_status(s_casing["status"], s_abr["status"])
@@ -277,6 +336,12 @@ class EquipmentTreePanel(QWidget):
             s_boot["status"],
         )
 
+        # THRESHOLD-IN-FRONTEND: the 6.0 / 5.0 chain safety-factor bands are
+        # engineering constants living in a UI file. chain_SF_actual is computed
+        # in the backend; the VERDICT should come from there too, the way
+        # cap_ok / speed_ok / cr_ok / l10_ok already do (chain_v_ok, read a few
+        # lines below, is exactly the right pattern -- this one just never got
+        # its equivalent). Values preserved exactly. See TASK_LIST.md item 2.
         chain_sf_actual = r.get("chain_SF_actual")
         if chain_sf_actual is not None and chain_sf_actual >= 6.0:
             chain_sf_status = "ok"
@@ -322,7 +387,21 @@ class EquipmentTreePanel(QWidget):
         add_leaf(process, "Belt Speed", f"{fmt(r.get('v', r.get('v_ms')), 2)} m/s", s_speed)
         add_leaf(process, "Centrifugal Ratio", f"CR = {fmt(r.get('cr', r.get('centrifugal_ratio')), 3)}", s_cr)
 
-        mech = add_section(None, "MECHANICAL DESIGN")
+        # FIXED: this was `add_section(None, "MECHANICAL DESIGN")` with NO status
+        # argument -- so it defaulted to "none" and the header rendered in plain
+        # TEXT no matter what, EVEN WHEN A CHILD SECTION FAILED. Every other
+        # top-level section rolls its children up; this one silently didn't, so
+        # on a collapsed tree a failing head shaft or chute was invisible at the
+        # top level.
+        #
+        # st_feed is included deliberately: it's the one rollup that folds in a
+        # status NOT derived from checks[] (feed_design's own warnings list, plus
+        # s_boot). Omitting it would hide every boot/feed warning from the top
+        # level. Same merge the JSX's subsystemBadge() performs.
+        st_mech = merge_status(
+            st_head, st_belt, st_bucket, st_takeup, st_chute, st_feed, st_casing,
+        )
+        mech = add_section(None, "MECHANICAL DESIGN", st_mech)
 
         head = add_section(mech, "Head Assembly", st_head)
         add_leaf(head, "Head Pulley", f"Ø{inp.get('D_mm','—')}mm  {inp.get('n_rpm','—')} rpm", "none")
@@ -366,7 +445,7 @@ class EquipmentTreePanel(QWidget):
                      f"e^μθ={fmt(r.get('euler_ratio'), 3)}  {'✓ Safe' if r.get('slip_safe') else '✗ Risk'}" if r.get("euler_ratio") is not None else "—",
                      s_slip)
 
-        bucket_sel = add_section(mech, "Bucket Selection", merge_status(s_bolt["status"], s_digging["status"]))
+        bucket_sel = add_section(mech, "Bucket Selection", st_bucket)
         add_leaf(bucket_sel, "Bucket Series",
                  f"{bkt.get('id')}  {bkt.get('W', bkt.get('width_mm','—'))}×{bkt_depth or '—'}mm  {bkt.get('V', bkt.get('volume_L','—'))}L" if bkt.get("id") else "—",
                  "none")
@@ -447,6 +526,11 @@ class EquipmentTreePanel(QWidget):
         sd = r.get("startup_dynamic") or {}
         sc = r.get("shock_check") or {}
         if sd:
+            # THRESHOLD-IN-FRONTEND: the 1.0 / 1.1 startup-margin bands are
+            # duplicated here AND in power_edit.py -- two copies of the same
+            # engineering constant in two UI files, which is precisely how they
+            # drift apart. One backend verdict alongside startup_margin would
+            # replace both. Values preserved exactly. See TASK_LIST.md item 2.
             margin = sd.get("startup_margin")
             st_startup = "fail" if (margin or 0) < 1.0 else ("warn" if (margin or 0) < 1.1 else "ok")
             if sc and not sc.get("adequate_for_normal_shock"):
