@@ -7,8 +7,8 @@ logic, etc. later -- exactly the role client.js plays for the React app.
 """
 import requests
 
-API_BASE = "http://localhost:8000/api"
-API_BASE_V1 = "http://localhost:8000/api/v1"   # MaterialSearchDropdown.jsx calls /api/v1 directly, not the /api compat shim
+API_BASE = "http://127.0.0.1:8000/api"
+API_BASE_V1 = "http://127.0.0.1:8000/api/v1"   # MaterialSearchDropdown.jsx calls /api/v1 directly, not the /api compat shim
 
 
 def fetch_design(payload: dict) -> dict:

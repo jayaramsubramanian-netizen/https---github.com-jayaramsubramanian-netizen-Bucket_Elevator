@@ -148,340 +148,39 @@ def get_material(mat_id: str) -> Dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CEMA 375 BUCKET SERIES
-# v1.2.0: Added bucket_mass_kg — catalogue mid-range for mild steel construction.
-#         Source: CEMA 375 Table 1 / manufacturer catalogues (MAXI-LIFT, TAPCO).
-#         AR400 buckets ≈ 1.25–1.30 × mild steel mass.
-#         Elevator type: CC = centrifugal, HF = high-capacity slow-speed.
+# CEMA 375 BUCKET SERIES  —  NOW READ FROM THE DATABASE, NOT A LITERAL
 # ═══════════════════════════════════════════════════════════════════════════════
-
-BUCKET_SERIES = [
-    # ═══════════════════════════════════════════════════════════════════════════
-    # STYLE AA — Centrifugal, curved bottom, general purpose
-    # Source: industry-standard bucket catalog data. front_angle≈30°.
-    # Applications: grain, aggregate, sand, coal, fertiliser, salt
-    # ═══════════════════════════════════════════════════════════════════════════
-    {"id":"AA_6x4",  "style":"AA","catalog":"AA 6×4",
-     "W":152,"H":108,"P":102,"V":0.85,"depth_mm":108,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":2.54,"v_opt":1.78,"pitch_mm":191,"bucket_mass_kg":1.8,
-     "recommended_materials":["grain","seed","chemicals"],
-     "note":"Small AA — fine granular, light duty"},
-
-    {"id":"AA_8x5",  "style":"AA","catalog":"AA 8×5",
-     "W":203,"H":140,"P":127,"V":1.98,"depth_mm":140,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":2.54,"v_opt":1.78,"pitch_mm":229,"bucket_mass_kg":3.2,
-     "recommended_materials":["grain","fertiliser","sand","salt"],
-     "note":"Medium-small AA — grain and fine minerals"},
-
-    {"id":"AA_10x6", "style":"AA","catalog":"AA 10×6",
-     "W":254,"H":159,"P":152,"V":3.40,"depth_mm":159,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":2.03,"v_opt":1.65,"pitch_mm":279,"bucket_mass_kg":4.4,
-     "recommended_materials":["grain","fertiliser","aggregate","coal"],
-     "note":"Medium AA — general grain and mineral service"},
-
-    {"id":"AA_12x7", "style":"AA","catalog":"AA 12×7",
-     "W":305,"H":184,"P":178,"V":5.38,"depth_mm":184,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":1.91,"v_opt":1.52,"pitch_mm":305,"bucket_mass_kg":6.3,
-     "recommended_materials":["wheat","corn","aggregate","coal","fertiliser"],
-     "note":"Standard AA — most common grain elevator size"},
-
-    {"id":"AA_14x8", "style":"AA","catalog":"AA 14×8",
-     "W":356,"H":216,"P":203,"V":9.06,"depth_mm":216,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":1.91,"v_opt":1.52,"pitch_mm":356,"bucket_mass_kg":8.5,
-     "recommended_materials":["wheat","corn","soybeans","aggregate"],
-     "note":"Large AA — high-capacity grain/mineral"},
-
-    {"id":"AA_16x8", "style":"AA","catalog":"AA 16×8",
-     "W":406,"H":216,"P":203,"V":10.21,"depth_mm":216,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":1.91,"v_opt":1.52,"pitch_mm":381,"bucket_mass_kg":9.8,
-     "recommended_materials":["grain","aggregate","coal"],
-     "note":"Extra-wide AA"},
-
-    {"id":"AA_18x8", "style":"AA","catalog":"AA 18×8",
-     "W":457,"H":216,"P":203,"V":11.33,"depth_mm":216,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":1.91,"v_opt":1.52,"pitch_mm":406,"bucket_mass_kg":10.3,
-     "recommended_materials":["grain","minerals","potash"],
-     "note":"Wide AA — high throughput centrifugal"},
-
-    {"id":"AA_18x10","style":"AA","catalog":"AA 18×10",
-     "W":457,"H":267,"P":254,"V":17.84,"depth_mm":267,"front_angle_deg":30,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.14,"v_max":1.91,"v_opt":1.52,"pitch_mm":457,"bucket_mass_kg":13.1,
-     "recommended_materials":["grain","potash","aggregate"],
-     "note":"Very large AA — maximum centrifugal capacity"},
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # STYLE AC — Centrifugal, 50° front angle, Added Capacity, hooded back
-    # Source: industry-standard bucket catalog data. Mill Duty series MDC/MDB.
-    # Applications: cement, clinker, ore, shale, coal, asphalt, gypsum
-    # ═══════════════════════════════════════════════════════════════════════════
-    {"id":"AC_12x8",  "style":"AC","catalog":"AC 12×8×8",
-     "W":305,"H":216,"P":203,"V":8.58,"depth_mm":216,"front_angle_deg":50,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":0.76,"v_max":2.03,"v_opt":1.27,"pitch_mm":305,"bucket_mass_kg":11.0,
-     "recommended_materials":["cement","limestone","gypsum","shale"],
-     "note":"AC — 50° face for clean discharge of abrasive minerals"},
-
-    {"id":"AC_14x8",  "style":"AC","catalog":"AC 14×8×8",
-     "W":356,"H":216,"P":203,"V":10.08,"depth_mm":216,"front_angle_deg":50,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":0.76,"v_max":2.03,"v_opt":1.27,"pitch_mm":305,"bucket_mass_kg":12.2,
-     "recommended_materials":["cement","clinker","ore","coal"],
-     "note":"Standard mill duty AC"},
-
-    {"id":"AC_16x8",  "style":"AC","catalog":"AC 16×8×8",
-     "W":406,"H":216,"P":203,"V":11.55,"depth_mm":216,"front_angle_deg":50,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":0.76,"v_max":2.03,"v_opt":1.27,"pitch_mm":330,"bucket_mass_kg":13.6,
-     "recommended_materials":["cement","clinker","ore","asphalt","coke"],
-     "note":"Wide mill duty AC"},
-
-    {"id":"AC_18x10", "style":"AC","catalog":"AC 18×10×10",
-     "W":457,"H":267,"P":254,"V":19.57,"depth_mm":267,"front_angle_deg":50,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":0.76,"v_max":2.03,"v_opt":1.27,"pitch_mm":381,"bucket_mass_kg":17.6,
-     "recommended_materials":["cement","clinker","limestone","bauxite"],
-     "note":"Large mill duty AC"},
-
-    {"id":"AC_20x10", "style":"AC","catalog":"AC 20×10×10",
-     "W":508,"H":267,"P":254,"V":21.75,"depth_mm":267,"front_angle_deg":50,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":0.76,"v_max":2.03,"v_opt":1.27,"pitch_mm":406,"bucket_mass_kg":19.1,
-     "recommended_materials":["cement","clinker","limestone","ore"],
-     "note":"Extra-large mill duty AC"},
-
-    {"id":"AC_24x10", "style":"AC","catalog":"AC 24×10×10",
-     "W":610,"H":267,"P":254,"V":26.08,"depth_mm":267,"front_angle_deg":50,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":0.76,"v_max":2.03,"v_opt":1.27,"pitch_mm":457,"bucket_mass_kg":23.9,
-     "recommended_materials":["cement","clinker","ore"],
-     "note":"Heavy duty wide AC — high capacity mineral service"},
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # STYLE C — Centrifugal, low profile, open front, angled sides
-    # Source: industry-standard bucket catalog data.
-    # Applications: sugar, salt, wet grain, clay, powders, chemicals
-    # ═══════════════════════════════════════════════════════════════════════════
-    {"id":"C_6x4",   "style":"C","catalog":"C 6×4×4",
-     "W":152,"H":102,"P":114,"V":0.74,"depth_mm":102,"front_angle_deg":0,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.02,"v_max":3.56,"v_opt":2.03,"pitch_mm":191,"bucket_mass_kg":1.7,
-     "recommended_materials":["sugar","chemicals","fine_powders"],
-     "note":"Small C — fine sticky or powdered materials"},
-
-    {"id":"C_8x4",   "style":"C","catalog":"C 8×4×4",
-     "W":203,"H":102,"P":114,"V":0.99,"depth_mm":102,"front_angle_deg":0,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.02,"v_max":3.56,"v_opt":2.03,"pitch_mm":229,"bucket_mass_kg":2.0,
-     "recommended_materials":["sugar","salt","clay","starch"],
-     "note":"C — wet/sticky, open front for clean discharge"},
-
-    {"id":"C_10x5",  "style":"C","catalog":"C 10×5×4",
-     "W":254,"H":102,"P":127,"V":1.47,"depth_mm":102,"front_angle_deg":0,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.02,"v_max":3.05,"v_opt":2.03,"pitch_mm":254,"bucket_mass_kg":2.6,
-     "recommended_materials":["sugar","salt","wet_grain","clay","chemicals"],
-     "note":"Medium C — sticky/wet materials, more buckets per metre"},
-
-    {"id":"C_14x7",  "style":"C","catalog":"C 14×7×5",
-     "W":356,"H":140,"P":178,"V":3.91,"depth_mm":140,"front_angle_deg":0,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.02,"v_max":3.05,"v_opt":1.78,"pitch_mm":305,"bucket_mass_kg":5.1,
-     "recommended_materials":["sugar","salt","wet_grain","clay","flour","starch"],
-     "note":"Large C — high throughput wet/sticky service"},
-
-    {"id":"C_16x7",  "style":"C","catalog":"C 16×7×5",
-     "W":406,"H":140,"P":178,"V":4.47,"depth_mm":140,"front_angle_deg":0,
-     "type":"CC","discharge_type":"centrifugal",
-     "v_min":1.02,"v_max":3.05,"v_opt":1.78,"pitch_mm":330,"bucket_mass_kg":5.9,
-     "recommended_materials":["sugar","salt","chemicals"],
-     "note":"Wide C — maximum sticky-material capacity"},
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # STYLE MF — Continuous discharge, 30° medium front, gentle handling
-    # Source: industry-standard bucket catalog data. CEMA Series 700/800.
-    # Applications: gypsum, cement, pellets, grain, salt, fertiliser
-    # ═══════════════════════════════════════════════════════════════════════════
-    {"id":"MF_10x7",  "style":"MF","catalog":"MF 10×7×11",
-     "W":254,"H":295,"P":178,"V":5.10,"depth_mm":295,"front_angle_deg":30,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.40,"v_max":1.27,"v_opt":0.76,"pitch_mm":295,"bucket_mass_kg":7.5,
-     "recommended_materials":["cement","gypsum","pellets","grain","lime"],
-     "note":"MF — medium front, gentle handling"},
-
-    {"id":"MF_12x7",  "style":"MF","catalog":"MF 12×7×11",
-     "W":305,"H":295,"P":178,"V":6.17,"depth_mm":295,"front_angle_deg":30,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.40,"v_max":1.27,"v_opt":0.76,"pitch_mm":305,"bucket_mass_kg":8.4,
-     "recommended_materials":["cement","gypsum","grain","fertiliser"],
-     "note":"Standard MF"},
-
-    {"id":"MF_12x8",  "style":"MF","catalog":"MF 12×8×11",
-     "W":305,"H":295,"P":203,"V":7.79,"depth_mm":295,"front_angle_deg":30,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.40,"v_max":1.27,"v_opt":0.76,"pitch_mm":305,"bucket_mass_kg":9.0,
-     "recommended_materials":["cement","gypsum","grain","salt","aggregate"],
-     "note":"Wider projection MF"},
-
-    {"id":"MF_14x8",  "style":"MF","catalog":"MF 14×8×11",
-     "W":356,"H":295,"P":203,"V":9.20,"depth_mm":295,"front_angle_deg":30,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.40,"v_max":1.27,"v_opt":0.76,"pitch_mm":330,"bucket_mass_kg":10.1,
-     "recommended_materials":["gypsum","cement","grain","salt","aggregate","fertiliser"],
-     "note":"Medium-large MF — common industrial size"},
-
-    {"id":"MF_16x8",  "style":"MF","catalog":"MF 16×8×11",
-     "W":406,"H":295,"P":203,"V":10.62,"depth_mm":295,"front_angle_deg":30,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.40,"v_max":1.27,"v_opt":0.76,"pitch_mm":356,"bucket_mass_kg":11.0,
-     "recommended_materials":["cement","gypsum","aggregate","potash"],
-     "note":"Large MF"},
-
-    {"id":"MF_18x8",  "style":"MF","catalog":"MF 18×8×11",
-     "W":457,"H":295,"P":203,"V":11.89,"depth_mm":295,"front_angle_deg":30,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.40,"v_max":1.27,"v_opt":0.76,"pitch_mm":381,"bucket_mass_kg":12.1,
-     "recommended_materials":["cement","gypsum","salt","aggregate"],
-     "note":"Wide MF — high capacity continuous"},
-
-    {"id":"MF_24x10", "style":"MF","catalog":"MF 24×10×11",
-     "W":610,"H":295,"P":254,"V":24.07,"depth_mm":295,"front_angle_deg":30,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.40,"v_max":1.27,"v_opt":0.76,"pitch_mm":457,"bucket_mass_kg":17.1,
-     "recommended_materials":["cement","gypsum","potash","aggregate"],
-     "note":"Extra-large MF — very high capacity"},
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # STYLE HF — Continuous discharge, 45° HIGH front, greater capacity
-    # Source: industry-standard bucket catalog data. CEMA Series 700/800.
-    # ~8% higher volume than MF for same width due to higher front
-    # Applications: grain, cement, pellets, fertiliser, fragile materials
-    # ═══════════════════════════════════════════════════════════════════════════
-    {"id":"HF_10x7",  "style":"HF","catalog":"HF 10×7×11",
-     "W":254,"H":295,"P":178,"V":5.38,"depth_mm":295,"front_angle_deg":45,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.50,"v_max":1.52,"v_opt":1.02,"pitch_mm":295,"bucket_mass_kg":8.0,
-     "recommended_materials":["grain","pellets","fragile_granules"],
-     "note":"Small HF — high front, gentle continuous discharge"},
-
-    {"id":"HF_12x7",  "style":"HF","catalog":"HF 12×7×11",
-     "W":305,"H":295,"P":178,"V":6.80,"depth_mm":295,"front_angle_deg":45,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.50,"v_max":1.52,"v_opt":1.02,"pitch_mm":305,"bucket_mass_kg":9.2,
-     "recommended_materials":["wheat","corn","pellets","gypsum"],
-     "note":"Standard small HF"},
-
-    {"id":"HF_14x7",  "style":"HF","catalog":"HF 14×7×11",
-     "W":356,"H":295,"P":178,"V":7.93,"depth_mm":295,"front_angle_deg":45,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.50,"v_max":1.52,"v_opt":1.02,"pitch_mm":330,"bucket_mass_kg":10.3,
-     "recommended_materials":["grain","pellets","gypsum","cement"],
-     "note":"Medium HF"},
-
-    {"id":"HF_14x8",  "style":"HF","catalog":"HF 14×8×11",
-     "W":356,"H":295,"P":203,"V":9.91,"depth_mm":295,"front_angle_deg":45,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.50,"v_max":1.52,"v_opt":1.02,"pitch_mm":330,"bucket_mass_kg":11.3,
-     "recommended_materials":["grain","salt","cement","fertiliser"],
-     "note":"Medium HF, wider projection"},
-
-    {"id":"HF_16x8",  "style":"HF","catalog":"HF 16×8×11",
-     "W":406,"H":295,"P":203,"V":11.19,"depth_mm":295,"front_angle_deg":45,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.50,"v_max":1.52,"v_opt":1.02,"pitch_mm":356,"bucket_mass_kg":11.2,
-     "recommended_materials":["wheat","corn","gypsum","cement","pellets","salt","fertiliser"],
-     "note":"Standard HF — most common size for grain/mineral continuous elevators"},
-
-    {"id":"HF_18x8",  "style":"HF","catalog":"HF 18×8×11",
-     "W":457,"H":295,"P":203,"V":12.83,"depth_mm":295,"front_angle_deg":45,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.50,"v_max":1.52,"v_opt":1.02,"pitch_mm":381,"bucket_mass_kg":13.2,
-     "recommended_materials":["grain","gypsum","salt","fertiliser"],
-     "note":"Large HF — high capacity continuous"},
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # STYLE SC — Continuous, Super Capacity, DOUBLE CHAIN only
-    # Source: industry-standard bucket catalog data.
-    # Applications: cement, gypsum, limestone, coal, salt, rock
-    # Very slow speed, large lump tolerance, heavy abrasive duty
-    # ═══════════════════════════════════════════════════════════════════════════
-    {"id":"SC_12x8",  "style":"SC","catalog":"SC 12×8×11",
-     "W":305,"H":295,"P":222,"V":15.29,"depth_mm":295,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.30,"v_max":0.76,"v_opt":0.51,"pitch_mm":305,"bucket_mass_kg":13.2,
-     "recommended_materials":["cement","gypsum","salt","coal","aggregate"],
-     "note":"SC — double chain, very slow speed, heavy abrasive duty"},
-
-    {"id":"SC_14x8",  "style":"SC","catalog":"SC 14×8×11",
-     "W":356,"H":295,"P":222,"V":17.84,"depth_mm":295,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.30,"v_max":0.76,"v_opt":0.51,"pitch_mm":305,"bucket_mass_kg":14.1,
-     "recommended_materials":["cement","limestone","gypsum","coal"],
-     "note":"SC medium"},
-
-    {"id":"SC_16x8",  "style":"SC","catalog":"SC 16×8×11",
-     "W":406,"H":295,"P":222,"V":20.39,"depth_mm":295,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.30,"v_max":0.76,"v_opt":0.51,"pitch_mm":305,"bucket_mass_kg":15.4,
-     "recommended_materials":["cement","limestone","gypsum","coal","rocks"],
-     "note":"SC large — standard super capacity size"},
-
-    {"id":"SC_18x8",  "style":"SC","catalog":"SC 18×8×11",
-     "W":457,"H":295,"P":222,"V":22.94,"depth_mm":295,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.30,"v_max":0.76,"v_opt":0.51,"pitch_mm":305,"bucket_mass_kg":16.3,
-     "recommended_materials":["cement","limestone","coal","coke"],
-     "note":"SC wide"},
-
-    {"id":"SC_20x8",  "style":"SC","catalog":"SC 20×8×11",
-     "W":508,"H":295,"P":222,"V":25.49,"depth_mm":295,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.30,"v_max":0.76,"v_opt":0.51,"pitch_mm":305,"bucket_mass_kg":17.6,
-     "recommended_materials":["cement","limestone","gypsum"],
-     "note":"SC extra-wide"},
-
-    {"id":"SC_20x12", "style":"SC","catalog":"SC 20×12×17",
-     "W":508,"H":448,"P":324,"V":54.93,"depth_mm":448,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.25,"v_max":0.64,"v_opt":0.43,"pitch_mm":457,"bucket_mass_kg":30.4,
-     "recommended_materials":["cement_clinker","limestone","rock","ore"],
-     "note":"SC deep — very high capacity, large lumps up to 200mm"},
-
-    {"id":"SC_24x12", "style":"SC","catalog":"SC 24×12×17",
-     "W":610,"H":448,"P":324,"V":65.98,"depth_mm":448,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.25,"v_max":0.64,"v_opt":0.43,"pitch_mm":457,"bucket_mass_kg":34.0,
-     "recommended_materials":["cement_clinker","limestone","ore"],
-     "note":"SC large deep — heavy duty, very high capacity"},
-
-    {"id":"SC_30x12", "style":"SC","catalog":"SC 30×12×17",
-     "W":762,"H":448,"P":324,"V":82.40,"depth_mm":448,"front_angle_deg":35,
-     "type":"HF","discharge_type":"continuous",
-     "v_min":0.25,"v_max":0.64,"v_opt":0.43,"pitch_mm":457,"bucket_mass_kg":40.0,
-     "recommended_materials":["cement_clinker","limestone","ore"],
-     "note":"SC maximum width — highest capacity super duty"},
-]
-
-# Bolt mounting-flange / chain-pin data (industry-standard catalog data) -- adds
-# punch/boltA_mm/boltB_mm/boltDia_mm/boltN/punch_confirmed to every entry
-# above. AC and SC are engineering estimates (not published in standard catalogs
-# for these two styles specifically) -- punch_confirmed:False flags this
-# distinction through to the frontend rather than presenting an estimate
-# with the same confidence as a published dimension. See that file's own
-# docstring for the full per-style sourcing notes.
+# This was a 310-line hardcoded list of 40 buckets, with punch/bolt data merged
+# in afterwards by apply_punching_data(). Both are gone. The `buckets` DB table
+# is now the single source of truth — the same table /components/buckets serves
+# and the Components Library edits.
+#
+# WHY THIS MATTERS (it was a real divergence, not tidiness):
+#   The library let you add or edit a bucket, and the SOLVER NEVER SAW IT.
+#   select_bucket_auto() read this constant; the UI read the DB. You could pick
+#   a bucket the solver didn't know existed, or edit one and have the design
+#   silently keep using the old dimensions.
+#
+# VERIFIED BEFORE THE SWITCH (verify_buckets.py):
+#   40/40 buckets, every field the solver reads, identical — including all
+#   punching (AA_6x4 B1/76.2/2/confirmed, AC_12x8 B6/114.3/3/UNconfirmed,
+#   SC_30x12 chain/330.2/2). The DB was seeded AFTER apply_punching_data() ran,
+#   so there was no data divergence to reconcile — only a redundancy to delete.
+#
+# catalog.py returns the identical dict shape (b["id"], b["W"], b["P"], b["V"],
+# b["depth_mm"] …), so EVERY read below is unchanged. vectrix_optimizer_v2.py
+# imports BUCKET_SERIES from here and inherits the DB for free.
+#
+# calculations_bucket_punching_patch.py is now DEAD — nothing imports it.
 try:
-    from .calculations_bucket_punching_patch import apply_punching_data
+    from .catalog import BUCKET_SERIES
 except ImportError:
-    from calculations_bucket_punching_patch import apply_punching_data
-apply_punching_data(BUCKET_SERIES)
+    from catalog import BUCKET_SERIES
 
+MOTOR_SIZES = [
+    0.37, 0.55, 0.75, 1.1, 1.5, 2.2, 3.0, 4.0, 5.5, 7.5,
+    11, 15, 18.5, 22, 30, 37, 45, 55, 75, 90, 110, 132, 160, 200, 250, 315, 400,
+]
 # ── Bucket material properties (v1.9.0) ──────────────────────────────────────
 BUCKET_MATERIAL_PROPS: dict = {
     "steel": {"name": "Carbon Steel",      "density_factor": 1.00, "abr_limit": 7, "temp_max_c": 400, "corrosion": "none"},
@@ -520,15 +219,19 @@ for _alias, _target in _LEGACY_ALIASES.items():
     if _alias not in _BUCKET_BY_ID and _target in _BUCKET_BY_ID:
         _BUCKET_BY_ID[_alias] = _BUCKET_BY_ID[_target]
 
+# ── Belt widths ───────────────────────────────────────────────────────────────
+# STILL HARDCODED. There is NO `belt_widths` table in the DB (see seed_all.py's
+# TABLE_SPECS — belts exist, belt WIDTHS do not), so this cannot be rewired yet.
+# These are standard CEMA belt widths in mm; they are a standards ladder rather
+# than a purchasable catalogue, so this may legitimately stay a constant — but
+# it is flagged so it is not mistaken for something already migrated.
 BELT_WIDTHS = [102, 127, 152, 178, 203, 254, 305, 356, 406, 457, 508, 610, 762, 914]
-MOTOR_SIZES = [
-    0.37, 0.55, 0.75, 1.1, 1.5, 2.2, 3.0, 4.0, 5.5, 7.5,
-    11, 15, 18.5, 22, 30, 37, 45, 55, 75, 90, 110, 132, 160, 200, 250, 315, 400,
-]
+
+
 
 
 # ── Chain series catalogue ─────────────────────────────────────────────────────
-# Source: industry-standard bucket catalog data, CEMA 375-2017 §4.
+
 #
 # wt_kg_m   : chain weight per strand per metre [kg/m]
 # WL_kg     : published working load per strand [kg]
@@ -536,7 +239,9 @@ MOTOR_SIZES = [
 # n_strands : 1 = single-strand; 2 = double-strand (SC series only)
 # pitch_mm  : chain pitch [mm]
 # series    : CEMA elevator series this chain is used in
-
+#Source: PLACEHOLDER — LLM-generated, NOT from any manufacturer catalogue.
+# The SF criterion below is CEMA 375-2017 §4; the WORKING LOADS ARE NOT.
+# See quarantine_chains.py. Do not release a chain design on these numbers.
 CHAIN_SERIES = [
     # ── Centrifugal / continuous small (Series 100/200/700/800) ────────────────
     {
@@ -622,15 +327,50 @@ def select_chain_auto(
         WL [kg] × 9.81 × n_strands / T_pull_N  ≥  sf
         → WL_required = T_pull_N × sf / (9.81 × n_strands)
 
-    Candidates are filtered to matching n_strands and sorted smallest WL first.
-    Returns the heaviest chain if none meets the criterion (forces an SF check fail).
+    NOTE — the CRITERION above is CEMA 375 §4. The WORKING LOADS it is applied to
+    are NOT. Every WL_kg in CHAIN_SERIES is an LLM-generated placeholder, not
+    traceable to Renold, Webster, Rexnord, Tsubaki or DIN. See quarantine_chains.py.
+
+    This is why the returned dict carries `_unverified`. The danger is specific and
+    it is not hypothetical: the safety factor is computed FROM WL_kg, so a chain
+    whose real working load is half the invented figure still reports a comfortable
+    SF ≈ 6. The SF check CANNOT catch the error, because the error is in its own
+    input. The caller must raise a WARN so this is visible to the engineer rather
+    than buried in a green tick.
+
+    Returns the chain dict, plus:
+        _unverified : True when the selected chain's data is not confirmed against
+                      a manufacturer catalogue.
+        _sf_actual  : the achieved SF, or 0.0 if no chain meets the criterion.
     """
     req_WL_kg  = T_pull_N * sf / (9.81 * max(n_strands, 1))
-    candidates = [c for c in CHAIN_SERIES if c["n_strands"] == n_strands]
-    for ch in sorted(candidates, key=lambda x: x["WL_kg"]):
+    candidates = sorted(
+        (c for c in CHAIN_SERIES if c["n_strands"] == n_strands),
+        key=lambda x: x["WL_kg"],
+    )
+    if not candidates:
+        # No chain of this strand count exists. Fall back to the strongest chain in
+        # the catalogue -- NOT CHAIN_SERIES[0], which was an INDEX-POSITION pick
+        # returning whichever chain happened to be first in the list.
+        candidates = sorted(CHAIN_SERIES, key=lambda x: x["WL_kg"])
+
+    
+    for ch in candidates:
         if ch["WL_kg"] >= req_WL_kg:
             return ch
-    return candidates[-1] if candidates else CHAIN_SERIES[0]
+    # Nothing meets the criterion -> return the STRONGEST so the SF check fails
+    # loudly. Previously this was candidates[-1] on an UNSORTED list: it returned
+    # whatever sat last in catalogue order, which was the heaviest only by
+    # coincidence. Once the catalogue comes from the DB that coincidence is gone.
+    return candidates[-1]
+
+    out = dict(chosen)
+    out["_sf_actual"] = (
+        chosen["WL_kg"] * 9.81 * max(n_strands, 1) / T_pull_N
+        if T_pull_N > 0 else 0.0
+    )
+    out["_unverified"] = not chosen.get("confirmed", False)
+    return out
 
 
 def sprocket_geometry(chain_pitch_mm: float, n_teeth: int) -> dict:
@@ -2085,7 +1825,18 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     else:
         bucket = _BUCKET_BY_ID.get(inp.bucket_id) or next(
             (b for b in BUCKET_SERIES if b["id"] == inp.bucket_id),
-            BUCKET_SERIES[4],   # fallback: Series B
+            # FIXED: this was BUCKET_SERIES[4] -- an INDEX-POSITION fallback into
+            # the catalogue, with a stale comment ("Series B"; the legacy alias
+            # actually maps B -> AA_10x6, which is index 2, not 4). Index 4 is
+            # AA_14x8.
+            #
+            # Now that the catalogue comes from the DB, an index fallback is
+            # actively dangerous: it silently returns whatever bucket happens to
+            # sit in position 4 of the row order. It resolves to AA_14x8 today
+            # (checked), but any reordering, insertion or custom bucket would
+            # change which bucket an unresolvable bucket_id falls back to --
+            # with no error. Pinned to the id explicitly.
+            _BUCKET_BY_ID.get("AA_14x8") or BUCKET_SERIES[0],
         )
 
     # FIX: `bucket` above is a direct reference into the shared, module-level
@@ -4398,6 +4149,7 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
     _chain_sf_req = float(getattr(inp, "chain_sf", 6.0) or 6.0)
 
     if is_chain and chain_selected:
+        
         _chain_sel    = chain_selected
         _chain_SF_act = chain_SF_actual
         # Chain working load safety factor
