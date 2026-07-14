@@ -72,10 +72,10 @@ from theme import (
     PRIMARY, PRIMARY_DIM, PRIMARY_RING,
     SUCCESS, WARNING, WARNING_DIM, WARNING_BORDER,
     DANGER, DANGER_DIM, DANGER_BORDER,
-    BRAND_RED, R_SM, R_MD, R_PILL,
-    scoped, plain_bg,
+    BRAND_RED, R_SM, R_MD, R_PILL, FF_MONO,
+    scoped, plain_bg, apply_palette,
 )
-from api_client import fetch_design, download_pdf_report
+from api_client import fetch_design, download_pdf_report, fetch_model_number
 from components.dialog_helpers import KPIChip, styled_message_box
 from components import (
     ElevationView, EquipmentTreePanel, InputSidebarPanel, StatusPanel, OptimizerPanel,
@@ -132,14 +132,27 @@ class ColHeader(QFrame):
         lbl.setStyleSheet(
             f"color: {TEXT3}; font-size: 9.5px; font-weight: 700; letter-spacing: 1px;")
         text_box.addWidget(lbl)
-        if sub:
-            sub_lbl = QLabel(sub)
-            sub_lbl.setStyleSheet(f"color: {MUTED}; font-size: 8.5px;")
-            text_box.addWidget(sub_lbl)
+
+        # The sub-label is ALWAYS created (hidden when empty) rather than only
+        # when a sub was passed in. The model number isn't known at construction
+        # time -- it comes back with the calculation -- so the header needs to be
+        # able to receive it later via set_sub(). Building the label lazily meant
+        # there was nothing to push the model number INTO, which is a large part
+        # of why it silently stopped appearing.
+        self.sub_lbl = QLabel(sub or "")
+        self.sub_lbl.setStyleSheet(
+            f"color: {MUTED}; font-size: 8.5px; font-family: {FF_MONO};")
+        self.sub_lbl.setVisible(bool(sub))
+        text_box.addWidget(self.sub_lbl)
+
         layout.addLayout(text_box)
         layout.addStretch()
         if action:
             layout.addWidget(action)
+
+    def set_sub(self, text):
+        self.sub_lbl.setText(text or "")
+        self.sub_lbl.setVisible(bool(text))
 
 
 def _pill_label(text, color, dim, border):
@@ -549,8 +562,8 @@ class _CalcWorker(QThread):
     reintroduce the freeze.
     """
 
-    done = Signal(int, dict, dict)      # gen, payload, results
-    failed = Signal(int, dict, str)     # gen, payload, error message
+    done = Signal(int, dict, dict, str)   # gen, payload, results, model_number
+    failed = Signal(int, dict, str)       # gen, payload, error message
 
     def __init__(self, gen, payload, parent=None):
         super().__init__(parent)
@@ -560,9 +573,25 @@ class _CalcWorker(QThread):
     def run(self):
         try:
             results = fetch_design(self.payload)
-            self.done.emit(self.gen, self.payload, results)
         except Exception as e:
             self.failed.emit(self.gen, self.payload, f"{type(e).__name__}: {e}")
+            return
+
+        # The VM model number is fetched HERE, on the worker thread, because
+        # fetch_model_number() is a second network call -- it's what
+        # _auto_pdf_filename() and _on_save_design() already use. Calling it from
+        # _on_calc_done() would put a blocking HTTP request back on the GUI
+        # thread and undo the whole point of this change.
+        #
+        # It is deliberately NOT allowed to fail the calculation: a design that
+        # calculated fine but whose model number couldn't be resolved should
+        # still render. The headers just fall back to showing nothing.
+        try:
+            model_no = fetch_model_number(self.payload, results) or ""
+        except Exception:
+            model_no = ""
+
+        self.done.emit(self.gen, self.payload, results, model_no)
 
 
 class _PdfReportWorker(QThread):
@@ -632,7 +661,12 @@ class ShellWindow(QMainWindow):
         col1_layout = QVBoxLayout(col1)
         col1_layout.setContentsMargins(0, 0, 0, 0)
         col1_layout.setSpacing(0)
-        col1_layout.addWidget(ColHeader("Equipment", "BE-001"))
+        # FIXED: this was ColHeader("Equipment", "BE-001") -- a HARDCODED
+        # placeholder tag, and the widget wasn't held on self at all, so nothing
+        # could ever update it. That's why the VM model number stopped appearing
+        # here. It now starts blank and is filled from the calculation.
+        self.col1_header = ColHeader("Equipment")
+        col1_layout.addWidget(self.col1_header)
         self.tree_panel = EquipmentTreePanel(show_detail=False, popup_on_click=True)
         col1_layout.addWidget(self.tree_panel)
 
@@ -766,6 +800,10 @@ class ShellWindow(QMainWindow):
         # has been issued since, and this response is stale and gets discarded.
         self._calc_gen = 0
         self._calc_workers = []   # holds running QThreads (GC would kill them)
+        # Must exist before the first calculation lands -- _on_tab_changed() reads
+        # it, and the user can switch tabs while the startup calc is still in
+        # flight now that it's asynchronous.
+        self._model_no = ""
 
     # ── Tab / header plumbing ────────────────────────────────────────
     def _on_tab_changed(self, tab_id):
@@ -773,7 +811,11 @@ class ShellWindow(QMainWindow):
         self.status_stack.setCurrentIndex(self._status_view_for_tab.get(tab_id, 0))
         action = (fail_warn_badges(*self._fail_warn(self._last_results))
                   if tab_id == "design" else None)
-        self._swap_col3_header(ColHeader(self._tab_label[tab_id], action=action))
+        # The model number rides along on every tab's header -- it identifies the
+        # design, not the view. Without passing it here, switching tabs rebuilt
+        # the header and silently dropped it.
+        self._swap_col3_header(ColHeader(
+            self._tab_label[tab_id], sub=self._model_no, action=action))
 
     def _swap_col3_header(self, new_header):
         """One place that replaces the col3 header -- this was duplicated three
@@ -861,13 +903,18 @@ class ShellWindow(QMainWindow):
         # The backend was healthy; the crash was entirely client-side. The except
         # now lives inside _CalcWorker.run(), which turns it into a signal.
 
-    def _on_calc_done(self, gen, payload, results):
+    def _on_calc_done(self, gen, payload, results, model_no=""):
         if gen != self._calc_gen:
             return   # stale: a newer request superseded this one
         self.top_nav.set_calculating(False)
 
         self._last_results = results
         self._default_payload = payload
+        # The VM model number (VM-xx-x-xxx/xxx-ar) is the canonical identifier for
+        # this configuration, so it belongs on the Equipment header and the
+        # Results header. It's resolved on the worker thread -- see _CalcWorker.
+        self._model_no = model_no
+        self.col1_header.set_sub(model_no)
         try:
             self.top_nav.update_kpis(results)
             self.elevation.set_data(payload, results)
@@ -891,8 +938,9 @@ class ShellWindow(QMainWindow):
         n_fail, n_warn = self._fail_warn(results)
         self.top_nav.update_fail_badge(n_fail)
         if self._tab_index_of_current() == "design":
-            self._swap_col3_header(
-                ColHeader("Results", action=fail_warn_badges(n_fail, n_warn)))
+            self._swap_col3_header(ColHeader(
+                "Results", sub=self._model_no,
+                action=fail_warn_badges(n_fail, n_warn)))
 
     def _on_optimizer_apply(self, variant):
         """Mirrors useElevatorCalc.js's applyOptimizer(): rpm -> n_rpm, fill ->
@@ -1164,6 +1212,17 @@ class ShellWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    # MUST come right after setStyle(). Fusion paints any widget that has no
+    # explicit stylesheet from QPalette -- and its DEFAULT Base role is white
+    # (#efefef, measured). Every modal wraps its body in a QScrollArea, whose
+    # viewport paints from Base, which is why all of them turned white at once
+    # the moment the border sweep stopped the old selector-less
+    # `background-color: PANEL` from cascading into every child.
+    #
+    # This is the correct mechanism for a global default -- not a cascade, so no
+    # border can leak through it, and each widget can still be overridden
+    # individually.
+    apply_palette(app)
 
     # ── 1. Initialize folder structure and config ─────────────────────
     from app_config import AppConfig

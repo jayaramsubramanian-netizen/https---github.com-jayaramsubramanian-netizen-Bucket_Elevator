@@ -191,13 +191,17 @@ class _GroupHeader(QFrame):
         self.arrow = QLabel("▶")
         self.arrow.setStyleSheet(f"color: {TEXT3}; font-size: 8px;")
         layout.addWidget(self.arrow)
-        layout.addWidget(_CatBadge(cat))
 
-        name = QLabel(cat)
-        name.setStyleSheet(
-            f"color: {TEXT2}; font-size: 11px; font-weight: 700; "
-            f"letter-spacing: .02em;")
-        layout.addWidget(name)
+        # FIXED -- THE DOUBLED HEADING ("SHAFT SHAFT", "CASING CASING", ...).
+        # _CatBadge is itself a QLabel constructed with `cat` as its text, so the
+        # coloured pill ALREADY renders the category name. A second plain QLabel(cat)
+        # was then added right next to it, printing the same word twice on every
+        # group header in the Components tab.
+        #
+        # The badge is the one that stays: it carries the category colour coding
+        # (CAT_STYLE) that the plain label didn't, so it's strictly more
+        # informative. The redundant text label is gone.
+        layout.addWidget(_CatBadge(cat))
 
         count = QLabel(f"{len(items)} items")
         count.setStyleSheet(f"color: {TEXT2}; font-size: 9.5px;")

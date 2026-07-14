@@ -290,3 +290,67 @@ DRAWING = {
     "success": "#10b981", "warning": "#f59e0b", "danger": "#ef4444",
     "primary": "#3b82f6", "grid": "rgba(59,130,246,.04)", "leg": "#1e3a5a",
 }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# APPLICATION PALETTE
+# ═══════════════════════════════════════════════════════════════════════
+def apply_palette(app):
+    """Set the Qt application palette from the v2 tokens. Call once, right
+    after app.setStyle("Fusion").
+
+    WHY THIS EXISTS (and why its absence only surfaced now)
+    ───────────────────────────────────────────────────────
+    Before the border sweep, every dialog did:
+
+        self.setStyleSheet(f"background-color: {PANEL};")   # NO selector
+
+    Qt reads a selector-less stylesheet as `* { ... }`, so that single line was
+    doing TWO things at once:
+
+      1. stamping a border on every descendant  -- the bug we fixed, and
+      2. painting every descendant's BACKGROUND -- which nothing else was doing.
+
+    Scoping the rule to the widget's own objectName correctly killed (1) -- and
+    with it, unintentionally, (2). Every unstyled child (the dialog `body`
+    QWidget, scroll viewports, the shaft quadrant containers) then fell back to
+    Fusion's DEFAULT palette, which is light grey. Hence the sudden white
+    modals. The dark theme had been held up by the very bug we removed.
+
+    The fix is the PALETTE, not more stylesheets. Fusion paints unstyled widgets
+    from QPalette -- that is precisely the mechanism for a global default. It is
+    not a cascade: it sets each widget's own default colors, so a child can still
+    be overridden individually, and no border can leak through it.
+
+    Setting this at app level also means any widget added in future is dark by
+    default, instead of every new container needing to remember a plain_bg()
+    call -- which is the kind of thing that gets forgotten exactly once and then
+    ships.
+    """
+    from PySide6.QtGui import QPalette, QColor
+
+    p = QPalette()
+    # Window / base surfaces
+    p.setColor(QPalette.ColorRole.Window,          QColor(BG))
+    p.setColor(QPalette.ColorRole.Base,            QColor(SURFACE))
+    p.setColor(QPalette.ColorRole.AlternateBase,   QColor(PANEL2))
+    p.setColor(QPalette.ColorRole.Button,          QColor(SURFACE))
+    p.setColor(QPalette.ColorRole.ToolTipBase,     QColor(PANEL2))
+    # Text
+    p.setColor(QPalette.ColorRole.WindowText,      QColor(TEXT))
+    p.setColor(QPalette.ColorRole.Text,            QColor(TEXT))
+    p.setColor(QPalette.ColorRole.ButtonText,      QColor(TEXT))
+    p.setColor(QPalette.ColorRole.ToolTipText,     QColor(TEXT))
+    p.setColor(QPalette.ColorRole.BrightText,      QColor(DANGER))
+    p.setColor(QPalette.ColorRole.PlaceholderText, QColor(MUTED))
+    # Selection
+    p.setColor(QPalette.ColorRole.Highlight,       QColor(PRIMARY))
+    p.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    p.setColor(QPalette.ColorRole.Link,            QColor(PRIMARY))
+    # Disabled
+    dis = QPalette.ColorGroup.Disabled
+    p.setColor(dis, QPalette.ColorRole.Text,       QColor(MUTED))
+    p.setColor(dis, QPalette.ColorRole.ButtonText, QColor(MUTED))
+    p.setColor(dis, QPalette.ColorRole.WindowText, QColor(MUTED))
+
+    app.setPalette(p)

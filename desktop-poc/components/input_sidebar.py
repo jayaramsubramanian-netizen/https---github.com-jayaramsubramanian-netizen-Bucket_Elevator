@@ -76,7 +76,10 @@ from theme import (
     BG, PANEL, PANEL2, SURFACE, BORDER, BORDER2,
     TEXT, TEXT2, TEXT3, MUTED,
     PRIMARY, PRIMARY_DIM, PRIMARY_RING, INFO_DIM, INFO_BORDER,
-    SUCCESS, WARNING, DANGER, R_SM, R_MD, FF_MONO,
+    SUCCESS, SUCCESS_DIM, SUCCESS_BORDER,
+    WARNING, WARNING_DIM, WARNING_BORDER,
+    DANGER, DANGER_DIM, DANGER_BORDER,
+    R_SM, R_MD, FF_MONO,
     scoped, plain_bg, card_frame,
 )
 from api_client import search_materials, get_material, fetch_components, fetch_design
@@ -201,20 +204,22 @@ def clear_layout(layout):
 
 
 class SectionRow(QFrame):
-    """Port of the JSX's SectionRow -- label + summary text + a pencil icon,
-    the whole row clickable.
+    """Port of the JSX's SectionRow -- label + status badge + summary text + a
+    pencil icon, the whole row clickable.
 
-    SCOPED (this round): the bare declaration carried `border-bottom`, which
-    the row's label AND its summary label both inherited -- so every single
-    sidebar row drew three horizontal rules instead of one. With eleven rows
-    that's the stacked-box appearance across the whole sidebar. The :hover
-    rule is now an explicit scoped extra rather than a cascading one.
+    depth=1 rows are the accordion children: indented, with a `└` connector, a
+    slightly smaller/lighter label. depth=0 is a bare top-level row.
 
-    RETAINED: no CEMA reference on the row -- that lives once, in each
-    modal's own header.
+    SCOPED: the bare declaration carried `border-bottom`, which the row's label
+    AND its summary label both inherited -- so every single sidebar row drew
+    three horizontal rules instead of one.
+
+    RETAINED: no CEMA reference on the row -- that lives once, on the accordion
+    group header, exactly as the JSX does it.
     """
 
-    def __init__(self, label, summary="", clickable=True, parent=None):
+    def __init__(self, label, summary="", badge=None, depth=0,
+                 clickable=True, parent=None):
         super().__init__(parent)
         self.setCursor(Qt.CursorShape.PointingHandCursor if clickable
                        else Qt.CursorShape.ArrowCursor)
@@ -224,27 +229,43 @@ class SectionRow(QFrame):
             f"border-bottom: 1px solid {BORDER};",
             extra="{sel}:hover { background-color: rgba(255,255,255,.03); }",
         ))
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(2)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12 + depth * 14, 8, 12, 8)
+        layout.setSpacing(6)
+
+        if depth > 0:
+            elbow = QLabel("└")
+            elbow.setStyleSheet(f"color: {BORDER2}; font-size: 10px;")
+            elbow.setAlignment(Qt.AlignmentFlag.AlignTop)
+            layout.addWidget(elbow)
+
+        col = QVBoxLayout()
+        col.setSpacing(2)
 
         top = QHBoxLayout()
         top.setSpacing(6)
         lbl = QLabel(label)
-        lbl.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 700;")
+        lbl.setStyleSheet(
+            f"color: {TEXT2 if depth else TEXT}; "
+            f"font-size: {12 if depth else 13}px; "
+            f"font-weight: {600 if depth else 700};")
         top.addWidget(lbl)
+        if badge:
+            top.addWidget(StatusPill(badge))
         top.addStretch()
         if clickable:
             pencil = QLabel("✎")
             pencil.setStyleSheet(f"color: {PRIMARY}; font-size: 11px;")
             top.addWidget(pencil)
-        layout.addLayout(top)
+        col.addLayout(top)
 
         if summary:
             sum_lbl = QLabel(summary)
             sum_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 11px;")
             sum_lbl.setWordWrap(False)
-            layout.addWidget(sum_lbl)
+            col.addWidget(sum_lbl)
+
+        layout.addLayout(col)
 
     def mousePressEvent(self, event):
         if self.cursor().shape() == Qt.CursorShape.PointingHandCursor:
@@ -253,6 +274,142 @@ class SectionRow(QFrame):
 
     def clicked(self):
         pass  # overridden via direct assignment from the panel that creates this row
+
+
+# ── Status badges ────────────────────────────────────────────────────────────
+# Ported from the JSX's subsystemBadge(). The semantics are preserved EXACTLY,
+# because they encode two fixes that were hard-won on the web side:
+#
+#   1. Filter by SUBSYSTEM FIRST, keyword second (never a bare keyword match
+#      across the whole checks[] array). The old checkBadge() cross-contaminated
+#      subsystems -- "material" alone matched process/shaft/bucket/service/
+#      boot_pulley checks all at once. Same lesson already applied in
+#      equipment_tree.node_status() and service_edit's corrosion filter.
+#
+#   2. No matches inside the subsystem is a REAL PASS, not "unevaluated" --
+#      provided a calculation actually ran. Most materials genuinely emit ZERO
+#      subsystem="service" checks (ATEX/hygroscopic are conditional), and
+#      returning nothing there left Service Conditions permanently blank.
+#
+# Returns (label, color) or None. None means "no calculation has run yet".
+BADGE_COLORS = {
+    "FAIL": (DANGER, DANGER_DIM, DANGER_BORDER),
+    "WARN": (WARNING, WARNING_DIM, WARNING_BORDER),
+    "PASS": (SUCCESS, SUCCESS_DIM, SUCCESS_BORDER),
+    "PENDING": (MUTED, "transparent", BORDER),
+}
+
+
+def subsystem_badge(results, subsystems, keywords=None):
+    checks = (results or {}).get("checks") or []
+    if not checks:
+        return None   # genuinely nothing to report yet -- stays blank
+    subs = [subsystems] if isinstance(subsystems, str) else list(subsystems)
+    # `?? "process"` in the JSX -- an untagged check is treated as process.
+    in_sub = [c for c in checks if (c.get("subsystem") or "process") in subs]
+    if keywords:
+        kw = [k.lower() for k in keywords]
+        in_sub = [c for c in in_sub
+                  if any(k in (c.get("msg") or "").lower() for k in kw)]
+    if any(c.get("type") == "fail" for c in in_sub):
+        return "FAIL"
+    if any(c.get("type") == "warn" for c in in_sub):
+        return "WARN"
+    return "PASS"   # evaluated, nothing flagged -- see note 2 above
+
+
+def merge_badges(*badges):
+    """Rollup for an accordion header: FAIL beats WARN beats everything else.
+
+    Mirrors the JSX exactly, including its asymmetry: a group whose children ALL
+    pass shows NO badge (the JSX's `.find(FAIL) ?? .find(WARN)` returns
+    undefined). Rows still show their own PASS. Kept rather than 'improved' --
+    the group header is there to surface problems, and a column of PASS pills
+    down the headers would drown the one that matters.
+    """
+    if any(b == "FAIL" for b in badges):
+        return "FAIL"
+    if any(b == "WARN" for b in badges):
+        return "WARN"
+    return None
+
+
+class StatusPill(QLabel):
+    def __init__(self, label, parent=None):
+        super().__init__(label, parent)
+        color, dim, border = BADGE_COLORS.get(label, BADGE_COLORS["PENDING"])
+        self.setStyleSheet(scoped(
+            self,
+            f"background-color: {dim}; color: {color}; "
+            f"border: 1px solid {border}; border-radius: 999px; "
+            f"padding: 1px 7px; font-size: 9px; font-weight: 700;"
+        ))
+
+
+class AccordionGroup(QWidget):
+    """Collapsible group header + its child rows -- port of the JSX's
+    AccordionGroup. The header carries the group label, its CEMA reference (the
+    ONE place a CEMA tag appears in the sidebar), a rollup badge, and a chevron
+    that rotates on open.
+
+    SCOPED: the header's `border-bottom` would otherwise be inherited by the
+    label, the CEMA tag, the badge and the chevron alike.
+    """
+
+    def __init__(self, label, cema=None, badge=None, default_open=True, parent=None):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._header = QFrame()
+        self._header.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._header.setStyleSheet(scoped(
+            self._header,
+            f"background-color: rgba(255,255,255,.025); border: none; "
+            f"border-bottom: 1px solid {BORDER};",
+            extra="{sel}:hover { background-color: rgba(255,255,255,.05); }",
+        ))
+        hl = QHBoxLayout(self._header)
+        hl.setContentsMargins(12, 10, 12, 10)
+        hl.setSpacing(8)
+
+        title = QLabel(label)
+        title.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700;")
+        hl.addWidget(title)
+        if cema:
+            cema_lbl = QLabel(cema)
+            cema_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 10px;")
+            hl.addWidget(cema_lbl)
+        hl.addStretch()
+        if badge:
+            hl.addWidget(StatusPill(badge))
+        self._chevron = QLabel()
+        self._chevron.setStyleSheet(f"color: {TEXT3}; font-size: 12px;")
+        hl.addWidget(self._chevron)
+
+        self._header.mousePressEvent = lambda _e: self.toggle()
+        outer.addWidget(self._header)
+
+        self._body = QWidget()
+        self._body_layout = QVBoxLayout(self._body)
+        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        self._body_layout.setSpacing(0)
+        outer.addWidget(self._body)
+
+        self._open = default_open
+        self._sync()
+
+    def add_row(self, row):
+        self._body_layout.addWidget(row)
+
+    def toggle(self):
+        self._open = not self._open
+        self._sync()
+
+    def _sync(self):
+        self._chevron.setText("⌄" if self._open else "›")
+        self._body.setVisible(self._open)
 
 
 class DynamicFillBarWidget(QWidget):
@@ -2223,15 +2380,50 @@ class ShaftEditDialog(QDialog):
 
 
 class InputSidebarPanel(QWidget):
-    """Port of InputSidebar.jsx -- a scrollable list of SectionRow summaries,
+    """Port of InputSidebar.jsx -- accordion groups of SectionRow summaries,
     each opening a modal. set_data(inputs, results) like every other component;
-    emits inputsChanged(dict) when the user applies an edit, which main.py
-    listens to and re-runs the calculation with.
+    emits inputsChanged(dict) when the user applies an edit.
 
-    KNOWN FIDELITY GAP (named, not silently absent): the JSX groups these rows
-    into 4 accordions with status badges per row and a Mechanical Design rollup
-    (subsystemBadge()). This is still a flat list with no badges. Left for its
-    own change rather than folded into a styling sweep.
+    GROUPING (this round) -- THREE groups, not the JSX's four
+    ────────────────────────────────────────────────────────────
+    Built from Jay's stated decision logic, which differs from the JSX in one
+    deliberate way:
+
+      DESIGN REQUIREMENTS   everything the CUSTOMER specifies, entered together:
+                            material + properties, tonnage + height, AND service
+                            conditions (dirty/clean/windy). The JSX makes Service
+                            Conditions its own top-level group; here it is a
+                            customer input like any other, so it groups with them.
+
+      MECHANICAL DESIGN     everything DERIVED-then-chosen: belt/chain, bucket,
+                            pulley, shaft, take-up, discharge, feed, casing.
+
+      POWER TRANSMISSION    derived from the design and sized by the user to
+                            match it -- its own group, as in the JSX.
+
+    ROW ORDER inside Mechanical is the PySide order (Belt/Chain and Bucket ahead
+    of Pulley and Shaft), NOT the JSX's. That was a prior deliberate decision --
+    decide material/tonnage/height, then drive type and bucket, THEN the
+    pulley/shaft sizing that depends on them. Jay's logic tree only constrains
+    Pulley to sit immediately before Shaft (head pulley -> tail pulley -> head
+    shaft -> head bearing -> tail shaft -> tail bearing), which it does.
+
+    BADGE SCOPING -- one deliberate divergence from the JSX
+    ──────────────────────────────────────────────────────
+    The JSX badges Head & Tail Pulley with ["shaft","pulley","boot_pulley"],
+    because in the JSX PulleyEdit CONTAINS the head-shaft bearing picker and the
+    shell thickness -- so a shaft problem is actionable from that modal.
+
+    This port moved bearings out: PulleyEditDialog owns wrap angle, boot pulley
+    and shell thickness; ShaftEditDialog owns head shaft, head bearing, boot
+    shaft and boot bearing (steps 3-6 of Jay's logic tree). Keeping "shaft" on
+    the pulley badge would therefore mark Head & Tail Pulley FAIL for something
+    the user CANNOT fix from that dialog -- the badge would point at the wrong
+    door. Each badge is scoped to what its dialog actually owns.
+
+    STILL NOT PORTED (named, not silently absent):
+      * Equipment-tree -> dialog routing (openSectionRef in the JSX).
+      * "Save overrides as custom material" bridge in ProcessEditDialog.
     """
 
     inputsChanged = Signal(dict)
@@ -2255,72 +2447,192 @@ class InputSidebarPanel(QWidget):
         scroll.setWidget(self.list_widget)
         outer.addWidget(scroll)
 
+        # Remembers which groups the user collapsed, so a recalculation (which
+        # rebuilds every row) doesn't spring them all back open mid-edit.
+        self._open_state = {}
+
     def set_data(self, inputs, results):
         self.inputs, self.results = dict(inputs or {}), results or {}
         self._rebuild_list()
 
-    def _add_row(self, label, summary, opener):
-        row = SectionRow(label, summary)
+    # ── Badges ────────────────────────────────────────────────────────
+    # BOOT-BEARING TAGGING (confirmed by grep, not assumed):
+    #   calculations.py:3870  Bearing L10 < 20,000h        subsystem="shaft"
+    #   calculations.py:4391  Boot bearing L10 / upgrade   subsystem="boot_pulley"
+    #
+    # So "boot_pulley" is a MIXED tag: it carries boot pulley GEOMETRY checks
+    # (head:boot ratio, boot shell) AND boot BEARING checks. Those two belong on
+    # different rows in this port -- geometry is step 2 (Pulley dialog), the boot
+    # bearing is step 6 (Shaft dialog's bottom-right quadrant).
+    #
+    # Splitting them by keyword within the subsystem, rather than giving the whole
+    # tag to one row. Subsystem first, keyword second -- the same order of
+    # operations as everywhere else. Without this, a boot-bearing failure would
+    # badge Head & Tail Pulley, whose dialog has no bearing control at all.
+    BOOT_BEARING_KW = ("bearing", "l10")
+
+    def _badges(self):
+        r = self.results
+        checks = r.get("checks") or []
+
+        def boot_split(want_bearing):
+            """boot_pulley checks, partitioned into bearing vs geometry."""
+            out = []
+            for c in checks:
+                if (c.get("subsystem") or "") != "boot_pulley":
+                    continue
+                msg = (c.get("msg") or "").lower()
+                is_brg = any(k in msg for k in self.BOOT_BEARING_KW)
+                if is_brg == want_bearing:
+                    out.append(c)
+            return out
+
+        def verdict(subset):
+            if not checks:
+                return None
+            if any(c.get("type") == "fail" for c in subset):
+                return "FAIL"
+            if any(c.get("type") == "warn" for c in subset):
+                return "WARN"
+            return "PASS"
+
+        shaft_checks = [c for c in checks
+                        if (c.get("subsystem") or "") == "shaft"] + boot_split(True)
+        pulley_checks = [c for c in checks
+                         if (c.get("subsystem") or "") == "pulley"] + boot_split(False)
+
+        b = {
+            "process":   subsystem_badge(r, "process"),
+            # Geometry only -- NOT shaft, NOT boot bearings. See the class docstring.
+            "pulleys":   verdict(pulley_checks),
+            "belt":      subsystem_badge(r, "belt"),
+            "bucket":    subsystem_badge(r, "bucket"),
+            "takeup":    subsystem_badge(r, "takeup"),
+            # Owns ALL shaft checks (sizing, keyway, critical speed, seals, and the
+            # head-bearing L10 that calculations.py tags subsystem="shaft"), PLUS
+            # the boot-bearing checks tagged boot_pulley -- because the boot bearing
+            # is chosen in this dialog, not the pulley one.
+            "shaft":     verdict(shaft_checks),
+            "discharge": subsystem_badge(r, "discharge"),
+            "casing":    subsystem_badge(r, "casing"),
+            "service":   subsystem_badge(r, "service"),
+            "power":     subsystem_badge(r, "power"),
+            "chain":     subsystem_badge(r, "belt",
+                                         ["chain sf", "chain speed", "sprocket"]),
+        }
+        # Feed is NOT a subsystem_badge: feed_design carries its own warnings[]
+        # list rather than emitting checks[] entries. Same special-case as the
+        # JSX, and the same reason equipment_tree's MECHANICAL rollup had to fold
+        # st_feed in explicitly -- a feed warning is invisible to any
+        # checks[]-based rollup.
+        fd = r.get("feed_design")
+        if fd:
+            b["feed"] = "WARN" if fd.get("warnings") else "PASS"
+        else:
+            b["feed"] = "PENDING" if checks else None
+        return b
+
+    def _add_row(self, group, label, summary, opener, badge=None):
+        row = SectionRow(label, summary, badge=badge, depth=1)
         row.clicked = opener
-        self.list_layout.addWidget(row)
+        group.add_row(row)
+
+    def _add_group(self, key, label, cema, badge, default_open):
+        grp = AccordionGroup(label, cema=cema, badge=badge,
+                             default_open=self._open_state.get(key, default_open))
+        grp._header.mousePressEvent = lambda _e, k=key, g=grp: self._toggle_group(k, g)
+        self.list_layout.addWidget(grp)
+        return grp
+
+    def _toggle_group(self, key, grp):
+        grp.toggle()
+        self._open_state[key] = grp._open
 
     def _rebuild_list(self):
         clear_layout(self.list_layout)
+        b = self._badges()
+        is_chain = bool(self.results.get("is_chain"))
+
+        # ── 1. DESIGN REQUIREMENTS -- what the customer specifies ──────
+        req = self._add_group(
+            "requirements", "Design Requirements", "CEMA 375",
+            merge_badges(b["process"], b["service"]), True)
 
         mat = self.results.get("mat") or {}
         mat_name = mat.get("name", self.inputs.get("mat_id", "—"))
         self._add_row(
-            "Design Requirements",
+            req, "Material & Duty",
             f"{self.inputs.get('Q_req','—')}t/h · {self.inputs.get('H_m','—')}m · "
             f"{mat_name} · Fill {self.inputs.get('fill_pct','—')}%",
-            self._open_process_dialog)
-
-        # Belt/Chain and Bucket Selection sit right after Design Requirements
-        # per the engineering-flow discussion -- this used to be after
-        # Pulley/Shaft, the reverse of the order you'd actually decide things in
-        # (material/tonnage/height, then drive type and bucket, THEN the
-        # pulley/shaft sizing that depends on them).
-        is_chain = bool(self.results.get("is_chain"))
+            self._open_process_dialog, b["process"])
         self._add_row(
-            "Chain Selection" if is_chain else "Belt Selection",
+            req, "Service Conditions", self._service_summary(),
+            self._open_service_dialog, b["service"])
+
+        # ── 2. MECHANICAL DESIGN -- derived, then chosen ───────────────
+        mech_badge = merge_badges(
+            b["chain"] if is_chain else b["belt"],
+            b["bucket"], b["pulleys"], b["shaft"], b["takeup"],
+            b["discharge"], b["feed"], b["casing"],
+        )
+        mech = self._add_group(
+            "mechanical", "Mechanical Design", "CEMA 375", mech_badge, True)
+
+        self._add_row(
+            mech, "Chain Selection" if is_chain else "Belt Selection",
             self._chain_summary() if is_chain else self._belt_summary(),
-            self._open_belt_chain_dialog)
+            self._open_belt_chain_dialog, b["chain"] if is_chain else b["belt"])
 
         bkt = self.results.get("bucket") or {}
         self._add_row(
-            "Bucket Selection",
+            mech, "Bucket Selection",
             f"{'Auto: ' if self.inputs.get('auto_bucket') else ''}"
             f"{bkt.get('id', 'auto')} series · {fmt(bkt.get('V'), 1)}L · "
             f"Gap {self.inputs.get('bucket_gap','—')}mm",
-            self._open_bucket_dialog)
+            self._open_bucket_dialog, b["bucket"])
 
         boot_pulley = self.results.get("boot_pulley") or {}
         boot_d = boot_pulley.get("boot_D_mm", self.inputs.get("boot_pulley_D_mm", "—"))
         wrap = self.results.get("wrap_effective_deg", self.inputs.get("wrap_deg", 180))
         self._add_row(
-            "Head & Tail Pulley",
+            mech, "Head & Tail Pulley",
             f"D_H {self.inputs.get('D_mm','—')}mm · D_B {boot_d}mm · "
-            f"{self.inputs.get('n_rpm','—')}rpm · Wrap {wrap}°",
-            self._open_pulley_dialog)
+            f"{self.inputs.get('n_rpm','—')}rpm · Wrap {fmt(wrap, 1)}°",
+            self._open_pulley_dialog, b["pulleys"])
 
         self._add_row(
-            "Shaft Design",
+            mech, "Shaft & Bearings",
             f"{self.inputs.get('shaft_material','A36')} · "
             f"Ø{fmt(self.results.get('d_mm'), 1)}mm · "
             f"{self.inputs.get('shaft_section','solid')} · "
             f"{self.inputs.get('shaft_hub_connection','keyed')}",
-            self._open_shaft_dialog)
+            self._open_shaft_dialog, b["shaft"])
 
-        self._add_row("Take-Up Selection", self._takeup_summary(), self._open_takeup_dialog)
-        self._add_row("Discharge Section", self._discharge_summary(),
-                      self._open_discharge_dialog)
-        self._add_row("Feed Design", self._feed_summary(), self._open_feed_dialog)
-        self._add_row("Casing Design", self._casing_summary(), self._open_casing_dialog)
-        self._add_row("Service Conditions", self._service_summary(),
-                      self._open_service_dialog)
-        self._add_row("Power Transmission", self._power_summary(), self._open_power_dialog)
+        self._add_row(mech, "Take-Up Selection", self._takeup_summary(),
+                      self._open_takeup_dialog, b["takeup"])
+        self._add_row(mech, "Discharge Section", self._discharge_summary(),
+                      self._open_discharge_dialog, b["discharge"])
+        self._add_row(mech, "Feed Design", self._feed_summary(),
+                      self._open_feed_dialog, b["feed"])
+        self._add_row(mech, "Casing Design", self._casing_summary(),
+                      self._open_casing_dialog, b["casing"])
+
+        # ── 3. POWER TRANSMISSION -- derived from the design above ─────
+        power = self._add_group(
+            "power", "Power Transmission", "CEMA 375 §4", b["power"], False)
+        self._add_row(power, "Motor & Drive", self._power_summary(),
+                      self._open_power_dialog, b["power"])
 
         self.list_layout.addStretch()
+
+        # Standards footer -- ported from the JSX, was missing here entirely.
+        footer = QLabel("CEMA 375-2017 · ISO 281 · ASME B17.1")
+        footer.setStyleSheet(scoped(
+            footer,
+            f"color: {TEXT3}; font-size: 10px; padding: 8px 12px; "
+            f"border: none; border-top: 1px solid {BORDER};"
+        ))
+        self.list_layout.addWidget(footer)
 
     # ── Summaries ─────────────────────────────────────────────────────
     def _discharge_summary(self):
