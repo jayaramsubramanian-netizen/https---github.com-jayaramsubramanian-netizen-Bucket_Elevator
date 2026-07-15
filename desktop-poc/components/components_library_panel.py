@@ -482,12 +482,51 @@ class _TypeBrowseView(QWidget):
         self._query = text
         self._debounce.start(300)
 
+    def _summary_fields(self):
+        """Pick up to 3 fields that make a good one-line summary.
+
+        FIXED (#5): this was `self._schema[:3]` -- the first three schema fields,
+        blindly. For buckets, field 1 is `style` (value "AA") and another early
+        field is a LIST rendered as "AA / AC / C / HF / MF / SC" (the recommended-
+        materials / style enumeration). So the Key Specs column printed
+        "AA  ·  AA / AC / C / HF / MF / SC  ·  305 mm" -- the mangled row.
+        (Schema field ORDER is decided by the backend; the panel must not assume
+        the first three fields are good summary specs.)
+
+        Rules: skip any field whose value is a list or contains " / " (an
+        enumeration), and prefer fields that carry a unit hint (dimensions,
+        capacities) since those read as real specs. Falls back to the first
+        non-list fields if fewer than three qualify.
+        """
+        if not self._schema:
+            return []
+
+        def is_listy(field):
+            # look at the first component that has a value for this field
+            for comp in self._components:
+                v = (comp.get("specs") or {}).get(field)
+                if v is None or v == "":
+                    continue
+                if isinstance(v, (list, tuple)):
+                    return True
+                if isinstance(v, str) and (" / " in v or "," in v):
+                    return True
+                return False
+            return False
+
+        scalar = [f for f in self._schema if not is_listy(f["field"])]
+        with_unit = [f for f in scalar if f.get("hint")]
+        chosen = (with_unit + [f for f in scalar if f not in with_unit])[:3]
+        if not chosen:                      # everything was list-valued; degrade gracefully
+            chosen = self._schema[:3]
+        return [f["field"] for f in chosen]
+
     def _apply_filter(self):
         q = self._query.lower()
         filtered = [c for c in self._components
                     if not q or q in c.get("description", "").lower()]
         self._table.setRowCount(len(filtered))
-        key_fields = [f["field"] for f in self._schema[:3]] if self._schema else []
+        key_fields = self._summary_fields()
 
         for row, comp in enumerate(filtered):
             desc_item = QTableWidgetItem(comp.get("description", ""))
@@ -498,10 +537,13 @@ class _TypeBrowseView(QWidget):
             spec_parts = []
             for f in key_fields:
                 if f in specs and specs[f] not in ("", None):
+                    val = specs[f]
+                    if isinstance(val, (list, tuple)):
+                        continue            # never fold a list into the summary line
                     schema_field = next(
                         (s for s in self._schema if s["field"] == f), None)
                     hint = schema_field["hint"] if schema_field else ""
-                    spec_parts.append(f"{specs[f]}{' ' + hint if hint else ''}")
+                    spec_parts.append(f"{val}{' ' + hint if hint else ''}")
             spec_item = QTableWidgetItem("  ·  ".join(spec_parts) or "—")
             spec_item.setForeground(QColor(TEXT2))
             self._table.setItem(row, 1, spec_item)

@@ -33,7 +33,6 @@ def search_materials(query: str = "", category: str = "", limit: int = 40) -> li
     data = resp.json()
     return data if isinstance(data, list) else []
 
-
 def list_material_categories() -> list:
     resp = requests.get(f"{API_BASE_V1}/materials/categories", timeout=15)
     resp.raise_for_status()
@@ -60,7 +59,6 @@ def fetch_components(path: str, params: dict | None = None) -> list:
         if isinstance(v, list):
             return v
     return []
-
 def optimize_elevator_v2(base_input: dict) -> dict:
     """POST to /bucket-elevator/optimize/v2 -- mirrors OptimizerPanel.jsx's
     optimizeElevatorV2(). Uses the /api compat path (not /api/v1), same as
@@ -93,7 +91,6 @@ def download_variant_report(candidates: list, inputs: dict, save_path: str) -> s
         f.write(resp.content)
     return save_path
 
-
 # ── Materials Library CRUD ────────────────────────────────────────────────────
 def fetch_all_materials() -> list:
     """GET /materials -- all built-in materials (full detail, not search-compressed).
@@ -125,7 +122,6 @@ def update_custom_material(mat_id: str, payload: dict) -> dict:
     resp = requests.put(f"{API_BASE_V1}/materials/custom/{mat_id}", json=payload, timeout=15)
     resp.raise_for_status()
     return resp.json()
-
 
 def delete_custom_material(mat_id: str) -> bool:
     """DELETE /materials/custom/{mat_id}. Returns True if deleted."""
@@ -173,14 +169,111 @@ def fetch_model_number(inputs: dict, results: dict) -> str:
         suffix = "-".join(s for s in ["AR" if abr >= 5 else "", "HT" if temp > 80 else ""] if s)
         return f"VM-{family}-{drive}-{w}/{d}" + (f"-{suffix}" if suffix else "")
 
-
 # ── Components Library CRUD ───────────────────────────────────────────────────
 def fetch_component_types() -> dict:
     resp = requests.get(f"{API_BASE_V1}/components/types", timeout=10)
     resp.raise_for_status()
     return resp.json()
 
+
+# Library component types that have a DEDICATED, verified read endpoint. These
+# return the REAL catalogue (buckets -> 40 rows), unlike the generic /components
+# route, which reads the custom_components registry and -- verified -- ignores
+# its component_type filter entirely (asking for type=bucket returned a belt).
+# That mismatch is why the Buckets tab showed a handful of mixed rows instead of
+# the 40 buckets.
+#
+# Only endpoints that ACTUALLY EXIST in backend/main.py are listed (confirmed by
+# grep: motors, gearboxes, bearings, drives, buckets). belts and chains have no
+# dedicated route yet, so they fall through to the generic path below.
+_COMPONENT_ENDPOINTS = {
+    "bucket":   "/components/buckets",
+    "motor":    "/components/motors",
+    "gearbox":  "/components/gearboxes",
+    "bearing":  "/components/bearings",
+    "drive":    "/components/drives",
+}
+
+# ── Flat-DB-row -> panel-shape adapters ──────────────────────────────────────
+# The dedicated endpoints return FLAT DB rows (bucket_id, W_mm, V_L, ...). The
+# Components Library panel and its Edit modal expect the generic shape:
+#     {"id":..., "type":..., "description":..., "specs": {<schema field>: value}}
+# with `specs` keyed by the SCHEMA field names (/components/types), which differ
+# from the DB column names. Without this mapping the list would show 40 rows with
+# blank Description and Key Specs.
+#
+# The bucket map below was verified field-by-field against BOTH the live schema
+# (/components/types) and the live DB columns (/components/buckets): every schema
+# field either maps to a real column or is explicitly marked absent. Getting one
+# wrong would silently swap, e.g., projection and back-wall height on a
+# fabrication input, so the map is spelled out rather than guessed.
+#
+# schema field  ->  DB column
+_BUCKET_SPEC_MAP = {
+    "style":           "style",
+    "width_mm":        "W_mm",
+    "depth_mm":        "H_mm",            # back-wall height: DB H_mm == schema depth_mm
+    "projection_mm":   "P_mm",
+    "struck_volume_L": "V_L",
+    "mass_kg":         "bucket_mass_kg",
+    "bolt_pattern":    "punch",           # DB `punch` holds B6/B7/B8/chain
+    "front_angle_deg": "front_angle_deg",
+    "discharge_type":  "discharge_type",
+    # NOT present in the buckets table -- left blank rather than fabricated:
+    #   lip_height_mm : the 40 Martin buckets never captured front-wall height
+    #   material      : a bucket has no single material; it's a per-design choice
+    #   supplier      : no supplier column in the catalogue
+}
+
+
+def _adapt_bucket_row(row: dict) -> dict:
+    """One flat DB bucket row -> the {id, type, description, specs} shape the
+    library panel and Edit modal expect. Missing schema fields are omitted (the
+    panel treats absent keys as blank) rather than filled with a made-up value."""
+    specs = {}
+    for schema_field, db_col in _BUCKET_SPEC_MAP.items():
+        if db_col in row and row[db_col] not in (None, ""):
+            specs[schema_field] = row[db_col]
+    # Human description: prefer the catalogue designation ("AA 6×4"), fall back to
+    # the id. Append the style-derived duty word if the note carries one.
+    desc = row.get("catalog") or row.get("bucket_id") or row.get("id") or "bucket"
+    return {
+        "id":          row.get("bucket_id") or row.get("id"),
+        "type":        "bucket",
+        "description": str(desc),
+        "specs":       specs,
+        "notes":       row.get("note") or "",
+        # carried through untouched so the panel can flag unconfirmed punching /
+        # custom rows without a second fetch:
+        "punch_confirmed": row.get("punch_confirmed"),
+        "custom":          row.get("custom"),
+    }
+
+
+_ROW_ADAPTERS = {
+    "bucket": _adapt_bucket_row,
+    # motors/gearboxes/bearings/drives: add adapters here when their tabs are
+    # switched to the dedicated endpoints. Until an adapter exists they keep
+    # using the generic /components path (see list_components_api), so nothing
+    # regresses.
+}
+
+
 def list_components_api(component_type: str = "") -> list:
+    """List components of a type for the Components Library.
+
+    For a type with a dedicated endpoint AND a row adapter, reads the real
+    catalogue and reshapes each flat DB row into the panel's expected
+    {id, description, specs} shape. Everything else falls through to the generic
+    /components registry unchanged, so no tab regresses.
+    """
+    endpoint = _COMPONENT_ENDPOINTS.get(component_type)
+    adapter = _ROW_ADAPTERS.get(component_type)
+    if endpoint and adapter:
+        rows = fetch_components(endpoint)
+        return [adapter(r) for r in rows]
+    # Types with a dedicated endpoint but no adapter yet, or no dedicated
+    # endpoint at all, use the generic registry.
     params = {"component_type": component_type} if component_type else {}
     resp = requests.get(f"{API_BASE_V1}/components", params=params, timeout=10)
     resp.raise_for_status()

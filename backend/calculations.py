@@ -354,16 +354,25 @@ def select_chain_auto(
         # returning whichever chain happened to be first in the list.
         candidates = sorted(CHAIN_SERIES, key=lambda x: x["WL_kg"])
 
-    
+    chosen = None
     for ch in candidates:
         if ch["WL_kg"] >= req_WL_kg:
-            return ch
-    # Nothing meets the criterion -> return the STRONGEST so the SF check fails
-    # loudly. Previously this was candidates[-1] on an UNSORTED list: it returned
-    # whatever sat last in catalogue order, which was the heaviest only by
-    # coincidence. Once the catalogue comes from the DB that coincidence is gone.
-    return candidates[-1]
+            chosen = ch
+            break
+    if chosen is None:
+        # Nothing meets the criterion -> return the STRONGEST so the SF check fails
+        # loudly. candidates is sorted, so [-1] genuinely is the heaviest.
+        # Previously this was candidates[-1] on an UNSORTED list: it returned
+        # whatever sat last in catalogue order, the heaviest only by coincidence.
+        # Once the catalogue comes from the DB that coincidence is gone.
+        chosen = candidates[-1]
 
+    # Return a COPY carrying the derived flags. Previously this block sat AFTER an
+    # unconditional `return`, so it was dead code -- `_unverified` was never set,
+    # `chosen` was undefined, and the caller got the raw chain dict. The result:
+    # the unverified-data warning downstream could never fire, because the flag it
+    # keys on did not exist. (This is exactly why the earlier snippet-only edit
+    # produced errors -- it was merged without being run.)
     out = dict(chosen)
     out["_sf_actual"] = (
         chosen["WL_kg"] * 9.81 * max(n_strands, 1) / T_pull_N
@@ -4149,27 +4158,65 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
     _chain_sf_req = float(getattr(inp, "chain_sf", 6.0) or 6.0)
 
     if is_chain and chain_selected:
-        
         _chain_sel    = chain_selected
         _chain_SF_act = chain_SF_actual
-        # Chain working load safety factor
+
+        # ── UNVERIFIED CATALOGUE DATA -- must come first, it qualifies every
+        #    chain check below ─────────────────────────────────────────────────
+        # Every WL_kg and v_max_ms in the chain catalogue is an LLM-GENERATED
+        # placeholder, not traceable to Renold, Webster, Rexnord, Tsubaki, John
+        # King or DIN. The SF below is computed FROM _chain_sel["WL_kg"], so if
+        # that working load is wrong the SF check cannot catch it -- the error is
+        # in the check's own input. A chain whose real WL is half the invented
+        # figure still reports a comfortable SF, and the passing branch would
+        # otherwise print a reassuring green tick citing CEMA on it.
+        #
+        # _unverified is set by select_chain_auto() (True whenever the chosen
+        # chain's `confirmed` flag is not truthy). It is True for all eight seeded
+        # chains today and turns itself off, with NO code change, once real
+        # catalogue data lands carrying confirmed=1. See quarantine_chains.py.
+        _chain_unverified = _chain_sel.get("_unverified", not _chain_sel.get("confirmed", False))
+        if _chain_unverified:
+            checks.append(warn(
+                f"Chain {_chain_sel.get('id', _chain_sel.get('name','?'))} working "
+                f"load ({_chain_sel.get('WL_kg', 0):.0f} kg) is UNVERIFIED placeholder "
+                f"data — not from a manufacturer catalogue. Every safety factor and "
+                f"speed limit reported below is derived FROM this value and does NOT "
+                f"confirm the chain is adequate. Confirm against a real catalogue "
+                f"(DIN 8167 / ISO 1977 / Renold / Webster) before release.",
+                subsystem="belt"))
+
+        # Chain working load safety factor.
+        # NOTE: the SF CRITERION is CEMA 375 §4. The WORKING LOAD it is applied to
+        # is not -- CEMA gives the method, not chain catalogue data.
         if _chain_SF_act is not None:
             if _chain_SF_act < _chain_sf_req:
                 checks.append(fail(
                     f"Chain SF = {_chain_SF_act:.2f} < required {_chain_sf_req:.1f} "
                     f"— chain pull {_chain_pull_N/1000:.1f}kN exceeds "
                     f"{_chain_sel['name']} working load / SF. "
-                    f"Upgrade to heavier chain series [CEMA 375 §4].", subsystem="belt"))
+                    f"Upgrade to heavier chain series [CEMA 375 §4 method].", subsystem="belt"))
             elif _chain_SF_act < _chain_sf_req * 1.10:
                 checks.append(warn(
                     f"Chain SF = {_chain_SF_act:.2f} — within 10% of minimum "
-                    f"{_chain_sf_req:.1f}. Monitor chain elongation [CEMA 375 §4].", subsystem="belt"))
+                    f"{_chain_sf_req:.1f}. Monitor chain elongation [CEMA 375 §4 method].", subsystem="belt"))
             else:
-                checks.append(ok(
+                # Deliberately NOT ok() while the catalogue is unverified. An ok()
+                # renders as a green PASS and rolls up into a green Mechanical
+                # Design header -- actively reassuring the engineer about a number
+                # derived from fabricated data. Downgraded to info() until
+                # confirmed=1, so it still REPORTS the SF without ASSERTING the
+                # chain is adequate. Reverts to ok() on its own when confirmed.
+                _sf_msg = (
                     f"Chain SF = {_chain_SF_act:.2f} ≥ {_chain_sf_req:.1f} "
-                    f"({_chain_sel['name']}, pull {_chain_pull_N/1000:.1f}kN) [CEMA 375 §4]", subsystem="belt"))
+                    f"({_chain_sel['name']}, pull {_chain_pull_N/1000:.1f}kN) [CEMA 375 §4 method]")
+                checks.append(
+                    info(_sf_msg + " — computed from UNVERIFIED catalogue data.", subsystem="belt")
+                    if _chain_unverified else
+                    ok(_sf_msg, subsystem="belt"))
 
-        # Chain speed vs rated maximum
+        # Chain speed vs rated maximum. v_max_ms is from the SAME unverified
+        # catalogue row as WL_kg, so it inherits the caveat above.
         if chain_v_ok is not None:
             if not chain_v_ok:
                 checks.append(fail(
@@ -4177,9 +4224,13 @@ def _build_checks(inp, mat, mat_behavior, bucket, Q, v, cr,
                     f"rated maximum {_chain_sel['v_max_ms']:.2f} m/s — "
                     f"reduce RPM or use heavier chain series [CEMA 375 §4].", subsystem="belt"))
             else:
-                checks.append(ok(
+                _v_msg = (
                     f"Chain speed {v:.2f} m/s ≤ rated {_chain_sel['v_max_ms']:.2f} m/s "
-                    f"[CEMA 375 §4]", subsystem="belt"))
+                    f"[CEMA 375 §4]")
+                checks.append(
+                    info(_v_msg + " — rated speed is UNVERIFIED catalogue data.", subsystem="belt")
+                    if _chain_unverified else
+                    ok(_v_msg, subsystem="belt"))
 
         # Sprocket tooth count
         if sprocket:
