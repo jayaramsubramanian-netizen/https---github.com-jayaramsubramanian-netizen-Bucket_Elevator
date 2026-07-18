@@ -161,17 +161,17 @@ def _kpi_card(label, value, sub, color):
     box, layout = card_frame(bg=PANEL2, border=BORDER, radius=R_SM,
                              margins=(12, 10, 12, 10), spacing=2)
     lbl = QLabel(label)
-    lbl.setStyleSheet(f'color:{TEXT3};font-size:9.5px;')
+    lbl.setStyleSheet(f'color:{TEXT3};font-size:12px;')
     layout.addWidget(lbl)
     val = QLabel(value)
     val.setStyleSheet(
-        f'color:{color};font-size:16px;font-weight:700;font-family:{FF_MONO};'
+        f'color:{color};font-size:18px;font-weight:700;font-family:{FF_MONO};'
     )
     layout.addWidget(val)
     if sub:
         sub_lbl = QLabel(sub)
         sub_lbl.setWordWrap(True)
-        sub_lbl.setStyleSheet(f'color:{MUTED};font-size:9px;')
+        sub_lbl.setStyleSheet(f'color:{MUTED};font-size:12px;')
         layout.addWidget(sub_lbl)
     return box
 
@@ -194,14 +194,14 @@ class _SubTabBtn(QPushButton):
                 self,
                 f'background: transparent; color: {PRIMARY}; border: none; '
                 f'border-bottom: 2px solid {PRIMARY}; padding: 7px 12px; '
-                f'font-size: 11px; font-weight: 700;'
+                f'font-size: 13px; font-weight: 700;'
             ))
         else:
             self.setStyleSheet(scoped(
                 self,
                 f'background: transparent; color: {TEXT2}; border: none; '
                 f'border-bottom: 2px solid transparent; padding: 7px 12px; '
-                f'font-size: 11px;'
+                f'font-size: 13px;'
             ))
 
 
@@ -482,7 +482,7 @@ class ChartsPanel(QWidget):
                 f'Slip check: (T3+F_eff)/T3 = {ratio_actual:.3f}  '
                 f'vs  e^μθ = {fmt(euler_ratio, 3)}   {slip_icon}'
             )
-            lbl.setStyleSheet(f'color:{slip_color};font-size:10px;padding:4px 0;')
+            lbl.setStyleSheet(f'color:{slip_color};font-size:13px;padding:4px 0;')
             layout.addWidget(lbl)
 
         layout.addStretch()
@@ -497,14 +497,14 @@ class ChartsPanel(QWidget):
                 'Chain pull is a single lumped value — see Components tab.'
             )
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet(f'color:{TEXT2};font-size:11px;padding:20px;')
+            lbl.setStyleSheet(f'color:{TEXT2};font-size:13px;padding:20px;')
             return lbl
 
         tp = r.get('tension_profile')
         if not tp or not tp.get('stations'):
             lbl = QLabel('Tension profile not available — recalculate to generate.')
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet(f'color:{TEXT2};font-size:11px;padding:20px;')
+            lbl.setStyleSheet(f'color:{TEXT2};font-size:13px;padding:20px;')
             return lbl
 
         stations = tp['stations']

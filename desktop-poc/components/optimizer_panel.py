@@ -210,7 +210,7 @@ def _primary_button(text):
     btn.setStyleSheet(scoped(
         btn,
         f"background-color: {PRIMARY}; color: white; border: none; "
-        f"border-radius: {R_SM}px; padding: 10px 18px; font-size: 12.5px; "
+        f"border-radius: {R_SM}px; padding: 10px 18px; font-size: 14px; "
         f"font-weight: 700;",
         # Hover was a hardcoded "#5aa8ff", in no palette. Now a real token.
         extra=("{sel}:disabled { background-color: %s; color: %s; }\n"
@@ -227,7 +227,7 @@ def _secondary_button(text):
         btn,
         f"background-color: {SURFACE}; color: {TEXT2}; "
         f"border: 1px solid {BORDER2}; border-radius: {R_SM}px; "
-        f"padding: 8px 14px; font-size: 11.5px; font-weight: 600;",
+        f"padding: 8px 14px; font-size: 14px; font-weight: 600;",
         extra=("{sel}:disabled { color: %s; }\n"
                "{sel}:hover:!disabled { background-color: %s; color: %s; }"
                % (TEXT3, BORDER2, TEXT)),
@@ -280,7 +280,7 @@ class OptimizerPanel(QWidget):
             'front — every row below is a real trade-off, not a single "best" answer.'
         )
         intro.setWordWrap(True)
-        intro.setStyleSheet(f"color: {TEXT2}; font-size: 11px; line-height: 145%;")
+        intro.setStyleSheet(f"color: {TEXT2}; font-size: 13px; line-height: 145%;")
         self.body_layout.addWidget(intro)
 
         self.run_btn = _primary_button("▶  RUN OPTIMIZER")
@@ -372,7 +372,7 @@ class OptimizerPanel(QWidget):
             )
             text.setWordWrap(True)
             text.setTextFormat(Qt.TextFormat.RichText)
-            text.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+            text.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             bl.addWidget(text)
             self.status_box.addWidget(box)
 
@@ -425,7 +425,7 @@ class OptimizerPanel(QWidget):
 
         self.report_status = QLabel("")
         self.report_status.setWordWrap(True)
-        self.report_status.setStyleSheet(f"color: {TEAL}; font-size: 10.5px;")
+        self.report_status.setStyleSheet(f"color: {TEAL}; font-size: 13px;")
         self.status_box.addWidget(self.report_status)
 
     # ── Selection ────────────────────────────────────────────────────
@@ -489,12 +489,12 @@ class OptimizerPanel(QWidget):
 
     def _on_report_done(self, path):
         self.export_btn.setEnabled(len(self._selected) > 0)
-        self.report_status.setStyleSheet(f"color: {SUCCESS}; font-size: 10.5px;")
+        self.report_status.setStyleSheet(f"color: {SUCCESS}; font-size: 13px;")
         self.report_status.setText(f"Saved: {path}")
 
     def _on_report_error(self, message):
         self.export_btn.setEnabled(len(self._selected) > 0)
-        self.report_status.setStyleSheet(f"color: {DANGER}; font-size: 10.5px;")
+        self.report_status.setStyleSheet(f"color: {DANGER}; font-size: 13px;")
         self.report_status.setText(f"Export failed: {message}")
 
     # ── Results table ────────────────────────────────────────────────
@@ -503,7 +503,7 @@ class OptimizerPanel(QWidget):
         if not self._sorted_front:
             empty = QLabel("No feasible Pareto points found for this configuration.")
             empty.setStyleSheet(
-                f"color: {TEXT2}; font-size: 11px; font-style: italic;")
+                f"color: {TEXT2}; font-size: 13px; font-style: italic;")
             self.results_box.addWidget(empty)
             return
 
@@ -525,12 +525,12 @@ class OptimizerPanel(QWidget):
                 background-color: {PANEL2}; color: {TEXT};
                 border: 1px solid {BORDER};
                 border-radius: {R_SM}px; gridline-color: {BORDER};
-                font-size: 11px;
+                font-size: 13px;
             }}
             QHeaderView::section {{
                 background-color: {PANEL}; color: {TEXT2}; border: none;
                 border-bottom: 1px solid {BORDER}; padding: 6px 4px;
-                font-size: 9.5px; font-weight: 700; letter-spacing: .04em;
+                font-size: 12px; font-weight: 700; letter-spacing: .04em;
             }}
             QTableWidget::item {{ padding: 4px; border: none; }}
         """)
@@ -615,5 +615,5 @@ class OptimizerPanel(QWidget):
             "for visibility."
         )
         footer.setWordWrap(True)
-        footer.setStyleSheet(f"color: {TEXT2}; font-size: 10px;")
+        footer.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         self.results_box.addWidget(footer)

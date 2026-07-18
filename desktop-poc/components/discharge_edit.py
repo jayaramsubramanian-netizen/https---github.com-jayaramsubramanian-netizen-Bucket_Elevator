@@ -134,7 +134,7 @@ class DischargeEditDialog(QDialog):
             f"({'auto from bucket style' if not self._dtype_val[0] else 'overridden'})."
         )
         dtype_note.setWordWrap(True)
-        dtype_note.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+        dtype_note.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         bl.addWidget(dtype_note)
 
         # ── Chute angle ──────────────────────────────────────────────
@@ -248,7 +248,7 @@ class DischargeEditDialog(QDialog):
             if geom.get("note"):
                 geom_note = QLabel(geom["note"])
                 geom_note.setWordWrap(True)
-                geom_note.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+                geom_note.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
                 bl.addWidget(geom_note)
 
         # ── Casing clearance ─────────────────────────────────────────

@@ -162,7 +162,7 @@ class CasingEditDialog(QDialog):
             if cs.get("note"):
                 note_lbl = QLabel(cs["note"])
                 note_lbl.setWordWrap(True)
-                note_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+                note_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
                 bl.addWidget(note_lbl)
 
         # ── Fastener count ───────────────────────────────────────────

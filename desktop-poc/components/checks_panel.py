@@ -129,7 +129,7 @@ def _driver_row(d, sev_color):
     head.setSpacing(8)
     unit = f" {d['unit']}" if d.get("unit") else ""
     label = QLabel(f"{d.get('label','')}  =  {d.get('current','—')}{unit}")
-    label.setStyleSheet(f"color: {TEXT}; font-size: 11px; font-weight: 600;")
+    label.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 600;")
     head.addWidget(label, 1)
 
     priority = d.get("priority", 2)
@@ -140,7 +140,7 @@ def _driver_row(d, sev_color):
         f"background-color: {PRIMARY_DIM if is_primary else MUTED_DIM}; "
         f"color: {sev_color if is_primary else TEXT3}; border: none; "
         f"border-radius: {R_PILL}px; padding: 1px 7px; "
-        f"font-size: 9px; font-weight: 700;"
+        f"font-size: 12px; font-weight: 700;"
     ))
     head.addWidget(tag)
     box.addLayout(head)
@@ -165,7 +165,7 @@ def _driver_row(d, sev_color):
 
     impact = QLabel(d.get("impact", ""))
     impact.setWordWrap(True)
-    impact.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+    impact.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
     box.addWidget(impact)
     return box
 
@@ -198,7 +198,7 @@ def _correction_row(c, priority, has_conflict, on_apply):
         f"background-color: {PRIMARY_DIM if is_primary else MUTED_DIM}; "
         f"color: {PRIMARY if is_primary else TEXT3}; "
         f"border: 1px solid {PRIMARY if is_primary else BORDER}; "
-        f"border-radius: 11px; font-size: 11px; font-weight: 700;"
+        f"border-radius: 11px; font-size: 13px; font-weight: 700;"
     ))
     layout.addWidget(marker)
 
@@ -208,7 +208,7 @@ def _correction_row(c, priority, has_conflict, on_apply):
     head_row = QHBoxLayout()
     label = QLabel(c.get("label", ""))
     label.setWordWrap(True)
-    label.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700;")
+    label.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700;")
     head_row.addWidget(label, 1)
 
     can_apply = (on_apply is not None and c.get("param")
@@ -222,7 +222,7 @@ def _correction_row(c, priority, has_conflict, on_apply):
             apply_btn,
             f"background-color: {PRIMARY_DIM}; color: {PRIMARY}; "
             f"border: 1px solid {PRIMARY}; border-radius: {R_SM - 2}px; "
-            f"padding: 4px 12px; font-size: 10.5px; font-weight: 700;",
+            f"padding: 4px 12px; font-size: 13px; font-weight: 700;",
             extra="{sel}:hover { background-color: %s; }" % PRIMARY_RING,
         ))
         apply_btn.clicked.connect(
@@ -234,21 +234,21 @@ def _correction_row(c, priority, has_conflict, on_apply):
     value_row.setSpacing(8)
     unit = f" {c['unit']}" if c.get("unit") else ""
     cur = QLabel(f"{c.get('current','—')}{unit}")
-    cur.setStyleSheet(f"color: {TEXT2}; font-size: 11px; font-family: {FF_MONO};")
+    cur.setStyleSheet(f"color: {TEXT2}; font-size: 13px; font-family: {FF_MONO};")
     value_row.addWidget(cur)
     arrow = QLabel("→")
-    arrow.setStyleSheet(f"color: {TEXT3}; font-size: 11px;")
+    arrow.setStyleSheet(f"color: {TEXT3}; font-size: 13px;")
     value_row.addWidget(arrow)
     tgt = QLabel(f"{c.get('target','—')}{unit}")
     tgt.setStyleSheet(
-        f"color: {PRIMARY}; font-size: 11px; font-weight: 700; font-family: {FF_MONO};")
+        f"color: {PRIMARY}; font-size: 13px; font-weight: 700; font-family: {FF_MONO};")
     value_row.addWidget(tgt)
 
     change_pct = c.get("change_pct")
     if change_pct is not None and change_pct != 0:
         pct_color = WARNING if abs(change_pct) > 30 else TEXT3
         pct = QLabel(f"({'+' if change_pct > 0 else ''}{change_pct:.0f}%)")
-        pct.setStyleSheet(f"color: {pct_color}; font-size: 10px;")
+        pct.setStyleSheet(f"color: {pct_color}; font-size: 13px;")
         value_row.addWidget(pct)
     value_row.addStretch()
     content.addLayout(value_row)
@@ -256,7 +256,7 @@ def _correction_row(c, priority, has_conflict, on_apply):
     if c.get("note"):
         note = QLabel(c["note"])
         note.setWordWrap(True)
-        note.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+        note.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         content.addWidget(note)
 
     if has_conflict:
@@ -299,11 +299,11 @@ def _finding_card(finding, on_apply, conflict_params):
     text_box.setSpacing(3)
     metric = QLabel(finding.get("failure_metric", ""))
     metric.setWordWrap(True)
-    metric.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700;")
+    metric.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700;")
     text_box.addWidget(metric)
     expl = QLabel(finding.get("explanation", ""))
     expl.setWordWrap(True)
-    expl.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+    expl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
     text_box.addWidget(expl)
     hl.addLayout(text_box, 1)
     layout.addWidget(head)
@@ -321,7 +321,7 @@ def _finding_card(finding, on_apply, conflict_params):
         dl.setSpacing(10)
         dl_head = QLabel("CONTRIBUTING FACTORS")
         dl_head.setStyleSheet(
-            f"color: {TEXT3}; font-size: 9.5px; font-weight: 700; letter-spacing: .06em;")
+            f"color: {TEXT3}; font-size: 12px; font-weight: 700; letter-spacing: .06em;")
         dl.addWidget(dl_head)
         for d in drivers:
             dl.addLayout(_driver_row(d, color))
@@ -337,7 +337,7 @@ def _finding_card(finding, on_apply, conflict_params):
         cl.setSpacing(8)
         cl_head = QLabel("SUGGESTED CORRECTIONS")
         cl_head.setStyleSheet(
-            f"color: {TEXT3}; font-size: 9.5px; font-weight: 700; letter-spacing: .06em;")
+            f"color: {TEXT3}; font-size: 12px; font-weight: 700; letter-spacing: .06em;")
         cl.addWidget(cl_head)
         for c in corrections:
             has_conflict = c.get("param") in conflict_params
@@ -390,11 +390,11 @@ class RootCauseSection(QWidget):
         header = QHBoxLayout()
         title = QLabel("ROOT CAUSE ANALYSIS")
         title.setStyleSheet(
-            f"color: {TEXT3}; font-size: 11px; font-weight: 700; letter-spacing: .07em;")
+            f"color: {TEXT3}; font-size: 13px; font-weight: 700; letter-spacing: .07em;")
         header.addWidget(title)
         header.addStretch()
         count_lbl = QLabel(f"{len(findings)} finding{'s' if len(findings) != 1 else ''}")
-        count_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 10px;")
+        count_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 13px;")
         header.addWidget(count_lbl)
         self.layout_.addLayout(header)
 
@@ -408,12 +408,12 @@ class RootCauseSection(QWidget):
                 ol.setContentsMargins(16, 24, 16, 24)
                 icon = QLabel("✓")
                 icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                icon.setStyleSheet(f"color: {SUCCESS}; font-size: 28px;")
+                icon.setStyleSheet(f"color: {SUCCESS}; font-size: 30px;")
                 ol.addWidget(icon)
                 msg = QLabel("All checks pass — no corrections required")
                 msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 msg.setStyleSheet(
-                    f"color: {SUCCESS}; font-size: 13px; font-weight: 700;")
+                    f"color: {SUCCESS}; font-size: 15px; font-weight: 700;")
                 ol.addWidget(msg)
                 self.layout_.addWidget(ok_box)
             return
@@ -437,7 +437,7 @@ class RootCauseSection(QWidget):
             head_row.addWidget(status_badge("warn", size=16))
             head_lbl = QLabel("Conflicting Recommendations")
             head_lbl.setStyleSheet(
-                f"color: {WARNING}; font-size: 12px; font-weight: 700;")
+                f"color: {WARNING}; font-size: 14px; font-weight: 700;")
             head_row.addWidget(head_lbl)
             head_row.addStretch()
             cl.addLayout(head_row)
@@ -448,7 +448,7 @@ class RootCauseSection(QWidget):
                 "this value."
             )
             desc.setWordWrap(True)
-            desc.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+            desc.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             cl.addWidget(desc)
 
             for c in conflicts:
@@ -456,19 +456,19 @@ class RootCauseSection(QWidget):
                                       margins=(10, 8, 10, 8), spacing=4)
                 pname = QLabel(c["param"])
                 pname.setStyleSheet(
-                    f"color: {TEXT}; font-size: 11px; font-weight: 700; "
+                    f"color: {TEXT}; font-size: 13px; font-weight: 700; "
                     f"font-family: {FF_MONO};")
                 pl.addWidget(pname)
                 for e in c["entries"]:
                     erow = QHBoxLayout()
                     elabel = QLabel(e["finding_label"])
                     elabel.setWordWrap(True)
-                    elabel.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+                    elabel.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
                     erow.addWidget(elabel, 1)
                     u = f" {e['unit']}" if e.get("unit") else ""
                     eval_lbl = QLabel(f"{e['current']}{u} → {e['target']}{u}")
                     eval_lbl.setStyleSheet(
-                        f"color: {PRIMARY}; font-size: 10.5px; font-weight: 700; "
+                        f"color: {PRIMARY}; font-size: 13px; font-weight: 700; "
                         f"font-family: {FF_MONO};")
                     erow.addWidget(eval_lbl)
                     pl.addLayout(erow)
@@ -512,10 +512,10 @@ class DesignRecommendationsSection(QWidget):
             text_box = QVBoxLayout()
             text_box.setSpacing(2)
             head = QLabel("Design passes all checks")
-            head.setStyleSheet(f"color: {SUCCESS}; font-size: 12px; font-weight: 700;")
+            head.setStyleSheet(f"color: {SUCCESS}; font-size: 14px; font-weight: 700;")
             text_box.addWidget(head)
             sub = QLabel("No corrective actions required for this configuration.")
-            sub.setStyleSheet(f"color: {TEXT2}; font-size: 10px;")
+            sub.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             text_box.addWidget(sub)
             bl.addLayout(text_box, 1)
             self.layout_.addWidget(box)
@@ -524,7 +524,7 @@ class DesignRecommendationsSection(QWidget):
         header = QHBoxLayout()
         title = QLabel("DESIGN RECOMMENDATIONS")
         title.setStyleSheet(
-            f"color: {TEXT3}; font-size: 11px; font-weight: 700; letter-spacing: .07em;")
+            f"color: {TEXT3}; font-size: 13px; font-weight: 700; letter-spacing: .07em;")
         header.addWidget(title)
 
         fail_n = sum(1 for r in recs if r.get("status") == "fail")
@@ -540,7 +540,7 @@ class DesignRecommendationsSection(QWidget):
                 badge,
                 f"background-color: {dim}; color: {fg}; "
                 f"border: 1px solid {brd}; border-radius: {R_PILL}px; "
-                f"padding: 1px 7px; font-size: 9px; font-weight: 700;"
+                f"padding: 1px 7px; font-size: 12px; font-weight: 700;"
             ))
             header.addWidget(badge)
         header.addStretch()
@@ -574,12 +574,12 @@ class DesignRecommendationsSection(QWidget):
             hl.addWidget(status_badge(status, size=16))
             check_tag = QLabel(rec.get("check", ""))
             check_tag.setStyleSheet(
-                f"color: {color}; font-size: 9.5px; font-weight: 700; "
+                f"color: {color}; font-size: 12px; font-weight: 700; "
                 f"letter-spacing: .08em;")
             hl.addWidget(check_tag)
             problem = QLabel(rec.get("problem", ""))
             problem.setWordWrap(True)
-            problem.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+            problem.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             hl.addWidget(problem, 1)
             cl.addWidget(head)
 
@@ -591,13 +591,13 @@ class DesignRecommendationsSection(QWidget):
                 arow.setSpacing(8)
                 num = QLabel(f"{j + 1}.")
                 num.setStyleSheet(
-                    f"color: {color}; font-size: 9px; font-weight: 700; "
+                    f"color: {color}; font-size: 12px; font-weight: 700; "
                     f"font-family: {FF_MONO};")
                 num.setFixedWidth(16)
                 arow.addWidget(num)
                 action_lbl = QLabel(action)
                 action_lbl.setWordWrap(True)
-                action_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+                action_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
                 arow.addWidget(action_lbl, 1)
                 actions_box.addLayout(arow)
             cl.addLayout(actions_box)
@@ -621,7 +621,7 @@ class FlatChecksSection(QWidget):
 
         checks_header = QLabel("ENGINEERING CHECKS")
         checks_header.setStyleSheet(
-            f"color: {TEXT3}; font-size: 11px; font-weight: 700; letter-spacing: .07em;")
+            f"color: {TEXT3}; font-size: 13px; font-weight: 700; letter-spacing: .07em;")
         self.layout_.addWidget(checks_header)
 
         if not checks:
@@ -636,7 +636,7 @@ class FlatChecksSection(QWidget):
 
         summary_header = QLabel("DESIGN SUMMARY")
         summary_header.setStyleSheet(
-            f"color: {TEXT3}; font-size: 11px; font-weight: 700; "
+            f"color: {TEXT3}; font-size: 13px; font-weight: 700; "
             f"letter-spacing: .07em; margin-top: 6px;")
         self.layout_.addWidget(summary_header)
 
@@ -704,12 +704,12 @@ class FlatChecksSection(QWidget):
             rl = QHBoxLayout(row_box)
             rl.setContentsMargins(10, 5, 10, 5)
             klabel = QLabel(k)
-            klabel.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+            klabel.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             rl.addWidget(klabel)
             rl.addStretch()
             vlabel = QLabel(str(v))
             vlabel.setStyleSheet(
-                f"color: {TEXT}; font-size: 10.5px; font-family: {FF_MONO};")
+                f"color: {TEXT}; font-size: 13px; font-family: {FF_MONO};")
             rl.addWidget(vlabel)
             grid.addWidget(row_box, i // 2, i % 2)
         self.layout_.addLayout(grid)

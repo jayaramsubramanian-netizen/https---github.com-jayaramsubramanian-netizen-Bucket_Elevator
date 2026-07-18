@@ -130,7 +130,7 @@ class ColHeader(QFrame):
         text_box.setSpacing(7)
         lbl = QLabel(label.upper())
         lbl.setStyleSheet(
-            f"color: {TEXT3}; font-size: 9.5px; font-weight: 700; letter-spacing: 1px;")
+            f"color: {TEXT3}; font-size: 12px; font-weight: 700; letter-spacing: 1px;")
         text_box.addWidget(lbl)
 
         # The sub-label is ALWAYS created (hidden when empty) rather than only
@@ -141,7 +141,7 @@ class ColHeader(QFrame):
         # of why it silently stopped appearing.
         self.sub_lbl = QLabel(sub or "")
         self.sub_lbl.setStyleSheet(
-            f"color: {MUTED}; font-size: 8.5px; font-family: {FF_MONO};")
+            f"color: {MUTED}; font-size: 12px; font-family: {FF_MONO};")
         self.sub_lbl.setVisible(bool(sub))
         text_box.addWidget(self.sub_lbl)
 
@@ -163,7 +163,7 @@ def _pill_label(text, color, dim, border):
         lbl,
         f"background-color: {dim}; color: {color}; "
         f"border: 1px solid {border}; border-radius: {R_PILL}px; "
-        f"padding: 2px 7px; font-size: 8.5px; font-weight: 700;"
+        f"padding: 2px 7px; font-size: 12px; font-weight: 700;"
     ))
     return lbl
 
@@ -191,13 +191,13 @@ class Placeholder(QWidget):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon = QLabel("○")
-        icon.setStyleSheet(f"color: {MUTED}; font-size: 28px;")
+        icon.setStyleSheet(f"color: {MUTED}; font-size: 30px;")
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_lbl = QLabel(title)
-        title_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 13px; font-weight: 600;")
+        title_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 15px; font-weight: 600;")
         title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         source_lbl = QLabel(f"not yet ported  ·  {source_file}")
-        source_lbl.setStyleSheet(f"color: {MUTED}; font-size: 10px;")
+        source_lbl.setStyleSheet(f"color: {MUTED}; font-size: 13px;")
         source_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         for w in (icon, title_lbl, source_lbl):
             layout.addWidget(w)
@@ -234,7 +234,7 @@ class ModulePill(QPushButton):
                 f"background-color: {PRIMARY}; color: white; "
                 f"border-style: none; border-width: 0px; "
                 f"border-radius: {MODULE_PILL_RADIUS}px; "
-                f"padding: 0px 14px; font-size: 12px; font-weight: 600;"
+                f"padding: 0px 14px; font-size: 14px; font-weight: 600;"
             ))
         else:
             self.setStyleSheet(scoped(
@@ -242,7 +242,7 @@ class ModulePill(QPushButton):
                 f"background-color: transparent; color: {TEXT3}; "
                 f"border-style: none; border-width: 0px; "
                 f"border-radius: {MODULE_PILL_RADIUS}px; "
-                f"padding: 0px 14px; font-size: 12px;",
+                f"padding: 0px 14px; font-size: 14px;",
                 extra=("{sel}:disabled { color: %s; }\n"
                        "{sel}:hover:!disabled { color: %s; }" % (MUTED, TEXT2)),
             ))
@@ -275,17 +275,17 @@ class AppTitleBar(QFrame):
         icon.setStyleSheet(scoped(
             icon,
             f"background-color: {BRAND_RED}; border: none; "
-            f"border-radius: {R_SM}px; color: white; font-size: 15px;"
+            f"border-radius: {R_SM}px; color: white; font-size: 17px;"
         ))
         layout.addWidget(icon)
 
         brand_box = QVBoxLayout()
         brand_box.setSpacing(0)
         brand_title = QLabel("VECTRIX™")
-        brand_title.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 700;")
+        brand_title.setStyleSheet(f"color: {TEXT}; font-size: 15px; font-weight: 700;")
         brand_sub = QLabel("DESIGN PLATFORM")
         brand_sub.setStyleSheet(
-            f"color: {TEXT3}; font-size: 8px; font-weight: 600; letter-spacing: 1px;")
+            f"color: {TEXT3}; font-size: 12px; font-weight: 600; letter-spacing: 1px;")
         brand_box.addWidget(brand_title)
         brand_box.addWidget(brand_sub)
         layout.addLayout(brand_box)
@@ -307,7 +307,7 @@ class AppTitleBar(QFrame):
             badge_lbl,
             f"background-color: rgba(255,255,255,.18); color: white; border: none; "
             f"border-radius: {R_PILL}px; padding: 2px 8px; "
-            f"font-size: 8.5px; font-weight: 700; margin-left: -8px;"
+            f"font-size: 12px; font-weight: 700; margin-left: -8px;"
         ))
         module_layout.addWidget(badge_lbl)
 
@@ -325,7 +325,7 @@ class AppTitleBar(QFrame):
             f"background-color: {SURFACE}; color: {TEXT2}; "
             f"border-style: solid; border-width: 1px; border-color: {BORDER2}; "
             f"border-radius: {MODULE_PILL_RADIUS}px; padding: 0px 14px; "
-            f"font-size: 11.5px; font-weight: 600;",
+            f"font-size: 14px; font-weight: 600;",
             extra="{sel}:hover { background-color: %s; }" % BORDER2,
         ))
         pdf_btn.clicked.connect(lambda: self.on_pdf_clicked() if self.on_pdf_clicked else None)
@@ -349,7 +349,7 @@ class AppTitleBar(QFrame):
         # so it can be restored verbatim.
         self._version_text = self.version_lbl.text()
         self.version_lbl.setStyleSheet(
-            f"color: {TEXT3}; font-size: 10.5px; font-weight: 600; letter-spacing: .5px;")
+            f"color: {TEXT3}; font-size: 13px; font-weight: 600; letter-spacing: .5px;")
         layout.addWidget(self.version_lbl)
 
 
@@ -378,7 +378,7 @@ class NavTabButton(QPushButton):
                 f"background-color: {PRIMARY}; color: white; "
                 f"border-style: none; border-width: 0px; "
                 f"border-radius: {TAB_PILL_RADIUS}px; "
-                f"padding: 0px 16px; font-size: 12.5px; font-weight: 600;"
+                f"padding: 0px 16px; font-size: 14px; font-weight: 600;"
             ))
         else:
             self.setStyleSheet(scoped(
@@ -386,7 +386,7 @@ class NavTabButton(QPushButton):
                 f"background-color: transparent; color: {TEXT3}; "
                 f"border-style: none; border-width: 0px; "
                 f"border-radius: {TAB_PILL_RADIUS}px; "
-                f"padding: 0px 16px; font-size: 12.5px;",
+                f"padding: 0px 16px; font-size: 14px;",
                 extra="{sel}:hover { background-color: %s; color: %s; }" % (SURFACE, TEXT2),
             ))
 
@@ -430,7 +430,7 @@ class TopNav(QFrame):
             QMenu {{ background-color: {PANEL2}; color: {TEXT2};
                 border: 1px solid {BORDER2}; border-radius: {R_MD}px; padding: 4px; }}
             QMenu::item {{ padding: 6px 24px 6px 14px;
-                border-radius: {R_SM}px; font-size: 12px; }}
+                border-radius: {R_SM}px; font-size: 14px; }}
             QMenu::item:selected {{ background-color: {PRIMARY}; color: white; }}
             QMenu::separator {{ height: 1px; background-color: {BORDER};
                 margin: 4px 8px; }}
@@ -444,7 +444,7 @@ class TopNav(QFrame):
             f"background-color: transparent; color: {TEXT2}; "
             f"border-style: none; border-width: 0px; "
             f"border-radius: {TAB_PILL_RADIUS}px; "
-            f"padding: 0px 16px; font-size: 12.5px; font-weight: 600;",
+            f"padding: 0px 16px; font-size: 14px; font-weight: 600;",
             extra=("{sel}:hover { background-color: %s; }\n"
                    "{sel}::menu-indicator { image: none; }" % SURFACE),
         ))
@@ -1112,7 +1112,7 @@ class ShellWindow(QMainWindow):
         menu.setStyleSheet(
             f"QMenu {{ background-color: {PANEL2}; color: {TEXT}; "
             f"border: 1px solid {BORDER2}; border-radius: {R_SM}px; padding: 4px; }}"
-            f"QMenu::item {{ padding: 7px 18px; font-size: 11px; }}"
+            f"QMenu::item {{ padding: 7px 18px; font-size: 13px; }}"
             f"QMenu::item:selected {{ background-color: {PRIMARY}; color: #fff; "
             f"border-radius: 3px; }}"
         )

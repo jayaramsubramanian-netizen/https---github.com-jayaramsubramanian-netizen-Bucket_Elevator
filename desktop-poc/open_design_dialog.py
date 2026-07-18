@@ -43,7 +43,7 @@ class OpenDesignDialog(QDialog):
 
         # Header
         header = QLabel("Open Design")
-        header.setStyleSheet(f"color:{TEXT};font-size:14px;font-weight:700;")
+        header.setStyleSheet(f"color:{TEXT};font-size:16px;font-weight:700;")
         layout.addWidget(header)
 
         # Filter row
@@ -53,7 +53,7 @@ class OpenDesignDialog(QDialog):
         self.search_box.setPlaceholderText("Search by model number...")
         self.search_box.setStyleSheet(
             f"background:{PANEL2};color:{TEXT};border:1px solid {BORDER};"
-            f"border-radius:5px;padding:5px 10px;font-size:11px;"
+            f"border-radius:5px;padding:5px 10px;font-size:13px;"
         )
         self.search_box.textChanged.connect(self._apply_filter)
         filter_row.addWidget(self.search_box, 1)
@@ -61,7 +61,7 @@ class OpenDesignDialog(QDialog):
         self.stage_filter = QComboBox()
         self.stage_filter.setStyleSheet(
             f"background:{PANEL2};color:{TEXT};border:1px solid {BORDER};"
-            f"border-radius:5px;padding:5px 10px;font-size:11px;"
+            f"border-radius:5px;padding:5px 10px;font-size:13px;"
         )
         self.stage_filter.addItem("All stages", 0)
         for stage, label in [(1,"CONCEPT"),(2,"PRELIMINARY"),(3,"DETAILED"),(4,"RELEASED")]:
@@ -81,10 +81,10 @@ class OpenDesignDialog(QDialog):
         self.table.setAlternatingRowColors(False)
         self.table.setStyleSheet(
             f"QTableWidget{{background:{PANEL2};color:{TEXT};border:none;"
-            f"gridline-color:{BORDER};font-size:11px;}}"
+            f"gridline-color:{BORDER};font-size:13px;}}"
             f"QHeaderView::section{{background:{PANEL};color:{TEXT2};border:none;"
             f"border-bottom:1px solid {BORDER};padding:7px 8px;"
-            f"font-size:9.5px;font-weight:700;letter-spacing:.04em;}}"
+            f"font-size:12px;font-weight:700;letter-spacing:.04em;}}"
             f"QTableWidget::item{{padding:6px 8px;border-bottom:1px solid {BORDER};}}"
         )
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -100,7 +100,7 @@ class OpenDesignDialog(QDialog):
         layout.addWidget(sep)
 
         self.status_lbl = QLabel("No file selected")
-        self.status_lbl.setStyleSheet(f"color:{TEXT3};font-size:10px;")
+        self.status_lbl.setStyleSheet(f"color:{TEXT3};font-size:13px;")
         layout.addWidget(self.status_lbl)
 
         btn_row = QHBoxLayout()
@@ -109,7 +109,7 @@ class OpenDesignDialog(QDialog):
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setStyleSheet(
             f"QPushButton{{background:transparent;color:{TEXT2};border:1px solid {BORDER};"
-            f"border-radius:5px;padding:7px 18px;font-size:11.5px;}}"
+            f"border-radius:5px;padding:7px 18px;font-size:14px;}}"
         )
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(cancel_btn)
@@ -117,7 +117,7 @@ class OpenDesignDialog(QDialog):
         self.open_btn.setEnabled(False)
         self.open_btn.setStyleSheet(
             f"QPushButton{{background:{PRIMARY};color:#fff;border:none;border-radius:5px;"
-            f"padding:7px 18px;font-size:11.5px;font-weight:700;}}"
+            f"padding:7px 18px;font-size:14px;font-weight:700;}}"
             f"QPushButton:disabled{{background:{PANEL2};color:{TEXT3};}}"
         )
         self.open_btn.clicked.connect(self._open_selected)
@@ -180,4 +180,4 @@ class OpenDesignDialog(QDialog):
             self.accept()
         except Exception as e:
             self.status_lbl.setText(f"Error loading file: {e}")
-            self.status_lbl.setStyleSheet(f"color:{DANGER};font-size:10px;")
+            self.status_lbl.setStyleSheet(f"color:{DANGER};font-size:13px;")

@@ -20,7 +20,7 @@ It did NOT use dialog_helpers' shared field widgets. It rolled its own:
 
     def _input_style():
         return (f"background:{PANEL2};color:{TEXT};border:1px solid {BORDER};"
-                f"border-radius:5px;padding:5px 8px;font-size:12px;")
+                f"border-radius:5px;padding:5px 8px;font-size:14px;")
 
 ...and applied that same string to QLineEdit, QTextEdit, QSpinBox AND
 QDoubleSpinBox. Two separate failures follow from that:
@@ -101,7 +101,7 @@ def _styled_textedit(edit):
         QTextEdit {{
             background-color: {SURFACE}; color: {TEXT};
             border: 1px solid {BORDER2}; border-radius: {R_SM}px;
-            padding: 5px 8px; font-size: 12px;
+            padding: 5px 8px; font-size: 14px;
         }}
         QTextEdit:focus {{ border: 1px solid {PRIMARY}; }}
     """)
@@ -119,7 +119,7 @@ def _btn(text, primary=False, danger=False):
         btn.setStyleSheet(scoped(
             btn,
             f"background-color: {PRIMARY}; color: #fff; border: none; "
-            f"border-radius: {R_SM}px; padding: 7px 14px; font-size: 11.5px; "
+            f"border-radius: {R_SM}px; padding: 7px 14px; font-size: 14px; "
             f"font-weight: 700;",
             extra="{sel}:disabled { background-color: %s; color: %s; }"
                   % (SURFACE, TEXT3),
@@ -130,7 +130,7 @@ def _btn(text, primary=False, danger=False):
             btn,
             f"background-color: transparent; color: {color}; "
             f"border: 1px solid {BORDER2}; border-radius: {R_SM}px; "
-            f"padding: 4px 10px; font-size: 10.5px;",
+            f"padding: 4px 10px; font-size: 13px;",
             extra="{sel}:hover { background-color: %s; }" % SURFACE,
         ))
     return btn
@@ -239,7 +239,7 @@ class ComponentForm(QWidget):
             singular = type_label[:-1] if type_label.endswith("s") else type_label
             title_text = f"New {singular}"
         title = QLabel(title_text)
-        title.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 700;")
+        title.setStyleSheet(f"color: {TEXT}; font-size: 15px; font-weight: 700;")
         hl.addWidget(title, 1)
         cancel_btn = _btn("Cancel")
         cancel_btn.clicked.connect(self.cancelled)
@@ -255,7 +255,7 @@ class ComponentForm(QWidget):
             self.error_lbl,
             f"color: {DANGER}; background-color: {DANGER_DIM}; "
             f"border: 1px solid {DANGER_BORDER}; border-radius: {R_SM}px; "
-            f"padding: 7px 12px; font-size: 11px; margin: 8px 14px;"
+            f"padding: 7px 12px; font-size: 13px; margin: 8px 14px;"
         ))
         self.error_lbl.hide()
         outer.addWidget(self.error_lbl)
@@ -272,7 +272,7 @@ class ComponentForm(QWidget):
 
         # Description (always first)
         desc_lbl = QLabel("Description *")
-        desc_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px; font-weight: 600;")
+        desc_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px; font-weight: 600;")
         self.desc_edit = styled_lineedit(
             QLineEdit(str(initial.get("description") or "")),
             placeholder="Unique identifier for this component",
@@ -294,7 +294,7 @@ class ComponentForm(QWidget):
 
             current_val = (initial.get("specs") or {}).get(fname, default)
             lbl = QLabel(f"{label}{' (' + hint + ')' if hint else ''}")
-            lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+            lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             lbl.setWordWrap(True)
 
             if ftype_name == "float":
@@ -321,7 +321,7 @@ class ComponentForm(QWidget):
         # Notes
         notes_row = len(schema) // 2 + 2
         notes_lbl = QLabel("Notes")
-        notes_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+        notes_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         self.notes_edit = _styled_textedit(QTextEdit(str(initial.get("notes") or "")))
         self.notes_edit.setMaximumHeight(60)
         grid.addWidget(notes_lbl, notes_row, 0)
@@ -449,12 +449,12 @@ class _TypeBrowseView(QWidget):
         self._table.setStyleSheet(f"""
             QTableWidget {{
                 background-color: {PANEL2}; color: {TEXT}; border: none;
-                gridline-color: {BORDER}; font-size: 11px;
+                gridline-color: {BORDER}; font-size: 13px;
             }}
             QHeaderView::section {{
                 background-color: {PANEL}; color: {TEXT2}; border: none;
                 border-bottom: 1px solid {BORDER}; padding: 7px 8px;
-                font-size: 9.5px; font-weight: 700;
+                font-size: 12px; font-weight: 700;
             }}
             QTableWidget::item {{
                 padding: 5px 8px; border: none;
@@ -471,7 +471,7 @@ class _TypeBrowseView(QWidget):
         self._footer_lbl = QLabel("Loading…")
         self._footer_lbl.setStyleSheet(scoped(
             self._footer_lbl,
-            f"color: {MUTED}; font-size: 10px; padding: 6px 14px; "
+            f"color: {MUTED}; font-size: 13px; padding: 6px 14px; "
             f"border: none; border-top: 1px solid {BORDER}; "
             f"background-color: {PANEL2};"
         ))
@@ -721,14 +721,14 @@ class ComponentsLibraryPanel(QWidget):
                 btn,
                 f"background-color: {PRIMARY_DIM}; color: {PRIMARY}; "
                 f"border: none; border-bottom: 2px solid {PRIMARY}; "
-                f"padding: 6px 12px; font-size: 10px; font-weight: 700;"
+                f"padding: 6px 12px; font-size: 13px; font-weight: 700;"
             ))
         else:
             btn.setStyleSheet(scoped(
                 btn,
                 f"background-color: transparent; color: {TEXT3}; border: none; "
                 f"border-bottom: 2px solid transparent; padding: 6px 12px; "
-                f"font-size: 10px;",
+                f"font-size: 13px;",
                 extra="{sel}:hover { color: %s; }" % TEXT2,
             ))
 

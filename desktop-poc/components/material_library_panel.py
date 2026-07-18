@@ -32,7 +32,7 @@ styling instead of using dialog_helpers:
 
     def _input_style():
         return (f"background-color:{PANEL2};color:{TEXT};border:1px solid {BORDER};"
-                f"border-radius:5px;padding:5px 8px;font-size:12px;...")
+                f"border-radius:5px;padding:5px 8px;font-size:14px;...")
 
 ...applied to QLineEdit, QComboBox AND QDoubleSpinBox. Two failures:
 
@@ -154,7 +154,7 @@ def _btn(text, style="secondary", danger=False):
         btn.setStyleSheet(scoped(
             btn,
             f"background-color: {PRIMARY}; color: #fff; border: none; "
-            f"border-radius: {R_SM}px; padding: 7px 14px; font-size: 11.5px; "
+            f"border-radius: {R_SM}px; padding: 7px 14px; font-size: 14px; "
             f"font-weight: 700;",
             # Was a hardcoded "#5aa8ff" hover, in no palette. Now a real token.
             extra=("{sel}:disabled { background-color: %s; color: %s; }\n"
@@ -167,7 +167,7 @@ def _btn(text, style="secondary", danger=False):
             btn,
             f"background-color: transparent; color: {color}; "
             f"border: 1px solid {BORDER2}; border-radius: {R_SM}px; "
-            f"padding: 4px 10px; font-size: 10.5px;",
+            f"padding: 4px 10px; font-size: 13px;",
             extra="{sel}:hover { background-color: %s; color: %s; }"
                   % (SURFACE, TEXT),
         ))
@@ -227,7 +227,7 @@ class _DeleteWorker(QThread):
 def _section_head(text):
     lbl = QLabel(text.upper())
     lbl.setStyleSheet(
-        f"color: {PRIMARY}; font-size: 10px; font-weight: 700; "
+        f"color: {PRIMARY}; font-size: 13px; font-weight: 700; "
         f"letter-spacing: .05em; margin-bottom: 2px;")
     return lbl
 
@@ -236,12 +236,12 @@ def _field_label(text, hint=None):
     box = QVBoxLayout()
     box.setSpacing(1)
     lbl = QLabel(text)
-    lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px; font-weight: 600;")
+    lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px; font-weight: 600;")
     box.addWidget(lbl)
     if hint:
         h = QLabel(hint)
         h.setWordWrap(True)
-        h.setStyleSheet(f"color: {MUTED}; font-size: 9px;")
+        h.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
         box.addWidget(h)
     return box
 
@@ -283,7 +283,7 @@ class MaterialForm(QWidget):
         else:
             title_text = "New Custom Material"
         title = QLabel(title_text)
-        title.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 700;")
+        title.setStyleSheet(f"color: {TEXT}; font-size: 15px; font-weight: 700;")
         hl.addWidget(title, 1)
         cancel_btn = _btn("Cancel")
         cancel_btn.clicked.connect(self.cancelled)
@@ -299,7 +299,7 @@ class MaterialForm(QWidget):
             self.error_lbl,
             f"color: {DANGER}; background-color: {DANGER_DIM}; "
             f"border: 1px solid {DANGER_BORDER}; border-radius: {R_SM}px; "
-            f"padding: 7px 12px; font-size: 11px; margin: 8px 14px;"
+            f"padding: 7px 12px; font-size: 13px; margin: 8px 14px;"
         ))
         self.error_lbl.hide()
         outer.addWidget(self.error_lbl)
@@ -395,7 +395,7 @@ class MaterialForm(QWidget):
         if self._form.get("based_on"):
             based = QLabel(str(self._form["based_on"]))
             based.setStyleSheet(
-                f"color: {MUTED}; font-size: 10px; font-family: {FF_MONO};")
+                f"color: {MUTED}; font-size: 13px; font-family: {FF_MONO};")
             self._add_field(layout, "Based on", based)
 
         layout.addStretch()
@@ -494,7 +494,7 @@ class MaterialForm(QWidget):
         self._cr_max = self._double_spin("pref_cr_max", 0.0, 10.0, 0.05, 2)
         cr_row.addWidget(self._cr_min)
         dash = QLabel("–")
-        dash.setStyleSheet(f"color: {TEXT3}; font-size: 12px;")
+        dash.setStyleSheet(f"color: {TEXT3}; font-size: 14px;")
         cr_row.addWidget(dash)
         cr_row.addWidget(self._cr_max)
         cr_container = QWidget()
@@ -516,7 +516,7 @@ class MaterialForm(QWidget):
         for code, label in HAZARD_OPTIONS:
             cb = QCheckBox(label)
             cb.setChecked(code in current)
-            cb.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+            cb.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             cb.toggled.connect(
                 lambda checked, c=code: self._toggle_hazard(c, checked))
             layout.addWidget(cb)
@@ -694,7 +694,7 @@ class MaterialLibraryPanel(QWidget):
         tl.addWidget(self._cat_combo)
 
         self._custom_only_cb = QCheckBox("Custom only")
-        self._custom_only_cb.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+        self._custom_only_cb.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         self._custom_only_cb.toggled.connect(self._set_custom_only)
         tl.addWidget(self._custom_only_cb)
 
@@ -714,12 +714,12 @@ class MaterialLibraryPanel(QWidget):
         self._table.setStyleSheet(f"""
             QTableWidget {{
                 background-color: {PANEL2}; color: {TEXT}; border: none;
-                gridline-color: {BORDER}; font-size: 11px;
+                gridline-color: {BORDER}; font-size: 13px;
             }}
             QHeaderView::section {{
                 background-color: {PANEL}; color: {TEXT2}; border: none;
                 border-bottom: 1px solid {BORDER}; padding: 7px 6px;
-                font-size: 9.5px; font-weight: 700; letter-spacing: .04em;
+                font-size: 12px; font-weight: 700; letter-spacing: .04em;
             }}
             QTableWidget::item {{
                 padding: 5px 6px; border: none;
@@ -736,7 +736,7 @@ class MaterialLibraryPanel(QWidget):
         self._footer_lbl = QLabel("Loading…")
         self._footer_lbl.setStyleSheet(scoped(
             self._footer_lbl,
-            f"color: {MUTED}; font-size: 10px; padding: 6px 14px; "
+            f"color: {MUTED}; font-size: 13px; padding: 6px 14px; "
             f"border: none; border-top: 1px solid {BORDER}; "
             f"background-color: {PANEL2};"
         ))

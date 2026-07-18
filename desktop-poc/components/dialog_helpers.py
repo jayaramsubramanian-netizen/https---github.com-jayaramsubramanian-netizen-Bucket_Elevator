@@ -97,7 +97,7 @@ def flag_note(status, text, parent_layout=None):
     layout.addWidget(status_badge(status))
     lbl = QLabel(text)
     lbl.setWordWrap(True)
-    lbl.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")   # no border -> safe
+    lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")   # no border -> safe
     layout.addWidget(lbl, 1)
     if parent_layout is not None:
         parent_layout.addWidget(row)
@@ -143,7 +143,7 @@ def section_head(text):
     # (The cascade rule only bites when a `border` is involved.)
     lbl = QLabel(text.upper())
     lbl.setStyleSheet(
-        f"color: {TEXT2}; font-size: 11px; font-weight: 700; "
+        f"color: {TEXT2}; font-size: 13px; font-weight: 700; "
         f"letter-spacing: 1px; margin-top: 4px;"
     )
     return lbl
@@ -154,13 +154,13 @@ def field_row(label, widget, unit=None, note=None, status=None):
     box = QVBoxLayout()
     box.setSpacing(3)
     lbl = QLabel(label)
-    lbl.setStyleSheet(f"color: {TEXT2}; font-size: 11px; font-weight: 600;")
+    lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px; font-weight: 600;")
     box.addWidget(lbl)
     row = QHBoxLayout()
     row.addWidget(widget)
     if unit:
         unit_lbl = QLabel(unit)
-        unit_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 10.5px;")
+        unit_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 13px;")
         row.addWidget(unit_lbl)
     box.addLayout(row)
     if status or note:
@@ -171,14 +171,14 @@ def field_row(label, widget, unit=None, note=None, status=None):
             if note:
                 note_lbl = QLabel(note)
                 note_lbl.setWordWrap(True)
-                note_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+                note_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
                 note_row.addWidget(note_lbl, 1)
             else:
                 note_row.addStretch()
             box.addLayout(note_row)
         else:
             note_lbl = QLabel(note)
-            note_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+            note_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             note_lbl.setWordWrap(True)
             box.addWidget(note_lbl)
     return box
@@ -233,7 +233,7 @@ def styled_spinbox(spinbox):
         QAbstractSpinBox {{
             background-color: {SURFACE}; color: {TEXT};
             border: 1px solid {BORDER2};
-            border-radius: {R_SM}px; padding: 5px 22px 5px 8px; font-size: 12px;
+            border-radius: {R_SM}px; padding: 5px 22px 5px 8px; font-size: 14px;
         }}
         QAbstractSpinBox:focus {{ border: 1px solid {PRIMARY}; }}
         QAbstractSpinBox::up-button {{
@@ -285,7 +285,7 @@ def styled_combo(combo):
         QComboBox {{
             background-color: {SURFACE}; color: {TEXT};
             border: 1px solid {BORDER2};
-            border-radius: {R_SM}px; padding: 5px 8px; font-size: 12px;
+            border-radius: {R_SM}px; padding: 5px 8px; font-size: 14px;
         }}
         QComboBox:focus {{ border: 1px solid {PRIMARY}; }}
         QComboBox::drop-down {{
@@ -315,7 +315,7 @@ def styled_lineedit(edit, placeholder=None):
         QLineEdit {{
             background-color: {SURFACE}; color: {TEXT};
             border: 1px solid {BORDER2};
-            border-radius: {R_SM}px; padding: 5px 10px; font-size: 12px;
+            border-radius: {R_SM}px; padding: 5px 10px; font-size: 14px;
         }}
         QLineEdit:focus {{ border: 1px solid {PRIMARY}; }}
     """)
@@ -340,11 +340,11 @@ def modal_header(title, cema=None):
     hl.setContentsMargins(16, 12, 16, 12)
     hl.setSpacing(2)
     title_lbl = QLabel(title)
-    title_lbl.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700;")
+    title_lbl.setStyleSheet(f"color: {TEXT}; font-size: 16px; font-weight: 700;")
     hl.addWidget(title_lbl)
     if cema:
         sub = QLabel(cema)
-        sub.setStyleSheet(f"color: {TEXT3}; font-size: 10.5px;")
+        sub.setStyleSheet(f"color: {TEXT3}; font-size: 13px;")
         hl.addWidget(sub)
     return header
 
@@ -364,7 +364,7 @@ def modal_footer(dialog):
     cancel.setStyleSheet(scoped(
         cancel,
         f"background-color: transparent; color: {TEXT2}; border: none; "
-        f"padding: 6px 14px; font-size: 11.5px;",
+        f"padding: 6px 14px; font-size: 14px;",
         extra="{sel}:hover { color: %s; }" % TEXT,
     ))
     cancel.clicked.connect(dialog.reject)
@@ -374,7 +374,7 @@ def modal_footer(dialog):
         apply_btn,
         f"background-color: {PRIMARY}; color: white; border: none; "
         f"border-radius: {R_MD}px; padding: 6px 18px; "
-        f"font-size: 11.5px; font-weight: 600;",
+        f"font-size: 14px; font-weight: 600;",
     ))
     apply_btn.clicked.connect(dialog.accept)
 
@@ -405,10 +405,10 @@ def stat_box(stats, status=None, note=None):
         col = QVBoxLayout()
         col.setSpacing(1)
         l = QLabel(label)
-        l.setStyleSheet(f"color: {TEXT3}; font-size: 9.5px;")
+        l.setStyleSheet(f"color: {TEXT3}; font-size: 12px;")
         v = QLabel(str(value))
         v.setStyleSheet(
-            f"color: {TEXT}; font-size: 13px; font-weight: 700; "
+            f"color: {TEXT}; font-size: 15px; font-weight: 700; "
             f"font-family: {FF_MONO};"
         )
         col.addWidget(l)
@@ -424,7 +424,7 @@ def stat_box(stats, status=None, note=None):
         if note:
             note_lbl = QLabel(note)
             note_lbl.setWordWrap(True)
-            note_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+            note_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             note_row.addWidget(note_lbl, 1)
         else:
             note_row.addStretch()
@@ -558,12 +558,12 @@ class ComponentPickerWidget(QWidget):
                       else "0 options available — catalog not yet populated for this component")
         count_lbl = QLabel(count_text)
         count_lbl.setStyleSheet(
-            f"color: {TEXT3 if self.options else WARNING}; font-size: 10px;")
+            f"color: {TEXT3 if self.options else WARNING}; font-size: 13px;")
         layout.addWidget(count_lbl)
         if note:
             note_lbl = QLabel(note)
             note_lbl.setWordWrap(True)
-            note_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10px;")
+            note_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             layout.addWidget(note_lbl)
 
     def value(self):
@@ -671,10 +671,10 @@ def styled_message_box(icon, title, text, parent, buttons=None):
         box.setStandardButtons(buttons)
     box.setStyleSheet(
         f"QMessageBox {{ background-color: {PANEL}; }}"
-        f"QMessageBox QLabel {{ color: {TEXT}; font-size: 12px; border: none; }}"
+        f"QMessageBox QLabel {{ color: {TEXT}; font-size: 14px; border: none; }}"
         f"QMessageBox QPushButton {{ background-color: {SURFACE}; color: {TEXT}; "
         f"border: 1px solid {BORDER2}; border-radius: {R_MD}px; padding: 6px 16px; "
-        f"font-size: 11.5px; min-width: 70px; }}"
+        f"font-size: 14px; min-width: 70px; }}"
         f"QMessageBox QPushButton:hover {{ background-color: {BORDER2}; }}"
     )
     return box

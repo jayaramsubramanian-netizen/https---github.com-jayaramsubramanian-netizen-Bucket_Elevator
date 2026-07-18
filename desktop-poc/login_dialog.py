@@ -27,7 +27,7 @@ from auth import AuthDB, UserRecord, set_current_user, ROLES
 def _input_style():
     return (
         f"background-color:{PANEL2};color:{TEXT};border:1px solid {BORDER};"
-        f"border-radius:5px;padding:6px 10px;font-size:12px;"
+        f"border-radius:5px;padding:6px 10px;font-size:14px;"
     )
 
 
@@ -35,13 +35,13 @@ def _btn_style(primary=False):
     if primary:
         return (
             f"QPushButton{{background:{PRIMARY};color:#fff;border:none;border-radius:5px;"
-            f"padding:8px 20px;font-size:12px;font-weight:700;}}"
+            f"padding:8px 20px;font-size:14px;font-weight:700;}}"
             f"QPushButton:hover{{background:#4a9cf5;}}"
             f"QPushButton:disabled{{background:{PANEL2};color:{TEXT3};}}"
         )
     return (
         f"QPushButton{{background:transparent;color:{TEXT2};border:1px solid {BORDER};"
-        f"border-radius:5px;padding:8px 20px;font-size:12px;}}"
+        f"border-radius:5px;padding:8px 20px;font-size:14px;}}"
         f"QPushButton:hover{{background:{PANEL2};}}"
     )
 
@@ -71,7 +71,7 @@ class LoginDialog(QDialog):
         brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(brand)
         sub = QLabel("Bucket Elevator Design System")
-        sub.setStyleSheet(f"color:{TEXT2};font-size:11px;")
+        sub.setStyleSheet(f"color:{TEXT2};font-size:13px;")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(sub)
 
@@ -88,7 +88,7 @@ class LoginDialog(QDialog):
         self.username_edit = QLineEdit()
         self.username_edit.setPlaceholderText("Username")
         self.username_edit.setStyleSheet(_input_style())
-        _lbl_u = QLabel("Username:"); _lbl_u.setStyleSheet(f"color:{TEXT2};font-size:11px;")
+        _lbl_u = QLabel("Username:"); _lbl_u.setStyleSheet(f"color:{TEXT2};font-size:13px;")
         form.addRow(_lbl_u, self.username_edit)
 
         self.password_edit = QLineEdit()
@@ -96,12 +96,12 @@ class LoginDialog(QDialog):
         self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_edit.setStyleSheet(_input_style())
         self.password_edit.returnPressed.connect(self._attempt_login)
-        _lbl_p = QLabel("Password:"); _lbl_p.setStyleSheet(f"color:{TEXT2};font-size:11px;")
+        _lbl_p = QLabel("Password:"); _lbl_p.setStyleSheet(f"color:{TEXT2};font-size:13px;")
         form.addRow(_lbl_p, self.password_edit)
         layout.addLayout(form)
 
         self.error_lbl = QLabel("")
-        self.error_lbl.setStyleSheet(f"color:{DANGER};font-size:10.5px;")
+        self.error_lbl.setStyleSheet(f"color:{DANGER};font-size:13px;")
         self.error_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.error_lbl.hide()
         layout.addWidget(self.error_lbl)
@@ -159,7 +159,7 @@ class FirstLaunchWizard(QDialog):
 
         title = QLabel("First-Launch Setup — Create Administrator Account")
         title.setWordWrap(True)
-        title.setStyleSheet(f"color:{TEXT};font-size:12px;font-weight:700;")
+        title.setStyleSheet(f"color:{TEXT};font-size:14px;font-weight:700;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
@@ -169,7 +169,7 @@ class FirstLaunchWizard(QDialog):
             "You can create further accounts after signing in."
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet(f"color:{TEXT2};font-size:10.5px;")
+        desc.setStyleSheet(f"color:{TEXT2};font-size:13px;")
         layout.addWidget(desc)
 
         sep = QFrame()
@@ -204,12 +204,12 @@ class FirstLaunchWizard(QDialog):
             ("Password:",        self.password_edit),
             ("Confirm password:", self.confirm_edit),
         ]:
-            _fl = QLabel(label); _fl.setStyleSheet(f"color:{TEXT2};font-size:11px;")
+            _fl = QLabel(label); _fl.setStyleSheet(f"color:{TEXT2};font-size:13px;")
             form.addRow(_fl, widget)
         layout.addLayout(form)
 
         self.error_lbl = QLabel("")
-        self.error_lbl.setStyleSheet(f"color:{DANGER};font-size:10.5px;")
+        self.error_lbl.setStyleSheet(f"color:{DANGER};font-size:13px;")
         self.error_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.error_lbl.hide()
         layout.addWidget(self.error_lbl)
@@ -275,7 +275,7 @@ class UserManagerDialog(QDialog):
         layout.setSpacing(12)
 
         header = QLabel("User Management")
-        header.setStyleSheet(f"color:{TEXT};font-size:14px;font-weight:700;")
+        header.setStyleSheet(f"color:{TEXT};font-size:16px;font-weight:700;")
         layout.addWidget(header)
 
         self.table = QTableWidget(0, 5)
@@ -286,7 +286,7 @@ class UserManagerDialog(QDialog):
         self.table.setStyleSheet(
             f"QTableWidget{{background:{PANEL2};color:{TEXT};border:none;gridline-color:{BORDER};}}"
             f"QHeaderView::section{{background:{PANEL};color:{TEXT2};border:none;"
-            f"border-bottom:1px solid {BORDER};padding:6px;font-size:9.5px;font-weight:700;}}"
+            f"border-bottom:1px solid {BORDER};padding:6px;font-size:12px;font-weight:700;}}"
         )
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table)
@@ -363,12 +363,12 @@ class _CreateUserDialog(QDialog):
             ("Job title:", self.title_edit), ("Company:", self.company_edit),
             ("Password:", self.pw_edit), ("Role:", self.role_combo),
         ]:
-            _fl = QLabel(label); _fl.setStyleSheet(f"color:{TEXT2};font-size:11px;")
+            _fl = QLabel(label); _fl.setStyleSheet(f"color:{TEXT2};font-size:13px;")
             form.addRow(_fl, widget)
         layout.addLayout(form)
 
         self.error_lbl = QLabel("")
-        self.error_lbl.setStyleSheet(f"color:{DANGER};font-size:10px;")
+        self.error_lbl.setStyleSheet(f"color:{DANGER};font-size:13px;")
         self.error_lbl.hide()
         layout.addWidget(self.error_lbl)
 

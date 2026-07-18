@@ -131,7 +131,7 @@ class ServiceEditDialog(QDialog):
             "humid by 8%) and bucket-material corrosion suitability."
         )
         env_note.setWordWrap(True)
-        env_note.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+        env_note.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         bl.addWidget(env_note)
 
         # ── Friction coefficient ─────────────────────────────────────
@@ -167,7 +167,7 @@ class ServiceEditDialog(QDialog):
             if lagging.get("recommendation"):
                 rec_lbl = QLabel(lagging["recommendation"])
                 rec_lbl.setWordWrap(True)
-                rec_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+                rec_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
                 bl.addWidget(rec_lbl)
         else:
             placeholder = QLabel(
@@ -175,7 +175,7 @@ class ServiceEditDialog(QDialog):
                 "(not applicable for chain drives).")
             placeholder.setWordWrap(True)
             placeholder.setStyleSheet(
-                f"color: {TEXT2}; font-size: 11px; font-style: italic;")
+                f"color: {TEXT2}; font-size: 13px; font-style: italic;")
             bl.addWidget(placeholder)
 
         # ── Environment-driven checks ────────────────────────────────

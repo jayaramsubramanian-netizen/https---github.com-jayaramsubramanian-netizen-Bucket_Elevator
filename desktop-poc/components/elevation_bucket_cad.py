@@ -290,12 +290,12 @@ class BucketDetailCADWidget(QWidget):
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(6, 4, 6, 4)
         lbl = QLabel("Drawing scale:")
-        lbl.setStyleSheet("color: #ddd; font-size: 11px;")
+        lbl.setStyleSheet("color: #ddd; font-size: 13px;")
         toolbar.addWidget(lbl)
         self._scale_combo = QComboBox()
         self._scale_combo.setStyleSheet(
             "QComboBox { background: #f0f0eb; color: #1a1a1a; border: 1px solid #999; "
-            "border-radius: 3px; padding: 3px 8px; font-size: 11px; }"
+            "border-radius: 3px; padding: 3px 8px; font-size: 13px; }"
             "QComboBox::drop-down { border: none; }"
             "QComboBox QAbstractItemView { background: #f0f0eb; color: #1a1a1a; "
             "selection-background-color: #2266cc; selection-color: #ffffff; }"
@@ -307,7 +307,7 @@ class BucketDetailCADWidget(QWidget):
         toolbar.addWidget(self._scale_combo)
         toolbar.addStretch()
         hint = QLabel("Left-drag a view to reposition (snaps to 5mm grid) · Middle-drag to pan · Wheel to zoom")
-        hint.setStyleSheet("color: #888; font-size: 10px;")
+        hint.setStyleSheet("color: #888; font-size: 13px;")
         toolbar.addWidget(hint)
         toolbar_widget = QWidget()
         toolbar_widget.setLayout(toolbar)

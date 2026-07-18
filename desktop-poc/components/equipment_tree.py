@@ -131,7 +131,7 @@ class EquipmentTreePanel(QWidget):
         self.tree.itemClicked.connect(self._on_item_clicked)
         self.tree.setStyleSheet(f"""
             QTreeWidget {{ background-color: {BG}; color: {TEXT2};
-                border: none; font-size: 12px; outline: 0; }}
+                border: none; font-size: 14px; outline: 0; }}
             QTreeWidget::item {{ padding: 3px 2px; border: none; }}
             QTreeWidget::item:selected {{ background-color: {PANEL}; }}
             QTreeWidget::item:hover {{ background-color: {PANEL}; }}
@@ -143,7 +143,7 @@ class EquipmentTreePanel(QWidget):
             dlayout = QVBoxLayout(detail)
             self.detail_title = QLabel("Select a leaf to see its checks")
             self.detail_title.setStyleSheet(
-                f"color: {TEXT2}; font-size: 12px; font-weight: 600; padding: 8px;")
+                f"color: {TEXT2}; font-size: 14px; font-weight: 600; padding: 8px;")
             self.detail_text = QTextEdit()
             self.detail_text.setReadOnly(True)
             # QTextEdit has a viewport child, so this is object-scoped rather
@@ -198,7 +198,7 @@ class EquipmentTreePanel(QWidget):
         status = data["status"]
         color = STATUS_COLOR.get(status, NONE_C)
         self.detail_title.setText(f"{data['label']}  —  {status.upper()}")
-        self.detail_title.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 700; padding: 8px;")
+        self.detail_title.setStyleSheet(f"color: {color}; font-size: 15px; font-weight: 700; padding: 8px;")
         self.detail_text.setPlainText(self._detail_text_for(data))
 
     def _show_detail_popup(self, data):
@@ -224,11 +224,11 @@ class EquipmentTreePanel(QWidget):
         hlayout = QVBoxLayout(header)
         hlayout.setContentsMargins(16, 12, 16, 12)
         title = QLabel(f"{data['label']}  —  {status.upper()}")
-        title.setStyleSheet(f"color: {color}; font-size: 14px; font-weight: 700;")
+        title.setStyleSheet(f"color: {color}; font-size: 16px; font-weight: 700;")
         hlayout.addWidget(title)
         if data.get("sub"):
             sub = QLabel(data["sub"])
-            sub.setStyleSheet(f"color: {TEXT3}; font-size: 11px;")
+            sub.setStyleSheet(f"color: {TEXT3}; font-size: 13px;")
             hlayout.addWidget(sub)
         layout.addWidget(header)
 
@@ -238,7 +238,7 @@ class EquipmentTreePanel(QWidget):
         body.setStyleSheet(scoped(
             body,
             f"background-color: {BG}; color: {TEXT2}; border: none; "
-            f"padding: 14px; font-size: 12px;"))
+            f"padding: 14px; font-size: 14px;"))
         layout.addWidget(body)
 
         footer = QFrame()
@@ -252,7 +252,7 @@ class EquipmentTreePanel(QWidget):
             close_btn,
             f"background-color: {SURFACE}; color: {TEXT2}; "
             f"border: 1px solid {BORDER2}; border-radius: {R_SM}px; "
-            f"padding: 6px 16px; font-size: 11.5px;",
+            f"padding: 6px 16px; font-size: 14px;",
             extra="{sel}:hover { color: %s; }" % TEXT,
         ))
         close_btn.clicked.connect(dialog.accept)

@@ -175,7 +175,7 @@ def quadrant_title(text):
     """Quadrant-level title -- deliberately NO CEMA reference. That lives
     exactly once, in the modal's own header."""
     lbl = QLabel(text)
-    lbl.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700;")
+    lbl.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700;")
     return lbl
 
 
@@ -235,7 +235,7 @@ class SectionRow(QFrame):
 
         if depth > 0:
             elbow = QLabel("└")
-            elbow.setStyleSheet(f"color: {BORDER2}; font-size: 10px;")
+            elbow.setStyleSheet(f"color: {BORDER2}; font-size: 13px;")
             elbow.setAlignment(Qt.AlignmentFlag.AlignTop)
             layout.addWidget(elbow)
 
@@ -255,13 +255,13 @@ class SectionRow(QFrame):
         top.addStretch()
         if clickable:
             pencil = QLabel("✎")
-            pencil.setStyleSheet(f"color: {PRIMARY}; font-size: 11px;")
+            pencil.setStyleSheet(f"color: {PRIMARY}; font-size: 13px;")
             top.addWidget(pencil)
         col.addLayout(top)
 
         if summary:
             sum_lbl = QLabel(summary)
-            sum_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 11px;")
+            sum_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 13px;")
             sum_lbl.setWordWrap(False)
             col.addWidget(sum_lbl)
 
@@ -342,7 +342,7 @@ class StatusPill(QLabel):
             self,
             f"background-color: {dim}; color: {color}; "
             f"border: 1px solid {border}; border-radius: 999px; "
-            f"padding: 1px 7px; font-size: 9px; font-weight: 700;"
+            f"padding: 1px 7px; font-size: 12px; font-weight: 700;"
         ))
 
 
@@ -375,17 +375,17 @@ class AccordionGroup(QWidget):
         hl.setSpacing(8)
 
         title = QLabel(label)
-        title.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700;")
+        title.setStyleSheet(f"color: {TEXT}; font-size: 16px; font-weight: 700;")
         hl.addWidget(title)
         if cema:
             cema_lbl = QLabel(cema)
-            cema_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 10px;")
+            cema_lbl.setStyleSheet(f"color: {TEXT3}; font-size: 13px;")
             hl.addWidget(cema_lbl)
         hl.addStretch()
         if badge:
             hl.addWidget(StatusPill(badge))
         self._chevron = QLabel()
-        self._chevron.setStyleSheet(f"color: {TEXT3}; font-size: 12px;")
+        self._chevron.setStyleSheet(f"color: {TEXT3}; font-size: 14px;")
         hl.addWidget(self._chevron)
 
         self._header.mousePressEvent = lambda _e: self.toggle()
@@ -498,7 +498,7 @@ class DynamicFillAdvisory(QFrame):
 
         head = QLabel("●  DYNAMIC FILL ADVISORY (CEMA §6)")
         head.setStyleSheet(
-            f"color: {PRIMARY}; font-size: 10px; font-weight: 700; letter-spacing: .5px;")
+            f"color: {PRIMARY}; font-size: 13px; font-weight: 700; letter-spacing: .5px;")
         layout.addWidget(head)
 
         stats = QHBoxLayout()
@@ -516,10 +516,10 @@ class DynamicFillAdvisory(QFrame):
             col = QVBoxLayout()
             col.setSpacing(1)
             l = QLabel(label)
-            l.setStyleSheet(f"color: {TEXT3}; font-size: 9px;")
+            l.setStyleSheet(f"color: {TEXT3}; font-size: 12px;")
             v = QLabel(value)
             v.setStyleSheet(
-                f"color: {color}; font-size: 13px; font-weight: 700; "
+                f"color: {color}; font-size: 15px; font-weight: 700; "
                 f"font-family: {FF_MONO};")
             col.addWidget(l)
             col.addWidget(v)
@@ -533,7 +533,7 @@ class DynamicFillAdvisory(QFrame):
         if df.get("note"):
             note = QLabel(df["note"])
             note.setWordWrap(True)
-            note.setStyleSheet(f"color: {TEXT2}; font-size: 10px;")
+            note.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             layout.addWidget(note)
 
         spacing_status = df.get("spacing_status")
@@ -543,7 +543,7 @@ class DynamicFillAdvisory(QFrame):
                 f"Spacing Gap to approach {fmt(df.get('optimal_spacing_mm'), 0)}mm"
             )
             warn.setWordWrap(True)
-            warn.setStyleSheet(f"color: {WARNING}; font-size: 10px; margin-top: 2px;")
+            warn.setStyleSheet(f"color: {WARNING}; font-size: 13px; margin-top: 2px;")
             layout.addWidget(warn)
 
 
@@ -609,7 +609,7 @@ class MaterialChip(QLabel):
             f"color: {color}; "
             f"border: 1px solid rgba({c.red()},{c.green()},{c.blue()},.4); "
             f"border-radius: 999px; padding: 2px 8px; "
-            f"font-size: 9.5px; font-weight: 700;"
+            f"font-size: 12px; font-weight: 700;"
         ))
 
 
@@ -651,7 +651,7 @@ class MaterialSearchWidget(QWidget):
         self.results_popup.setStyleSheet(f"""
             QListWidget {{ background-color: {PANEL2}; color: {TEXT2};
                 border: 1px solid {BORDER2}; border-radius: {R_MD}px;
-                font-size: 11.5px; }}
+                font-size: 14px; }}
             QListWidget::item {{ padding: 5px 8px; border: none; }}
             QListWidget::item:selected {{ background-color: {PRIMARY}; color: white; }}
         """)
@@ -724,7 +724,7 @@ class MaterialSearchWidget(QWidget):
         if not mat:
             return
         name_lbl = QLabel(mat.get("name", mat_id))
-        name_lbl.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 600;")
+        name_lbl.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 600;")
         self.chip_row.addWidget(name_lbl)
         self.chip_row.addWidget(MaterialChip(mat.get("category", "—"), PRIMARY))
         self.chip_row.addWidget(MaterialChip(f"{fmt(mat.get('rho_loose'), 0)} kg/m³", TEXT3))
@@ -749,7 +749,7 @@ class OverridableSpinBox(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(3)
         lbl = QLabel(label)
-        lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px; font-weight: 600;")
+        lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px; font-weight: 600;")
         layout.addWidget(lbl)
 
         is_active = ((current_value > 0) if sentinel == 0
@@ -770,12 +770,12 @@ class OverridableSpinBox(QWidget):
         row.addWidget(self.spin)
         if unit:
             u = QLabel(unit)
-            u.setStyleSheet(f"color: {TEXT3}; font-size: 10.5px;")
+            u.setStyleSheet(f"color: {TEXT3}; font-size: 13px;")
             row.addWidget(u)
         layout.addLayout(row)
 
         self.note = QLabel()
-        self.note.setStyleSheet(f"color: {MUTED}; font-size: 9.5px;")
+        self.note.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
         self.note.setWordWrap(True)
         self._hint = hint
         self._update_note(is_active)
@@ -963,7 +963,7 @@ class ProcessEditDialog(QDialog):
             "Materials tab instead."
         )
         override_note.setWordWrap(True)
-        override_note.setStyleSheet(f"color: {TEXT2}; font-size: 10px;")
+        override_note.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         right.addWidget(override_note)
 
         self.custom_name = styled_lineedit(
@@ -1062,7 +1062,7 @@ class ProcessEditDialog(QDialog):
         head_row.addWidget(status_badge("fail" if mismatch else "ok", size=16))
         head = QLabel("MATERIAL-BASED DESIGN GUIDANCE")
         head.setStyleSheet(
-            f"color: {TEXT2}; font-size: 11px; font-weight: 700; letter-spacing: .6px;")
+            f"color: {TEXT2}; font-size: 13px; font-weight: 700; letter-spacing: .6px;")
         head_row.addWidget(head)
         head_row.addStretch()
         bl.addLayout(head_row)
@@ -1074,12 +1074,12 @@ class ProcessEditDialog(QDialog):
             f"{current_drive.capitalize()} matches the material-temperature recommendation"
         )
         drive_line.setWordWrap(True)
-        drive_line.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 700;")
+        drive_line.setStyleSheet(f"color: {TEXT}; font-size: 15px; font-weight: 700;")
         bl.addWidget(drive_line)
 
         reason1 = QLabel(rec.get("drive_type_reasoning", ""))
         reason1.setWordWrap(True)
-        reason1.setStyleSheet(f"color: {TEXT2}; font-size: 11.5px;")
+        reason1.setStyleSheet(f"color: {TEXT2}; font-size: 14px;")
         bl.addWidget(reason1)
 
         divider = QFrame()
@@ -1091,12 +1091,12 @@ class ProcessEditDialog(QDialog):
             f"Discharge character: {rec.get('discharge_type', '—').capitalize()} "
             f"({rec.get('recommended_style', '—')} style)"
         )
-        discharge_line.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700;")
+        discharge_line.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700;")
         bl.addWidget(discharge_line)
 
         reason2 = QLabel(rec.get("reasoning", ""))
         reason2.setWordWrap(True)
-        reason2.setStyleSheet(f"color: {TEXT2}; font-size: 11.5px;")
+        reason2.setStyleSheet(f"color: {TEXT2}; font-size: 14px;")
         bl.addWidget(reason2)
 
         # This note used to claim "Based on the last calculated result -- click
@@ -1108,7 +1108,7 @@ class ProcessEditDialog(QDialog):
             "capacity above. Click Apply to save these changes to the design."
         )
         live_note.setWordWrap(True)
-        live_note.setStyleSheet(f"color: {MUTED}; font-size: 10px; margin-top: 2px;")
+        live_note.setStyleSheet(f"color: {MUTED}; font-size: 13px; margin-top: 2px;")
         bl.addWidget(live_note)
 
         self.guidance_box.addWidget(outer)
@@ -1221,7 +1221,7 @@ class StatusCard(QFrame):
         head_row.addWidget(status_badge("ok" if adequate else "warn", size=16))
         head = QLabel(title_ok if adequate else title_warn)
         head.setStyleSheet(
-            f"color: {TEXT2}; font-size: 10.5px; font-weight: 700; letter-spacing: .5px;")
+            f"color: {TEXT2}; font-size: 13px; font-weight: 700; letter-spacing: .5px;")
         head_row.addWidget(head)
         head_row.addStretch()
         layout.addLayout(head_row)
@@ -1231,10 +1231,10 @@ class StatusCard(QFrame):
             col = QVBoxLayout()
             col.setSpacing(1)
             l = QLabel(label)
-            l.setStyleSheet(f"color: {TEXT3}; font-size: 9.5px;")
+            l.setStyleSheet(f"color: {TEXT3}; font-size: 12px;")
             v = QLabel(str(value))
             v.setStyleSheet(
-                f"color: {TEXT}; font-size: 13px; font-weight: 700; "
+                f"color: {TEXT}; font-size: 15px; font-weight: 700; "
                 f"font-family: {FF_MONO};")
             col.addWidget(l)
             col.addWidget(v)
@@ -1244,7 +1244,7 @@ class StatusCard(QFrame):
         if note and not adequate:
             note_lbl = QLabel(note)
             note_lbl.setWordWrap(True)
-            note_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+            note_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             layout.addWidget(note_lbl)
 
 
@@ -1310,19 +1310,19 @@ class PulleyEditDialog(QDialog):
         ):
             col = QVBoxLayout()
             l = QLabel(label)
-            l.setStyleSheet(f"color: {TEXT3}; font-size: 9px;")
+            l.setStyleSheet(f"color: {TEXT3}; font-size: 12px;")
             v = QLabel(value)
             v.setStyleSheet(
-                f"color: {color}; font-size: 15px; font-weight: 700; "
+                f"color: {color}; font-size: 17px; font-weight: 700; "
                 f"font-family: {FF_MONO};")
             col.addWidget(l)
             col.addWidget(v)
             wrow.addLayout(col)
         formula_col = QVBoxLayout()
         fl = QLabel("Formula")
-        fl.setStyleSheet(f"color: {TEXT3}; font-size: 9px;")
+        fl.setStyleSheet(f"color: {TEXT3}; font-size: 12px;")
         fv = QLabel("180° + 2·arcsin((R_H−R_B)/C)")
-        fv.setStyleSheet(f"color: {TEXT2}; font-size: 10px;")
+        fv.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         formula_col.addWidget(fl)
         formula_col.addWidget(fv)
         wrow.addLayout(formula_col)
@@ -1336,7 +1336,7 @@ class PulleyEditDialog(QDialog):
             "Reflects the last calculated result. Click Apply to see this update "
             "for a new diameter.")
         stale_note.setWordWrap(True)
-        stale_note.setStyleSheet(f"color: {MUTED}; font-size: 9.5px; margin-top: 2px;")
+        stale_note.setStyleSheet(f"color: {MUTED}; font-size: 12px; margin-top: 2px;")
         wl.addWidget(stale_note)
 
         self.snub_toggle = ToggleButton()
@@ -1367,7 +1367,7 @@ class PulleyEditDialog(QDialog):
 
         self.locked_label = QLabel()
         self.locked_label.setStyleSheet(
-            f"color: {SUCCESS}; font-size: 12px; padding: 4px 0 8px;")
+            f"color: {SUCCESS}; font-size: 14px; padding: 4px 0 8px;")
         body_layout.addWidget(self.locked_label)
         self._on_same_as_head(self.same_as_head.isChecked())
 
@@ -1437,7 +1437,7 @@ class PulleyEditDialog(QDialog):
                 "engages the sprocket rather than relying on belt-friction wrap."
             )
             lbl.setWordWrap(True)
-            lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+            lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             nl.addWidget(lbl)
             self.wrap_card_box.addWidget(note)
             return
@@ -1595,7 +1595,7 @@ class BeltChainEditDialog(QDialog):
                 self.belt_type_combo.setCurrentIndex(i)
         bl.addWidget(self.belt_type_combo)
         type_note = QLabel("ST belts use herringbone lagging — not diamond groove")
-        type_note.setStyleSheet(f"color: {TEXT2}; font-size: 10px;")
+        type_note.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         bl.addWidget(type_note)
 
         bl.addWidget(section_head("Belt Cover Grade"))
@@ -1615,7 +1615,7 @@ class BeltChainEditDialog(QDialog):
         grade_note = QLabel(
             "Grade M for abrasive materials (abr ≥ 4). Grade N for grain/light minerals.")
         grade_note.setWordWrap(True)
-        grade_note.setStyleSheet(f"color: {TEXT2}; font-size: 10px;")
+        grade_note.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         bl.addWidget(grade_note)
 
     # ── Chain mode ────────────────────────────────────────────────────
@@ -1644,7 +1644,7 @@ class BeltChainEditDialog(QDialog):
         row = QHBoxLayout()
         strands_col = QVBoxLayout()
         strands_lbl = QLabel("No. of Strands")
-        strands_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 11px; font-weight: 600;")
+        strands_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px; font-weight: 600;")
         strands_col.addWidget(strands_lbl)
         self._strands_val = [int(self.inputs.get("chain_n_strands", 1))]
         strands_row = QHBoxLayout()
@@ -1798,7 +1798,7 @@ class BucketEditDialog(QDialog):
             head_row.addWidget(status_badge("ok" if is_current else "info", size=15))
             head = QLabel("CURRENT STYLE MATCHES RECOMMENDATION" if is_current
                           else "RECOMMENDATION FOR THIS MATERIAL")
-            head.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px; font-weight: 700;")
+            head.setStyleSheet(f"color: {TEXT2}; font-size: 13px; font-weight: 700;")
             head_row.addWidget(head)
             head_row.addStretch()
             cl.addLayout(head_row)
@@ -1806,11 +1806,11 @@ class BucketEditDialog(QDialog):
             style_lbl = QLabel(
                 f"{rec.get('recommended_style')} style"
                 + (f"   (alt: {alt})" if alt != rec.get("recommended_style") else ""))
-            style_lbl.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700;")
+            style_lbl.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700;")
             cl.addWidget(style_lbl)
             reasoning = QLabel(rec.get("reasoning", ""))
             reasoning.setWordWrap(True)
-            reasoning.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+            reasoning.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             cl.addWidget(reasoning)
             for note in rec.get("notes") or []:
                 flag_note("warn", note, parent_layout=cl)
@@ -1830,13 +1830,13 @@ class BucketEditDialog(QDialog):
         bl.addWidget(self.style_combo)
         self.style_desc = QLabel()
         self.style_desc.setWordWrap(True)
-        self.style_desc.setStyleSheet(f"color: {TEXT2}; font-size: 10px;")
+        self.style_desc.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         bl.addWidget(self.style_desc)
 
         bl.addWidget(section_head("Size"))
         self.belt_width_note = QLabel()
         self.belt_width_note.setStyleSheet(
-            f"color: {PRIMARY}; font-size: 9.5px; font-weight: 700;")
+            f"color: {PRIMARY}; font-size: 12px; font-weight: 700;")
         bl.addWidget(self.belt_width_note)
         self.size_combo = styled_combo(QComboBox())
         # Connected exactly once, here -- _populate_sizes() used to
@@ -1848,7 +1848,7 @@ class BucketEditDialog(QDialog):
         bl.addWidget(self.size_combo)
         self.size_warn = QLabel()
         self.size_warn.setWordWrap(True)
-        self.size_warn.setStyleSheet(f"color: {WARNING}; font-size: 10px;")
+        self.size_warn.setStyleSheet(f"color: {WARNING}; font-size: 13px;")
         bl.addWidget(self.size_warn)
 
         self.size_summary_box = QVBoxLayout()
@@ -2141,7 +2141,7 @@ class ShaftEditDialog(QDialog):
             "material cost."
         )
         mat_note.setWordWrap(True)
-        mat_note.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+        mat_note.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         bl.addWidget(mat_note)
 
         bl.addWidget(section_head("Shaft Section"))
@@ -2193,10 +2193,10 @@ class ShaftEditDialog(QDialog):
         )
         note = QLabel(note_text)
         note.setWordWrap(True)
-        note.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+        note.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         bl.addWidget(note)
         span_note = QLabel(f"Span: {fmt(boot_shaft.get('span_mm'), 0)} mm.")
-        span_note.setStyleSheet(f"color: {MUTED}; font-size: 10px;")
+        span_note.setStyleSheet(f"color: {MUTED}; font-size: 13px;")
         bl.addWidget(span_note)
 
         # Backend supports boot_shaft_section / boot_shaft_bore_ratio /
@@ -2215,7 +2215,7 @@ class ShaftEditDialog(QDialog):
             "Uses the same material grade as Head Shaft (above) — one grade governs both.")
         mat_share_note.setWordWrap(True)
         mat_share_note.setStyleSheet(
-            f"color: {MUTED}; font-size: 10px; font-style: italic;")
+            f"color: {MUTED}; font-size: 13px; font-style: italic;")
         bl.addWidget(mat_share_note)
 
         bl.addWidget(section_head("Boot Shaft Section"))
@@ -2235,7 +2235,7 @@ class ShaftEditDialog(QDialog):
             "Boot pulley carries zero drive torque, so there's no keyed-vs-welded "
             "decision here — that control only applies to the driven (head) shaft.")
         no_hub_note.setWordWrap(True)
-        no_hub_note.setStyleSheet(f"color: {MUTED}; font-size: 10px;")
+        no_hub_note.setStyleSheet(f"color: {MUTED}; font-size: 13px;")
         bl.addWidget(no_hub_note)
 
         bl.addWidget(section_head("Boot Shaft Diameter Override"))
@@ -2362,7 +2362,7 @@ class ShaftEditDialog(QDialog):
             lbl = QLabel("Standard ASME B17.1 keyed connection. Field-serviceable — pulley "
                          "can be removed without re-welding.")
             lbl.setWordWrap(True)
-            lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+            lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             self.hub_info_box.addWidget(lbl)
 
     def updated_inputs(self):
@@ -2629,7 +2629,7 @@ class InputSidebarPanel(QWidget):
         footer = QLabel("CEMA 375-2017 · ISO 281 · ASME B17.1")
         footer.setStyleSheet(scoped(
             footer,
-            f"color: {TEXT3}; font-size: 10px; padding: 8px 12px; "
+            f"color: {TEXT3}; font-size: 13px; padding: 8px 12px; "
             f"border: none; border-top: 1px solid {BORDER};"
         ))
         self.list_layout.addWidget(footer)

@@ -151,7 +151,7 @@ class _StatusPill(QLabel):
             self,
             f"background-color: {s['bg']}; color: {s['color']}; "
             f"border: 1px solid {s['border']}; border-radius: {R_PILL}px; "
-            f"padding: 2px 8px; font-size: 9px; font-weight: 700; "
+            f"padding: 2px 8px; font-size: 12px; font-weight: 700; "
             f"letter-spacing: .06em;"
         ))
 
@@ -166,7 +166,7 @@ class _DiscTag(QLabel):
         self.setStyleSheet(scoped(
             self,
             f"background-color: {d['bg']}; color: {d['color']}; border: none; "
-            f"border-radius: {R_PILL}px; padding: 1px 7px; font-size: 9px; "
+            f"border-radius: {R_PILL}px; padding: 1px 7px; font-size: 12px; "
             f"font-weight: 600; letter-spacing: .05em;"
         ))
 
@@ -200,7 +200,7 @@ class KpiCard(QFrame):
 
         label_lbl = QLabel(label.upper())
         label_lbl.setStyleSheet(
-            f"color: {TEXT2}; font-size: 10px; font-weight: 600; "
+            f"color: {TEXT2}; font-size: 13px; font-weight: 600; "
             f"letter-spacing: .04em;")
         outer.addWidget(label_lbl)
 
@@ -209,14 +209,14 @@ class KpiCard(QFrame):
         value_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
         value_lbl = QLabel(str(value))
         value_lbl.setStyleSheet(
-            f"color: {s['color']}; font-size: 23px; font-weight: 700; "
+            f"color: {s['color']}; font-size: 24px; font-weight: 700; "
             f"font-family: {FF_MONO};"
         )
         value_row.addWidget(value_lbl)
         if unit:
             unit_lbl = QLabel(unit)
             unit_lbl.setStyleSheet(
-                f"color: {TEXT2}; font-size: 12px; font-family: {FF_MONO};")
+                f"color: {TEXT2}; font-size: 14px; font-family: {FF_MONO};")
             value_row.addWidget(unit_lbl, alignment=Qt.AlignmentFlag.AlignBottom)
         outer.addLayout(value_row)
 
@@ -232,7 +232,7 @@ class KpiCard(QFrame):
             inset_row.setContentsMargins(10, 6, 10, 6)
             if target:
                 target_lbl = QLabel(f"Target: {target}")
-                target_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+                target_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
                 target_lbl.setWordWrap(True)
                 inset_row.addWidget(target_lbl, 1)
             if margin is not None:
@@ -240,7 +240,7 @@ class KpiCard(QFrame):
                 sign = "+" if margin >= 0 else ""
                 margin_lbl = QLabel(f"{sign}{fmt(margin, 1)}%")
                 margin_lbl.setStyleSheet(
-                    f"color: {margin_color}; font-size: 10.5px; font-weight: 700; "
+                    f"color: {margin_color}; font-size: 13px; font-weight: 700; "
                     f"font-family: {FF_MONO};"
                 )
                 inset_row.addWidget(margin_lbl)
@@ -253,7 +253,7 @@ class KpiCard(QFrame):
             self.toggle_btn.setStyleSheet(scoped(
                 self.toggle_btn,
                 f"background-color: transparent; color: {TEXT3}; border: none; "
-                f"text-align: left; font-size: 10px; font-weight: 600; "
+                f"text-align: left; font-size: 13px; font-weight: 600; "
                 f"letter-spacing: .03em; padding: 0;",
                 extra="{sel}:hover { color: %s; }" % TEXT2,
             ))
@@ -265,7 +265,7 @@ class KpiCard(QFrame):
             self.formula_box.setStyleSheet(scoped(
                 self.formula_box,
                 f"background-color: {PANEL}; border: 1px solid {BORDER}; "
-                f"border-radius: {R_SM}px; color: {TEXT2}; font-size: 10.5px; "
+                f"border-radius: {R_SM}px; color: {TEXT2}; font-size: 13px; "
                 f"font-family: {FF_MONO}; padding: 10px 12px;"
             ))
             self.formula_box.setWordWrap(True)
@@ -311,7 +311,7 @@ class StatusPanel(QWidget):
         if not results.get("bucket"):
             empty = QLabel("Run a calculation to see KPIs.")
             empty.setStyleSheet(
-                f"color: {TEXT2}; font-size: 11px; font-style: italic;")
+                f"color: {TEXT2}; font-size: 13px; font-style: italic;")
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.list_layout.addWidget(empty)
             self.list_layout.addStretch()

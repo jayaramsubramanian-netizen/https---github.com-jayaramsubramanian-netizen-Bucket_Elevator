@@ -196,14 +196,14 @@ class _CheckRow(QFrame):
         msg = _strip_clause(check.get("msg", ""))
         msg_lbl = QLabel(msg)
         msg_lbl.setWordWrap(True)
-        msg_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+        msg_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         hl.addWidget(msg_lbl, 1)
 
         clause = _extract_clause(check.get("msg", ""))
         if clause:
             clause_lbl = QLabel(clause)
             clause_lbl.setStyleSheet(
-                f"color: {TEXT3}; font-size: 9px; font-family: {FF_MONO};")
+                f"color: {TEXT3}; font-size: 12px; font-family: {FF_MONO};")
             hl.addWidget(clause_lbl)
         self.outer.addWidget(head)
 
@@ -220,16 +220,16 @@ class _CheckRow(QFrame):
         dl.setContentsMargins(28, 6, 10, 8)
         dl.setSpacing(3)
         type_row = QLabel(f"Type: {status.upper()}")
-        type_row.setStyleSheet(f"color: {color}; font-size: 9px; font-weight: 700;")
+        type_row.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: 700;")
         dl.addWidget(type_row)
         if clause:
             ref_row = QLabel(f"Reference: {clause}")
             ref_row.setStyleSheet(
-                f"color: {TEXT3}; font-size: 10px; font-family: {FF_MONO};")
+                f"color: {TEXT3}; font-size: 13px; font-family: {FF_MONO};")
             dl.addWidget(ref_row)
         full_msg = QLabel(msg)
         full_msg.setWordWrap(True)
-        full_msg.setStyleSheet(f"color: {TEXT3}; font-size: 10px; margin-top: 2px;")
+        full_msg.setStyleSheet(f"color: {TEXT3}; font-size: 13px; margin-top: 2px;")
         dl.addWidget(full_msg)
         self.detail.hide()
         self.outer.addWidget(self.detail)
@@ -264,14 +264,14 @@ class _FilterPill(QPushButton):
                 self,
                 f"background-color: {_tint(self._color, '.15')}; color: {self._color}; "
                 f"border: 1px solid {self._color}; border-radius: {R_PILL}px; "
-                f"padding: 3px 10px; font-size: 9.5px; font-weight: 700;"
+                f"padding: 3px 10px; font-size: 12px; font-weight: 700;"
             ))
         else:
             self.setStyleSheet(scoped(
                 self,
                 f"background-color: transparent; color: {TEXT2}; "
                 f"border: 1px solid {BORDER}; border-radius: {R_PILL}px; "
-                f"padding: 3px 10px; font-size: 9.5px;",
+                f"padding: 3px 10px; font-size: 12px;",
                 extra="{sel}:hover { color: %s; }" % TEXT,
             ))
 
@@ -330,7 +330,7 @@ class DesignReviewPanel(QWidget):
 
         title = QLabel("DESIGN REVIEW")
         title.setStyleSheet(
-            f"color: {TEXT3}; font-size: 10px; font-weight: 700; letter-spacing: .08em;")
+            f"color: {TEXT3}; font-size: 13px; font-weight: 700; letter-spacing: .08em;")
         self.body_layout.addWidget(title)
 
         # SCOPED: bare border here boxed the maturity header, the stage
@@ -341,12 +341,12 @@ class DesignReviewPanel(QWidget):
         head_row = QHBoxLayout()
         head_label = QLabel("DESIGN MATURITY")
         head_label.setStyleSheet(
-            f"color: {TEXT2}; font-size: 9px; font-weight: 700; letter-spacing: .06em;")
+            f"color: {TEXT2}; font-size: 12px; font-weight: 700; letter-spacing: .06em;")
         head_row.addWidget(head_label)
         head_row.addStretch()
         stage_label = QLabel(stage["label"])
         stage_label.setStyleSheet(
-            f"color: {stage['color']}; font-size: 11px; font-weight: 700;")
+            f"color: {stage['color']}; font-size: 13px; font-weight: 700;")
         head_row.addWidget(stage_label)
         ml.addLayout(head_row)
 
@@ -372,7 +372,7 @@ class DesignReviewPanel(QWidget):
             lbl = QLabel(s["label"])
             active = s["level"] <= effective_stage
             lbl.setStyleSheet(
-                f"color: {stage['color'] if active else TEXT3}; font-size: 8px; "
+                f"color: {stage['color'] if active else TEXT3}; font-size: 12px; "
                 f"font-weight: {'700' if s['level'] == effective_stage else '400'};"
             )
             labels_row.addWidget(lbl)
@@ -380,7 +380,7 @@ class DesignReviewPanel(QWidget):
 
         desc = QLabel(stage["desc"])
         desc.setWordWrap(True)
-        desc.setStyleSheet(f"color: {TEXT2}; font-size: 10px;")
+        desc.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         ml.addWidget(desc)
 
         next_level = effective_stage + 1
@@ -408,7 +408,7 @@ class DesignReviewPanel(QWidget):
                         f"color: {next_stage['color']}; "
                         f"border: 1px solid {next_stage['color']}; "
                         f"border-radius: {R_SM - 2}px; padding: 6px 12px; "
-                        f"font-size: 10px; font-weight: 700;",
+                        f"font-size: 13px; font-weight: 700;",
                         extra="{sel}:hover { background-color: %s; }"
                               % _tint(next_stage["color"], ".25"),
                     ))
@@ -422,7 +422,7 @@ class DesignReviewPanel(QWidget):
                             f"open — review before advancing if not yet accepted")
                         review_note.setWordWrap(True)
                         review_note.setStyleSheet(
-                            f"color: {WARNING}; font-size: 9px; margin-top: 2px;")
+                            f"color: {WARNING}; font-size: 12px; margin-top: 2px;")
                         ml.addWidget(review_note)
                 else:
                     role_lock = QLabel(
@@ -432,7 +432,7 @@ class DesignReviewPanel(QWidget):
                     role_lock.setWordWrap(True)
                     role_lock.setStyleSheet(scoped(
                         role_lock,
-                        f"color: {TEXT3}; font-size: 10px; padding: 5px 8px; "
+                        f"color: {TEXT3}; font-size: 13px; padding: 5px 8px; "
                         f"border-radius: {R_SM - 2}px; "
                         f"background-color: rgba(0,0,0,.12); "
                         f"border: 1px solid {BORDER};"
@@ -445,7 +445,7 @@ class DesignReviewPanel(QWidget):
                 lock.setWordWrap(True)
                 lock.setStyleSheet(scoped(
                     lock,
-                    f"color: {TEXT2}; font-size: 10px; padding: 5px 8px; "
+                    f"color: {TEXT2}; font-size: 13px; padding: 5px 8px; "
                     f"border-radius: {R_SM - 2}px; "
                     f"background-color: rgba(0,0,0,.15); "
                     f"border: 1px solid {BORDER};"
@@ -455,7 +455,7 @@ class DesignReviewPanel(QWidget):
             released = QLabel("✓ Design Released")
             released.setStyleSheet(scoped(
                 released,
-                f"color: {SUCCESS}; font-size: 10px; font-weight: 700; "
+                f"color: {SUCCESS}; font-size: 13px; font-weight: 700; "
                 f"padding: 5px 8px; border-radius: {R_SM - 2}px; "
                 f"background-color: {SUCCESS_DIM}; "
                 f"border: 1px solid {SUCCESS_BORDER};"
@@ -467,7 +467,7 @@ class DesignReviewPanel(QWidget):
             revoke_btn.setStyleSheet(scoped(
                 revoke_btn,
                 f"background-color: transparent; color: {TEXT2}; border: none; "
-                f"font-size: 9px; text-decoration: underline; padding: 2px;",
+                f"font-size: 12px; text-decoration: underline; padding: 2px;",
                 extra="{sel}:hover { color: %s; }" % TEXT,
             ))
             revoke_btn.clicked.connect(self._revoke)
@@ -502,12 +502,12 @@ class DesignReviewPanel(QWidget):
         if not checks:
             empty = QLabel("Run a calculation to see design review.")
             empty.setStyleSheet(
-                f"color: {TEXT2}; font-size: 11px; font-style: italic;")
+                f"color: {TEXT2}; font-size: 13px; font-style: italic;")
             self.body_layout.addWidget(empty)
         elif not filtered:
             empty = QLabel(
                 f"No {self._filter if self._filter != 'all' else ''} checks to show")
-            empty.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+            empty.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             self.body_layout.addWidget(empty)
         else:
             list_box = QVBoxLayout()

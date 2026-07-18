@@ -81,7 +81,7 @@ def _primary_badge(is_primary):
             lbl,
             f"background-color: {SUCCESS_DIM}; color: {SUCCESS}; "
             f"border: 1px solid {SUCCESS_BORDER}; border-radius: {R_PILL}px; "
-            f"padding: 2px 9px; font-size: 9.5px; font-weight: 700;"
+            f"padding: 2px 9px; font-size: 12px; font-weight: 700;"
         ))
     return lbl
 
@@ -132,7 +132,7 @@ class TakeupEditDialog(QDialog):
             "standard cylinder mechanics, flagged below). Auto: solver picks by H_m."
         )
         type_note.setWordWrap(True)
-        type_note.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+        type_note.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         bl.addWidget(type_note)
 
         # ── Tension factor ───────────────────────────────────────────
@@ -167,7 +167,7 @@ class TakeupEditDialog(QDialog):
             ]))
             note = QLabel(tg.get("note", ""))
             note.setWordWrap(True)
-            note.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+            note.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
             bl.addWidget(note)
         else:
             bl.addWidget(self._not_computed_note())
@@ -269,7 +269,7 @@ class TakeupEditDialog(QDialog):
     def _not_computed_note(self):
         lbl = QLabel("Run a calculation to see this option's sizing.")
         lbl.setStyleSheet(
-            f"color: {MUTED}; font-size: 10.5px; font-style: italic;")
+            f"color: {MUTED}; font-size: 13px; font-style: italic;")
         return lbl
 
     def _on_type_change(self, value):

@@ -159,7 +159,7 @@ class _CatBadge(QLabel):
         self.setStyleSheet(scoped(
             self,
             f"background-color: {s['bg']}; color: {s['color']}; border: none; "
-            f"border-radius: {R_PILL}px; padding: 1px 7px; font-size: 8.5px; "
+            f"border-radius: {R_PILL}px; padding: 1px 7px; font-size: 12px; "
             f"font-weight: 700; letter-spacing: .05em;"
         ))
 
@@ -189,7 +189,7 @@ class _GroupHeader(QFrame):
         layout.setSpacing(8)
 
         self.arrow = QLabel("▶")
-        self.arrow.setStyleSheet(f"color: {TEXT3}; font-size: 8px;")
+        self.arrow.setStyleSheet(f"color: {TEXT3}; font-size: 12px;")
         layout.addWidget(self.arrow)
 
         # FIXED -- THE DOUBLED HEADING ("SHAFT SHAFT", "CASING CASING", ...).
@@ -204,13 +204,13 @@ class _GroupHeader(QFrame):
         layout.addWidget(_CatBadge(cat))
 
         count = QLabel(f"{len(items)} items")
-        count.setStyleSheet(f"color: {TEXT2}; font-size: 9.5px;")
+        count.setStyleSheet(f"color: {TEXT2}; font-size: 12px;")
         layout.addWidget(count)
         layout.addStretch()
 
         mass = QLabel(kg_to_t(group_mass))
         mass.setStyleSheet(
-            f"color: {TEXT2}; font-size: 9.5px; font-family: {FF_MONO};")
+            f"color: {TEXT2}; font-size: 12px; font-family: {FF_MONO};")
         layout.addWidget(mass)
 
     def mousePressEvent(self, event):
@@ -239,30 +239,30 @@ def _item_row(item, alt_bg):
     line1.setSpacing(8)
     qty = QLabel(f"{item.get('qty', '—')}×")
     qty.setStyleSheet(
-        f"color: {PRIMARY}; font-size: 11px; font-weight: 700; "
+        f"color: {PRIMARY}; font-size: 13px; font-weight: 700; "
         f"font-family: {FF_MONO};")
     qty.setMinimumWidth(28)
     line1.addWidget(qty)
 
     tag = QLabel(str(item.get("tag", "")))
-    tag.setStyleSheet(f"color: {TEXT2}; font-size: 9px; font-family: {FF_MONO};")
+    tag.setStyleSheet(f"color: {TEXT2}; font-size: 12px; font-family: {FF_MONO};")
     tag.setMinimumWidth(52)
     line1.addWidget(tag)
 
     desc = QLabel(str(item.get("description", "")))
     desc.setWordWrap(True)
-    desc.setStyleSheet(f"color: {TEXT}; font-size: 11px; font-weight: 600;")
+    desc.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 600;")
     line1.addWidget(desc, 1)
 
     unit = QLabel(str(item.get("unit", "")))
-    unit.setStyleSheet(f"color: {TEXT2}; font-size: 9.5px;")
+    unit.setStyleSheet(f"color: {TEXT2}; font-size: 12px;")
     line1.addWidget(unit)
     layout.addLayout(line1)
 
     spec = QLabel(str(item.get("spec", "")))
     spec.setWordWrap(True)
     spec.setStyleSheet(
-        f"color: {TEXT2}; font-size: 10px; font-family: {FF_MONO}; "
+        f"color: {TEXT2}; font-size: 13px; font-family: {FF_MONO}; "
         f"margin-left: 80px;")
     layout.addWidget(spec)
 
@@ -270,11 +270,11 @@ def _item_row(item, alt_bg):
     line3.setContentsMargins(80, 0, 0, 0)
     notes = QLabel(str(item.get("notes", "")))
     notes.setWordWrap(True)
-    notes.setStyleSheet(f"color: {TEXT2}; font-size: 9.5px;")
+    notes.setStyleSheet(f"color: {TEXT2}; font-size: 12px;")
     line3.addWidget(notes, 1)
     mass = QLabel(kg_to_t(item.get("mass_tot_kg")))
     mass.setStyleSheet(
-        f"color: {TEXT2}; font-size: 9.5px; font-family: {FF_MONO};")
+        f"color: {TEXT2}; font-size: 12px; font-family: {FF_MONO};")
     line3.addWidget(mass)
     layout.addLayout(line3)
 
@@ -309,11 +309,11 @@ class BomPanel(QWidget):
         title_row.setSpacing(8)
         title = QLabel("BILL OF MATERIALS")
         title.setStyleSheet(
-            f"color: {TEXT3}; font-size: 10px; font-weight: 700; "
+            f"color: {TEXT3}; font-size: 13px; font-weight: 700; "
             f"letter-spacing: .08em;")
         title_row.addWidget(title)
         self.summary_lbl = QLabel("")
-        self.summary_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 9.5px;")
+        self.summary_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 12px;")
         title_row.addWidget(self.summary_lbl)
         title_row.addStretch()
         title_box.addLayout(title_row)
@@ -326,7 +326,7 @@ class BomPanel(QWidget):
             self.export_btn,
             f"background-color: transparent; color: {TEXT2}; "
             f"border: 1px solid {BORDER2}; border-radius: {R_SM - 1}px; "
-            f"padding: 4px 10px; font-size: 10px; font-weight: 600;",
+            f"padding: 4px 10px; font-size: 13px; font-weight: 600;",
             extra="{sel}:hover { background-color: %s; color: %s; }" % (SURFACE, TEXT),
         ))
         self.export_btn.clicked.connect(self._export_csv)
@@ -354,12 +354,12 @@ class BomPanel(QWidget):
         fl = QHBoxLayout(self.footer)
         fl.setContentsMargins(12, 10, 12, 10)
         fl_label = QLabel("Estimated total mass (±25% preliminary)")
-        fl_label.setStyleSheet(f"color: {TEXT2}; font-size: 10px;")
+        fl_label.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         fl.addWidget(fl_label)
         fl.addStretch()
         self.total_lbl = QLabel("—")
         self.total_lbl.setStyleSheet(
-            f"color: {TEXT}; font-size: 13px; font-weight: 700; "
+            f"color: {TEXT}; font-size: 15px; font-weight: 700; "
             f"font-family: {FF_MONO};")
         fl.addWidget(self.total_lbl)
         self.footer.hide()
@@ -378,7 +378,7 @@ class BomPanel(QWidget):
             self.footer.hide()
             empty = QLabel("BOM not available — run a calculation first.")
             empty.setStyleSheet(
-                f"color: {TEXT2}; font-size: 11px; font-style: italic; padding: 16px;")
+                f"color: {TEXT2}; font-size: 13px; font-style: italic; padding: 16px;")
             self.body_layout.addWidget(empty)
             self.body_layout.addStretch()
             return
@@ -423,7 +423,7 @@ class BomPanel(QWidget):
             for note in notes:
                 lbl = QLabel(f"·  {note}")
                 lbl.setWordWrap(True)
-                lbl.setStyleSheet(f"color: {TEXT2}; font-size: 9.5px;")
+                lbl.setStyleSheet(f"color: {TEXT2}; font-size: 12px;")
                 nl.addWidget(lbl)
             self.body_layout.addWidget(notes_box)
 

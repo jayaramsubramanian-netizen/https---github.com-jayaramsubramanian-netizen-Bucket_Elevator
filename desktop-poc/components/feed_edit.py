@@ -71,7 +71,7 @@ class FeedEditDialog(QDialog):
         if fd:
             bl.addWidget(section_head("Loading Type"))
             type_lbl = QLabel(fd.get("loading_type", "—"))
-            type_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px; font-weight: 700;")
+            type_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 15px; font-weight: 700;")
             bl.addWidget(type_lbl)
             note_lbl = QLabel(fd.get("loading_note", ""))
             note_lbl.setWordWrap(True)
@@ -81,7 +81,7 @@ class FeedEditDialog(QDialog):
             # the literal same low-contrast color in theme.py -- this is
             # TEXT2 now, the same legibility pass applied across every
             # modal this round.
-            note_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 11.5px; line-height: 140%;")
+            note_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 14px; line-height: 140%;")
             bl.addWidget(note_lbl)
 
             bl.addWidget(section_head("Volumetric Flow"))
@@ -153,7 +153,7 @@ class FeedEditDialog(QDialog):
             self.inlet_override.setRange(0, 2000); self.inlet_override.setSingleStep(25)
             self.inlet_override.setValue(float(self.inputs.get("boot_inlet_height_override_mm", 0)))
             placeholder = QLabel("Run a calculation to see feed geometry.")
-            placeholder.setStyleSheet(f"color: {TEXT2}; font-size: 11px; font-style: italic;")
+            placeholder.setStyleSheet(f"color: {TEXT2}; font-size: 13px; font-style: italic;")
             bl.addWidget(placeholder)
 
         bl.addStretch()

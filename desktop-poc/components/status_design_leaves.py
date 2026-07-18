@@ -288,7 +288,7 @@ class DesignLeafModal(QDialog):
 
         table_label = QLabel("CALCULATED VALUES / LINE ITEMS")
         table_label.setStyleSheet(
-            f"color: {TEXT2}; font-size: 11px; font-weight: 700; letter-spacing: .04em;")
+            f"color: {TEXT2}; font-size: 13px; font-weight: 700; letter-spacing: .04em;")
         bl.addWidget(table_label)
 
         table = QTableWidget(len(items), 4)
@@ -305,12 +305,12 @@ class DesignLeafModal(QDialog):
                 background-color: {PANEL2}; color: {TEXT};
                 border: 1px solid {BORDER};
                 border-radius: {R_SM}px; gridline-color: {BORDER};
-                font-size: 11px;
+                font-size: 13px;
             }}
             QHeaderView::section {{
                 background-color: {PANEL}; color: {TEXT2}; border: none;
                 border-bottom: 1px solid {BORDER}; padding: 6px 4px;
-                font-size: 9.5px; font-weight: 700;
+                font-size: 12px; font-weight: 700;
             }}
             QTableWidget::item {{ padding: 4px; border: none; }}
         """)
@@ -330,7 +330,7 @@ class DesignLeafModal(QDialog):
 
         eq_label = QLabel("SUPPORTING EQUATIONS")
         eq_label.setStyleSheet(
-            f"color: {TEXT2}; font-size: 11px; font-weight: 700; "
+            f"color: {TEXT2}; font-size: 13px; font-weight: 700; "
             f"letter-spacing: .04em; margin-top: 4px;")
         bl.addWidget(eq_label)
 
@@ -339,7 +339,7 @@ class DesignLeafModal(QDialog):
         eq_box.setStyleSheet(scoped(
             eq_box,
             f"background-color: {PANEL}; border: 1px solid {BORDER}; "
-            f"border-radius: {R_SM}px; color: {TEXT2}; font-size: 11px; "
+            f"border-radius: {R_SM}px; color: {TEXT2}; font-size: 13px; "
             f"font-family: {FF_MONO}; padding: 10px 12px;"
         ))
         bl.addWidget(eq_box)
@@ -394,7 +394,7 @@ class _LeafRow(QFrame):
         badge.setStyleSheet(scoped(
             badge,
             f"background-color: {s['bg']}; color: {s['color']}; border: none; "
-            f"border-radius: {R_PILL}px; padding: 1px 7px; font-size: 8px; "
+            f"border-radius: {R_PILL}px; padding: 1px 7px; font-size: 12px; "
             f"font-weight: 700; letter-spacing: .04em;"
         ))
         layout.addWidget(badge)
@@ -402,17 +402,17 @@ class _LeafRow(QFrame):
         text_box = QVBoxLayout()
         text_box.setSpacing(1)
         name = QLabel(CATEGORY_LABELS.get(category, category))
-        name.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700;")
+        name.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700;")
         text_box.addWidget(name)
         sub = QLabel(f"{n_items} item{'s' if n_items != 1 else ''} · {kg_to_t(mass_kg)}")
-        sub.setStyleSheet(f"color: {TEXT2}; font-size: 10px;")
+        sub.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
         text_box.addWidget(sub)
         layout.addLayout(text_box, 1)
 
         if status:
             layout.addWidget(status_badge(status, size=16))
         chevron = QLabel("›")
-        chevron.setStyleSheet(f"color: {TEXT3}; font-size: 14px; font-weight: 700;")
+        chevron.setStyleSheet(f"color: {TEXT3}; font-size: 16px; font-weight: 700;")
         layout.addWidget(chevron)
 
     def mousePressEvent(self, event):
@@ -462,7 +462,7 @@ class StatusDesignLeaves(QWidget):
         if not bom or not bom.get("items"):
             empty = QLabel("Run a calculation to see component design details.")
             empty.setStyleSheet(
-                f"color: {TEXT2}; font-size: 11px; font-style: italic; padding: 16px;")
+                f"color: {TEXT2}; font-size: 13px; font-style: italic; padding: 16px;")
             self.body_layout.addWidget(empty)
             self.body_layout.addStretch()
             return
@@ -476,7 +476,7 @@ class StatusDesignLeaves(QWidget):
         adv_layout.setSpacing(8)
         adv_header = QLabel("ADVISORIES")
         adv_header.setStyleSheet(
-            f"color: {TEXT3}; font-size: 10px; font-weight: 700; letter-spacing: .08em;")
+            f"color: {TEXT3}; font-size: 13px; font-weight: 700; letter-spacing: .08em;")
         adv_layout.addWidget(adv_header)
 
         flagged = [c for c in (r.get("checks") or [])
@@ -493,7 +493,7 @@ class StatusDesignLeaves(QWidget):
                     f"leaves below.")
                 more.setWordWrap(True)
                 more.setStyleSheet(
-                    f"color: {TEXT2}; font-size: 10px; font-style: italic;")
+                    f"color: {TEXT2}; font-size: 13px; font-style: italic;")
                 adv_layout.addWidget(more)
         else:
             flag_note("ok", "No fail/warn flags on the current design.",
@@ -506,7 +506,7 @@ class StatusDesignLeaves(QWidget):
         if bom_notes:
             note_text = QLabel(bom_notes[0])
             note_text.setWordWrap(True)
-            note_text.setStyleSheet(f"color: {TEXT2}; font-size: 10px; margin-top: 2px;")
+            note_text.setStyleSheet(f"color: {TEXT2}; font-size: 13px; margin-top: 2px;")
             adv_layout.addWidget(note_text)
         self.body_layout.addWidget(adv_box)
 

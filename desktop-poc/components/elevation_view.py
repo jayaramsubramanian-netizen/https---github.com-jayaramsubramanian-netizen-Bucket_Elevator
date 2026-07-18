@@ -1031,14 +1031,14 @@ class _ViewTabBtn(QPushButton):
                 self,
                 f"background-color: {PRIMARY_DIM}; color: {PRIMARY}; border: none; "
                 f"border-bottom: 2px solid {PRIMARY}; padding: 3px 10px; "
-                f"font-size: 10px; font-weight: 700;"
+                f"font-size: 13px; font-weight: 700;"
             ))
         else:
             self.setStyleSheet(scoped(
                 self,
                 f"background-color: transparent; color: {TEXT3}; border: none; "
                 f"border-bottom: 2px solid transparent; padding: 3px 10px; "
-                f"font-size: 10px;",
+                f"font-size: 13px;",
                 extra="{sel}:hover { color: %s; }" % TEXT2,
             ))
 
@@ -1082,7 +1082,7 @@ class ElevationView(QWidget):
         tbl.addStretch()
 
         self._zoom_lbl = QLabel("100%")
-        self._zoom_lbl.setStyleSheet(f"color:{TEXT3};font-size:9px;margin-right:4px;")
+        self._zoom_lbl.setStyleSheet(f"color:{TEXT3};font-size:12px;margin-right:4px;")
         tbl.addWidget(self._zoom_lbl)
         reset_btn = QPushButton("⊡ Reset")
         reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1090,7 +1090,7 @@ class ElevationView(QWidget):
             reset_btn,
             f"background-color: transparent; color: {TEXT3}; "
             f"border: 1px solid {BORDER2}; border-radius: 3px; "
-            f"padding: 2px 8px; font-size: 9px;",
+            f"padding: 2px 8px; font-size: 12px;",
             extra="{sel}:hover { background-color: %s; color: %s; }" % (SURFACE, TEXT),
         ))
         reset_btn.clicked.connect(self._reset_view)
@@ -1103,7 +1103,7 @@ class ElevationView(QWidget):
                 zb,
                 f"background-color: transparent; color: {TEXT3}; "
                 f"border: 1px solid {BORDER2}; border-radius: 3px; "
-                f"font-size: 13px; margin-left: 3px;",
+                f"font-size: 15px; margin-left: 3px;",
                 extra="{sel}:hover { background-color: %s; color: %s; }" % (SURFACE, TEXT),
             ))
             zb.clicked.connect(lambda _, f=factor: self._zoom_by(f))
@@ -1172,11 +1172,11 @@ class ElevationView(QWidget):
         sl = QHBoxLayout(status_bar)
         sl.setContentsMargins(10, 0, 10, 0)
         hint = QLabel("Scroll to zoom · Drag to pan · Double-click to reset")
-        hint.setStyleSheet(f"color:{TEXT3};font-size:8px;")
+        hint.setStyleSheet(f"color:{TEXT3};font-size:12px;")
         sl.addWidget(hint)
         sl.addStretch()
         self._hover_status = QLabel("Hover components for engineering details")
-        self._hover_status.setStyleSheet(f"color:{TEXT3};font-size:8px;")
+        self._hover_status.setStyleSheet(f"color:{TEXT3};font-size:12px;")
         sl.addWidget(self._hover_status)
         outer.addWidget(status_bar)
 
@@ -1219,10 +1219,10 @@ class ElevationView(QWidget):
     def _on_hover_changed(self, name):
         if name:
             self._hover_status.setText(f"{name.upper()} — hover for callout")
-            self._hover_status.setStyleSheet(f"color:{PRIMARY};font-size:8px;")
+            self._hover_status.setStyleSheet(f"color:{PRIMARY};font-size:12px;")
         else:
             self._hover_status.setText("Hover components for engineering details")
-            self._hover_status.setStyleSheet(f"color:{TEXT3};font-size:8px;")
+            self._hover_status.setStyleSheet(f"color:{TEXT3};font-size:12px;")
 
     def set_data(self, inputs, results):
         self.inputs = inputs or {}

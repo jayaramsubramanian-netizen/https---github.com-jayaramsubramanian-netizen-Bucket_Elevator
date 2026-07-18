@@ -136,7 +136,7 @@ def _schedule_row(item, alt_bg):
     interval_chip_box.addWidget(interval_chip)
     wk = QLabel(f"~{item.get('interval_wk', '—')}wk")
     wk.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    wk.setStyleSheet(f"color: {TEXT3}; font-size: 9px;")
+    wk.setStyleSheet(f"color: {TEXT3}; font-size: 12px;")
     interval_chip_box.addWidget(wk)
     layout.addLayout(interval_chip_box)
 
@@ -145,11 +145,11 @@ def _schedule_row(item, alt_bg):
     head_row = QHBoxLayout()
     head_row.setSpacing(8)
     icon = QLabel(CAT_ICON.get(item.get("category", ""), "•"))
-    icon.setStyleSheet("font-size: 13px;")
+    icon.setStyleSheet("font-size: 15px;")
     head_row.addWidget(icon)
     task = QLabel(item.get("task", ""))
     task.setWordWrap(True)
-    task.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700;")
+    task.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700;")
     head_row.addWidget(task, 1)
     badge_status = PRIORITY_BADGE.get(priority)
     if badge_status:
@@ -157,11 +157,11 @@ def _schedule_row(item, alt_bg):
     content.addLayout(head_row)
 
     comp = QLabel(item.get("component", ""))
-    comp.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
+    comp.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
     content.addWidget(comp)
     trigger = QLabel(item.get("trigger", ""))
     trigger.setWordWrap(True)
-    trigger.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+    trigger.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
     content.addWidget(trigger)
     layout.addLayout(content, 1)
     return row
@@ -177,7 +177,7 @@ def _replacement_row(item, alt_bg):
     head_row.setSpacing(10)
     comp = QLabel(item.get("component", ""))
     comp.setWordWrap(True)
-    comp.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700;")
+    comp.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700;")
     head_row.addWidget(comp, 1)
 
     is_critical = item.get("priority") == "CRITICAL"
@@ -189,22 +189,22 @@ def _replacement_row(item, alt_bg):
     life_chip_box.addWidget(life_chip)
     yrs = QLabel(f"≈ {item.get('estimated_life_yr', '—')} yr")
     yrs.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    yrs.setStyleSheet(f"color: {TEXT3}; font-size: 9px;")
+    yrs.setStyleSheet(f"color: {TEXT3}; font-size: 12px;")
     life_chip_box.addWidget(yrs)
     head_row.addLayout(life_chip_box)
     layout.addLayout(head_row)
 
     action = QLabel(item.get("action", ""))
     action.setWordWrap(True)
-    action.setStyleSheet(f"color: {PRIMARY}; font-size: 11.5px; font-weight: 600;")
+    action.setStyleSheet(f"color: {PRIMARY}; font-size: 14px; font-weight: 600;")
     layout.addWidget(action)
     spec = QLabel(item.get("material_spec", ""))
     spec.setWordWrap(True)
-    spec.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+    spec.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
     layout.addWidget(spec)
     notes = QLabel(item.get("notes", ""))
     notes.setWordWrap(True)
-    notes.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+    notes.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
     layout.addWidget(notes)
     return row
 
@@ -229,14 +229,14 @@ class _SubTabButton(QPushButton):
                 self,
                 f"background-color: transparent; color: {PRIMARY}; border: none; "
                 f"border-bottom: 2px solid {PRIMARY}; padding: 9px 14px; "
-                f"font-size: 12px; font-weight: 700;"
+                f"font-size: 14px; font-weight: 700;"
             ))
         else:
             self.setStyleSheet(scoped(
                 self,
                 f"background-color: transparent; color: {TEXT2}; border: none; "
                 f"border-bottom: 2px solid transparent; padding: 9px 14px; "
-                f"font-size: 12px;",
+                f"font-size: 14px;",
                 extra="{sel}:hover { color: %s; }" % TEXT,
             ))
 
@@ -284,7 +284,7 @@ class MaintenancePanel(QWidget):
                 "Maintenance schedule not available — run a calculation first.")
             empty.setWordWrap(True)
             empty.setStyleSheet(
-                f"color: {TEXT2}; font-size: 11px; font-style: italic; padding: 16px;")
+                f"color: {TEXT2}; font-size: 13px; font-style: italic; padding: 16px;")
             self.body_layout.addWidget(empty)
             self.body_layout.addStretch()
             return
@@ -306,7 +306,7 @@ class MaintenancePanel(QWidget):
         hl.setContentsMargins(14, 10, 14, 10)
         title = QLabel("RELIABILITY & MAINTENANCE")
         title.setStyleSheet(
-            f"color: {TEXT3}; font-size: 11px; font-weight: 700; letter-spacing: .08em;")
+            f"color: {TEXT3}; font-size: 13px; font-weight: 700; letter-spacing: .08em;")
         hl.addWidget(title)
         self.body_layout.addWidget(header)
 
@@ -378,7 +378,7 @@ class MaintenancePanel(QWidget):
             for n in notes:
                 lbl = QLabel(f"*  {n}")
                 lbl.setWordWrap(True)
-                lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
+                lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
                 nl.addWidget(lbl)
             self.body_layout.addWidget(notes_box)
 
