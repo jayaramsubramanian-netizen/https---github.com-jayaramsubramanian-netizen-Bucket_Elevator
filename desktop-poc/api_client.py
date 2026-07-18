@@ -279,21 +279,70 @@ def list_components_api(component_type: str = "") -> list:
     resp.raise_for_status()
     return resp.json().get("components", [])
 
+# Component types whose WRITES must go to their own catalog table, not the
+# generic custom_components registry. Buckets are the live case: /components
+# writes to custom_components, while /components/buckets AND the solver (via
+# catalog.py -> BUCKET_SERIES) read the `buckets` table. Writing to the wrong one
+# meant a library edit never reached the design.
+_WRITE_ENDPOINTS = {"bucket": "/components/buckets"}
+
+# panel spec field -> buckets table column (inverse of _BUCKET_SPEC_MAP)
+_BUCKET_SPEC_MAP_INV = {v: k for k, v in _BUCKET_SPEC_MAP.items()}
+
+
+def _specs_to_bucket_row(description: str, specs: dict, notes: str = "") -> dict:
+    """Panel {description, specs} -> flat buckets-table payload."""
+    row = {"catalog": description, "note": notes}
+    for schema_field, value in (specs or {}).items():
+        col = _BUCKET_SPEC_MAP.get(schema_field)
+        if col:
+            row[col] = value
+    return row
+
+
 def create_component_api(component_type: str, description: str, specs: dict, notes: str = "") -> dict:
+    endpoint = _WRITE_ENDPOINTS.get(component_type)
+    if endpoint == "/components/buckets":
+        row = _specs_to_bucket_row(description, specs, notes)
+        # bucket_id is the identity: derive a stable code from the description
+        # if the caller did not supply one.
+        row["bucket_id"] = (specs or {}).get("bucket_id") or (
+            "VB_" + "".join(ch if ch.isalnum() else "_" for ch in description).upper()[:24])
+        resp = requests.post(f"{API_BASE_V1}{endpoint}", json=row, timeout=10)
+        resp.raise_for_status()
+        return resp.json()
     resp = requests.post(f"{API_BASE_V1}/components",
         json={"component_type": component_type, "description": description, "specs": specs, "notes": notes},
         timeout=10)
     resp.raise_for_status()
     return resp.json()
 
-def update_component_api(component_id: str, description: str, specs: dict, notes: str = "") -> dict:
+def update_component_api(component_id: str, description: str, specs: dict,
+                         notes: str = "", component_type: str = "") -> dict:
+    """Update a component.
+
+    component_type is optional for backward compatibility, but WITHOUT it a
+    bucket edit falls through to the generic registry and silently fails to
+    reach the solver -- so the library panel should pass it.
+    """
+    endpoint = _WRITE_ENDPOINTS.get(component_type)
+    if endpoint == "/components/buckets":
+        row = _specs_to_bucket_row(description, specs, notes)
+        resp = requests.put(f"{API_BASE_V1}{endpoint}/{component_id}", json=row, timeout=10)
+        resp.raise_for_status()
+        return resp.json()
     resp = requests.put(f"{API_BASE_V1}/components/{component_id}",
         json={"description": description, "specs": specs, "notes": notes},
         timeout=10)
     resp.raise_for_status()
     return resp.json()
 
-def delete_component_api(component_id: str) -> bool:
+def delete_component_api(component_id: str, component_type: str = "") -> bool:
+    endpoint = _WRITE_ENDPOINTS.get(component_type)
+    if endpoint == "/components/buckets":
+        resp = requests.delete(f"{API_BASE_V1}{endpoint}/{component_id}", timeout=10)
+        resp.raise_for_status()
+        return resp.json().get("deleted", True)
     resp = requests.delete(f"{API_BASE_V1}/components/{component_id}", timeout=10)
     resp.raise_for_status()
     return resp.json().get("deleted", True)

@@ -627,12 +627,13 @@ def list_catalog_buckets(
     """
     Bucket catalog (vectrix_tables.Bucket -- seeded from calculations.py's
     BUCKET_SERIES). This is a separate, DB-backed read path alongside the
-    existing /bucket-series static-list endpoint -- not yet what
-    select_bucket_auto()/the manual picker actually read from (those still
-    use the in-code BUCKET_SERIES list directly); this exists so the
-    catalog is queryable/extendable with custom entries the same way
-    motors/gearboxes/bearings/drives already are, ahead of actually
-    switching the solver's own read path over.
+    existing /bucket-series static-list endpoint.
+
+    UPDATED: this IS now what the solver reads. calculations.py no longer holds
+    a BUCKET_SERIES literal -- it imports it from catalog.py, which reads this
+    same `buckets` table. The old note here (that the solver still used an
+    in-code list) is obsolete. Writes go through the POST/PUT/DELETE endpoints
+    above, so the library and the solver can no longer diverge.
     """
     filters, params = ["1=1"], []
     if style:
@@ -652,6 +653,122 @@ def list_catalog_buckets(
             d["recommended_materials"] = []
         out.append(d)
     return {"buckets": out, "count": len(out)}
+
+
+# ── Bucket catalog WRITE path ────────────────────────────────────────────────
+# WHY THESE EXIST: the Components Library used to create/edit buckets through the
+# generic /components CRUD above, which writes to the `custom_components`
+# registry -- a DIFFERENT table from `buckets`, which is what /components/buckets
+# reads and (since the catalog.py migration) what the SOLVER reads via
+# BUCKET_SERIES. The result was a silent divergence: you could edit a bucket in
+# the library, the row would be written to custom_components, and the design
+# would keep using the unchanged `buckets` row. Add a bucket and the solver never
+# saw it at all.
+#
+# These endpoints close that loop -- library writes now land in the same table the
+# solver reads. The generic /components CRUD is left untouched for component
+# types that genuinely live in the custom_components registry.
+
+_BUCKET_WRITABLE = {
+    "style", "catalog", "W_mm", "H_mm", "P_mm", "V_L", "water_level_V_L",
+    "lip_height_mm", "front_angle_deg", "type", "discharge_type",
+    "v_min", "v_max", "v_opt", "pitch_mm", "bucket_mass_kg",
+    "recommended_materials", "note",
+    "punch", "boltA_mm", "boltB_mm", "boltDia_mm", "boltN", "punch_confirmed",
+}
+# NOT writable: id (surrogate), bucket_id (identity -- set once at create),
+# custom (set by the server, never by the client).
+
+
+def _bucket_row_out(r) -> dict:
+    d = dict(r)
+    try:
+        d["recommended_materials"] = json.loads(d.get("recommended_materials") or "[]")
+    except Exception:
+        d["recommended_materials"] = []
+    return d
+
+
+@v1.post("/components/buckets")
+def create_catalog_bucket(payload: dict = Body(...),
+                          db: sqlite3.Connection = Depends(get_db)):
+    """Create a bucket in the `buckets` table -- the catalog the solver reads.
+
+    custom=1 marks it as user-created so it is distinguishable from the 40 seeded
+    Martin entries (and so a re-seed can leave it alone).
+    """
+    bucket_id = (payload.get("bucket_id") or payload.get("id") or "").strip()
+    if not bucket_id:
+        raise HTTPException(status_code=400, detail="bucket_id is required")
+    if db.execute("SELECT 1 FROM buckets WHERE bucket_id = ?", (bucket_id,)).fetchone():
+        raise HTTPException(status_code=409,
+                            detail=f"Bucket '{bucket_id}' already exists")
+
+    # punch_confirmed is NOT NULL with no DB default -- omitting it makes the
+    # INSERT fail with an IntegrityError (found by testing against the real
+    # table, not assumed). A new custom bucket's bolt pattern is unverified
+    # until someone confirms it against a real drawing, so 0 is the correct
+    # default, not 1.
+    cols, vals = ["bucket_id", "custom", "punch_confirmed"], [bucket_id, 1, 0]
+    for k, v in payload.items():
+        if k in _BUCKET_WRITABLE and k != "punch_confirmed":
+            cols.append(k)
+            vals.append(json.dumps(v) if isinstance(v, (list, dict)) else v)
+    if "punch_confirmed" in payload:      # caller explicitly set it
+        vals[cols.index("punch_confirmed")] = 1 if payload["punch_confirmed"] else 0
+    db.execute(
+        f"INSERT INTO buckets ({', '.join(cols)}) "
+        f"VALUES ({', '.join('?' for _ in cols)})", vals)
+    db.commit()
+    row = db.execute("SELECT * FROM buckets WHERE bucket_id = ?", (bucket_id,)).fetchone()
+    return _bucket_row_out(row)
+
+
+@v1.put("/components/buckets/{bucket_id}")
+def update_catalog_bucket(bucket_id: str, payload: dict = Body(...),
+                          db: sqlite3.Connection = Depends(get_db)):
+    """Update a bucket IN THE TABLE THE SOLVER READS.
+
+    Editing a seeded catalog bucket is permitted (an engineer may correct a
+    catalog value), but the row is NOT silently re-flagged as custom -- the
+    `custom` flag continues to mean "user-created", not "user-edited".
+    """
+    if not db.execute("SELECT 1 FROM buckets WHERE bucket_id = ?", (bucket_id,)).fetchone():
+        raise HTTPException(status_code=404, detail=f"Bucket '{bucket_id}' not found")
+
+    sets, vals = [], []
+    for k, v in payload.items():
+        if k in _BUCKET_WRITABLE:
+            sets.append(f"{k} = ?")
+            vals.append(json.dumps(v) if isinstance(v, (list, dict)) else v)
+    if not sets:
+        raise HTTPException(status_code=400,
+                            detail="no writable bucket fields in payload")
+    vals.append(bucket_id)
+    db.execute(f"UPDATE buckets SET {', '.join(sets)} WHERE bucket_id = ?", vals)
+    db.commit()
+    row = db.execute("SELECT * FROM buckets WHERE bucket_id = ?", (bucket_id,)).fetchone()
+    return _bucket_row_out(row)
+
+
+@v1.delete("/components/buckets/{bucket_id}")
+def delete_catalog_bucket(bucket_id: str,
+                          db: sqlite3.Connection = Depends(get_db)):
+    """Delete a bucket. REFUSES to delete a seeded catalog entry (custom=0):
+    those 40 are reference data the solver's fallbacks depend on, and deleting
+    one would silently change which bucket an unresolvable id falls back to."""
+    row = db.execute("SELECT custom FROM buckets WHERE bucket_id = ?", (bucket_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Bucket '{bucket_id}' not found")
+    if not row["custom"]:
+        raise HTTPException(
+            status_code=403,
+            detail=(f"'{bucket_id}' is a seeded catalog bucket, not a custom entry. "
+                    f"Catalog buckets cannot be deleted -- edit it instead, or add a "
+                    f"custom bucket."))
+    db.execute("DELETE FROM buckets WHERE bucket_id = ?", (bucket_id,))
+    db.commit()
+    return {"deleted": True, "bucket_id": bucket_id}
 
 
 @v1.get("/components/material-grades")
