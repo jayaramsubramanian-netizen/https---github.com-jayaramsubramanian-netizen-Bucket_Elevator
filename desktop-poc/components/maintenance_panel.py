@@ -136,7 +136,7 @@ def _schedule_row(item, alt_bg):
     interval_chip_box.addWidget(interval_chip)
     wk = QLabel(f"~{item.get('interval_wk', '—')}wk")
     wk.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    wk.setStyleSheet(f"color: {TEXT3}; font-size: 12px;")
+    wk.setStyleSheet(f"color: {TEXT3}; font-size: 9px;")
     interval_chip_box.addWidget(wk)
     layout.addLayout(interval_chip_box)
 
@@ -145,11 +145,11 @@ def _schedule_row(item, alt_bg):
     head_row = QHBoxLayout()
     head_row.setSpacing(8)
     icon = QLabel(CAT_ICON.get(item.get("category", ""), "•"))
-    icon.setStyleSheet("font-size: 15px;")
+    icon.setStyleSheet("font-size: 13px;")
     head_row.addWidget(icon)
     task = QLabel(item.get("task", ""))
     task.setWordWrap(True)
-    task.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700;")
+    task.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700;")
     head_row.addWidget(task, 1)
     badge_status = PRIORITY_BADGE.get(priority)
     if badge_status:
@@ -157,11 +157,11 @@ def _schedule_row(item, alt_bg):
     content.addLayout(head_row)
 
     comp = QLabel(item.get("component", ""))
-    comp.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
+    comp.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
     content.addWidget(comp)
     trigger = QLabel(item.get("trigger", ""))
     trigger.setWordWrap(True)
-    trigger.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
+    trigger.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
     content.addWidget(trigger)
     layout.addLayout(content, 1)
     return row
@@ -177,7 +177,7 @@ def _replacement_row(item, alt_bg):
     head_row.setSpacing(10)
     comp = QLabel(item.get("component", ""))
     comp.setWordWrap(True)
-    comp.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700;")
+    comp.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700;")
     head_row.addWidget(comp, 1)
 
     is_critical = item.get("priority") == "CRITICAL"
@@ -189,22 +189,22 @@ def _replacement_row(item, alt_bg):
     life_chip_box.addWidget(life_chip)
     yrs = QLabel(f"≈ {item.get('estimated_life_yr', '—')} yr")
     yrs.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    yrs.setStyleSheet(f"color: {TEXT3}; font-size: 12px;")
+    yrs.setStyleSheet(f"color: {TEXT3}; font-size: 9px;")
     life_chip_box.addWidget(yrs)
     head_row.addLayout(life_chip_box)
     layout.addLayout(head_row)
 
     action = QLabel(item.get("action", ""))
     action.setWordWrap(True)
-    action.setStyleSheet(f"color: {PRIMARY}; font-size: 14px; font-weight: 600;")
+    action.setStyleSheet(f"color: {PRIMARY}; font-size: 11.5px; font-weight: 600;")
     layout.addWidget(action)
     spec = QLabel(item.get("material_spec", ""))
     spec.setWordWrap(True)
-    spec.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
+    spec.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
     layout.addWidget(spec)
     notes = QLabel(item.get("notes", ""))
     notes.setWordWrap(True)
-    notes.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
+    notes.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
     layout.addWidget(notes)
     return row
 
@@ -229,14 +229,14 @@ class _SubTabButton(QPushButton):
                 self,
                 f"background-color: transparent; color: {PRIMARY}; border: none; "
                 f"border-bottom: 2px solid {PRIMARY}; padding: 9px 14px; "
-                f"font-size: 14px; font-weight: 700;"
+                f"font-size: 12px; font-weight: 700;"
             ))
         else:
             self.setStyleSheet(scoped(
                 self,
                 f"background-color: transparent; color: {TEXT2}; border: none; "
                 f"border-bottom: 2px solid transparent; padding: 9px 14px; "
-                f"font-size: 14px;",
+                f"font-size: 12px;",
                 extra="{sel}:hover { color: %s; }" % TEXT,
             ))
 
@@ -249,6 +249,7 @@ class MaintenancePanel(QWidget):
         super().__init__(parent)
         self.setStyleSheet(plain_bg(self, PANEL))
         self._maint = None
+        self._mtbf_ok = None
         self._sub_tab = "schedule"
 
         outer = QVBoxLayout(self)
@@ -270,6 +271,9 @@ class MaintenancePanel(QWidget):
     def set_data(self, inputs, results):
         results = results or {}
         self._maint = results.get("maintenance")
+        # `mtbf_ok` is a TOP-LEVEL result field, but _rebuild() only has the
+        # `maintenance` sub-dict in scope -- so capture the verdict here.
+        self._mtbf_ok = results.get("mtbf_ok")
         self._rebuild()
 
     def _rebuild(self):
@@ -284,7 +288,7 @@ class MaintenancePanel(QWidget):
                 "Maintenance schedule not available — run a calculation first.")
             empty.setWordWrap(True)
             empty.setStyleSheet(
-                f"color: {TEXT2}; font-size: 13px; font-style: italic; padding: 16px;")
+                f"color: {TEXT2}; font-size: 11px; font-style: italic; padding: 16px;")
             self.body_layout.addWidget(empty)
             self.body_layout.addStretch()
             return
@@ -306,7 +310,7 @@ class MaintenancePanel(QWidget):
         hl.setContentsMargins(14, 10, 14, 10)
         title = QLabel("RELIABILITY & MAINTENANCE")
         title.setStyleSheet(
-            f"color: {TEXT3}; font-size: 13px; font-weight: 700; letter-spacing: .08em;")
+            f"color: {TEXT3}; font-size: 11px; font-weight: 700; letter-spacing: .08em;")
         hl.addWidget(title)
         self.body_layout.addWidget(header)
 
@@ -321,11 +325,12 @@ class MaintenancePanel(QWidget):
         grid.setSpacing(8)
 
         mtbf = kpis.get("mtbf_h")
-        # THRESHOLD-IN-FRONTEND (see module docstring): this 8,000 h limit is an
-        # engineering constant that belongs in reliability.py, returned as a
-        # verdict alongside mtbf_h the way calculations.py returns cap_ok/l10_ok.
-        # Value preserved exactly -- flagged, not silently altered.
-        mtbf_color = DANGER if (mtbf is not None and mtbf < 8000) else TEXT2
+        # RESOLVED (item 2): the 8,000 h limit now lives with the value that
+        # produces it. calculations.py emits `mtbf_ok` (and mtbf_min_h) from
+        # reliability.py's mtbf_h. mtbf_ok is None when reliability.py is not
+        # deployed -- that renders neutral, not red, because "not computed" is
+        # not the same as "failing".
+        mtbf_color = DANGER if self._mtbf_ok is False else TEXT2
 
         tiles = [
             ("Bearing L10", fmt(kpis.get("L10_hours")), "hrs", PRIMARY),
@@ -378,7 +383,7 @@ class MaintenancePanel(QWidget):
             for n in notes:
                 lbl = QLabel(f"*  {n}")
                 lbl.setWordWrap(True)
-                lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
+                lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
                 nl.addWidget(lbl)
             self.body_layout.addWidget(notes_box)
 

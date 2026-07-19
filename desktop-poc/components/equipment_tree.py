@@ -131,7 +131,7 @@ class EquipmentTreePanel(QWidget):
         self.tree.itemClicked.connect(self._on_item_clicked)
         self.tree.setStyleSheet(f"""
             QTreeWidget {{ background-color: {BG}; color: {TEXT2};
-                border: none; font-size: 14px; outline: 0; }}
+                border: none; font-size: 12px; outline: 0; }}
             QTreeWidget::item {{ padding: 3px 2px; border: none; }}
             QTreeWidget::item:selected {{ background-color: {PANEL}; }}
             QTreeWidget::item:hover {{ background-color: {PANEL}; }}
@@ -143,7 +143,7 @@ class EquipmentTreePanel(QWidget):
             dlayout = QVBoxLayout(detail)
             self.detail_title = QLabel("Select a leaf to see its checks")
             self.detail_title.setStyleSheet(
-                f"color: {TEXT2}; font-size: 14px; font-weight: 600; padding: 8px;")
+                f"color: {TEXT2}; font-size: 12px; font-weight: 600; padding: 8px;")
             self.detail_text = QTextEdit()
             self.detail_text.setReadOnly(True)
             # QTextEdit has a viewport child, so this is object-scoped rather
@@ -198,7 +198,7 @@ class EquipmentTreePanel(QWidget):
         status = data["status"]
         color = STATUS_COLOR.get(status, NONE_C)
         self.detail_title.setText(f"{data['label']}  —  {status.upper()}")
-        self.detail_title.setStyleSheet(f"color: {color}; font-size: 15px; font-weight: 700; padding: 8px;")
+        self.detail_title.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 700; padding: 8px;")
         self.detail_text.setPlainText(self._detail_text_for(data))
 
     def _show_detail_popup(self, data):
@@ -224,11 +224,11 @@ class EquipmentTreePanel(QWidget):
         hlayout = QVBoxLayout(header)
         hlayout.setContentsMargins(16, 12, 16, 12)
         title = QLabel(f"{data['label']}  —  {status.upper()}")
-        title.setStyleSheet(f"color: {color}; font-size: 16px; font-weight: 700;")
+        title.setStyleSheet(f"color: {color}; font-size: 14px; font-weight: 700;")
         hlayout.addWidget(title)
         if data.get("sub"):
             sub = QLabel(data["sub"])
-            sub.setStyleSheet(f"color: {TEXT3}; font-size: 13px;")
+            sub.setStyleSheet(f"color: {TEXT3}; font-size: 11px;")
             hlayout.addWidget(sub)
         layout.addWidget(header)
 
@@ -238,7 +238,7 @@ class EquipmentTreePanel(QWidget):
         body.setStyleSheet(scoped(
             body,
             f"background-color: {BG}; color: {TEXT2}; border: none; "
-            f"padding: 14px; font-size: 14px;"))
+            f"padding: 14px; font-size: 12px;"))
         layout.addWidget(body)
 
         footer = QFrame()
@@ -252,7 +252,7 @@ class EquipmentTreePanel(QWidget):
             close_btn,
             f"background-color: {SURFACE}; color: {TEXT2}; "
             f"border: 1px solid {BORDER2}; border-radius: {R_SM}px; "
-            f"padding: 6px 16px; font-size: 14px;",
+            f"padding: 6px 16px; font-size: 11.5px;",
             extra="{sel}:hover { color: %s; }" % TEXT,
         ))
         close_btn.clicked.connect(dialog.accept)
@@ -342,11 +342,13 @@ class EquipmentTreePanel(QWidget):
         # cap_ok / speed_ok / cr_ok / l10_ok already do (chain_v_ok, read a few
         # lines below, is exactly the right pattern -- this one just never got
         # its equivalent). Values preserved exactly. See TASK_LIST.md item 2.
+        # RESOLVED (item 2): the 6.0 / 5.0 bands now come from the backend as
+        # `chain_SF_status`, matching chain_v_ok a few lines below -- which was
+        # already the right pattern; this one just never got its equivalent.
         chain_sf_actual = r.get("chain_SF_actual")
-        if chain_sf_actual is not None and chain_sf_actual >= 6.0:
-            chain_sf_status = "ok"
-        elif chain_sf_actual is not None and chain_sf_actual >= 5.0:
-            chain_sf_status = "warn"
+        _sf_status = r.get("chain_SF_status")
+        if _sf_status:
+            chain_sf_status = _sf_status
         elif chain_sf_actual is not None and chain_sf_actual > 0:
             chain_sf_status = "fail"
         else:
@@ -526,13 +528,11 @@ class EquipmentTreePanel(QWidget):
         sd = r.get("startup_dynamic") or {}
         sc = r.get("shock_check") or {}
         if sd:
-            # THRESHOLD-IN-FRONTEND: the 1.0 / 1.1 startup-margin bands are
-            # duplicated here AND in power_edit.py -- two copies of the same
-            # engineering constant in two UI files, which is precisely how they
-            # drift apart. One backend verdict alongside startup_margin would
-            # replace both. Values preserved exactly. See TASK_LIST.md item 2.
+            # RESOLVED (item 2): the 1.0 / 1.1 bands were duplicated HERE and in
+            # power_edit.py -- two copies of one constant in two UI files. Both
+            # now read the single backend verdict `startup_margin_status`.
             margin = sd.get("startup_margin")
-            st_startup = "fail" if (margin or 0) < 1.0 else ("warn" if (margin or 0) < 1.1 else "ok")
+            st_startup = r.get("startup_margin_status") or "fail"
             if sc and not sc.get("adequate_for_normal_shock"):
                 st_startup = "warn" if st_startup == "ok" else st_startup
             add_leaf(power, "Startup Dynamics",

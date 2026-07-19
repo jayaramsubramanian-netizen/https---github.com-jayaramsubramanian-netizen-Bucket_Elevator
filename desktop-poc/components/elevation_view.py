@@ -1044,8 +1044,8 @@ class _ViewTabBtn(QPushButton):
 
 
 class ElevationView(QWidget):
-    """Full ElevatorSchematic container -- tab bar (5 views), zoom controls,
-    canvas, overlay stat cards, hover status bar. This is the widget
+    """Full ElevatorSchematic container -- tab bar (9 views, two rows), zoom
+    controls, canvas, overlay stat cards, hover status bar. This is the widget
     main.py imports and wires into the Results tab splitter; the name is
     kept for compatibility even though it's now the whole multi-view
     schematic, not just the elevation drawing."""
@@ -1061,25 +1061,67 @@ class ElevationView(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # ── Tab bar ──────────────────────────────────────────────────
+        # ── Tab bar (TWO ROWS) ───────────────────────────────────────
+        # WHY TWO ROWS: VIEWS grew from 5 to 9 (4 ISO A3 CAD drawings were added
+        # alongside the 5 QPainter schematics) but the bar stayed a single
+        # QHBoxLayout. Measured with QFontMetrics, the 9 tabs plus the zoom /
+        # reset controls need ~1180px; this widget's minimum width is 560px --
+        # an overflow of ~620px, which is the tab overlap. It was already
+        # ~490px over BEFORE the typography sweep; the larger font widened an
+        # existing structural break rather than causing it.
+        #
+        # The 9 views are naturally two groups, so the bar follows that split:
+        #   row 1 -- the 5 QPainter schematic views
+        #   row 2 -- the 4 ISO A3 CAD drawings (short labels + a group caption)
+        #            plus the zoom / reset controls, which belong with whichever
+        #            view is active and were themselves being pushed off-screen.
+        # Measured: row 1 = 547px, row 2 = 444px. Both fit inside 560px.
         tab_bar = QFrame()
-        tab_bar.setFixedHeight(34)
+        tab_bar.setFixedHeight(64)          # was 34 (single row)
         tab_bar.setStyleSheet(scoped(
             tab_bar,
             f"background-color: {PANEL2}; border: none; "
             f"border-bottom: 1px solid {BORDER};"
         ))
-        tbl = QHBoxLayout(tab_bar)
-        tbl.setContentsMargins(10, 0, 10, 0)
-        tbl.setSpacing(2)
+        tb_outer = QVBoxLayout(tab_bar)
+        tb_outer.setContentsMargins(10, 0, 10, 0)
+        tb_outer.setSpacing(0)
+
+        # Short labels for the CAD row. The full VIEWS labels ("Side Eng.
+        # Drawing" = 154px) are what make the bar unfittable; inside a row that
+        # is captioned "CAD" the long prefixes are redundant anyway.
+        _CAD_SHORT = {
+            "cad":        "Front",
+            "cad_side":   "Side",
+            "cad_head":   "Head",
+            "cad_bucket": "Bucket",
+        }
+
+        row1 = QHBoxLayout(); row1.setContentsMargins(0, 0, 0, 0); row1.setSpacing(2)
+        row2 = QHBoxLayout(); row2.setContentsMargins(0, 0, 0, 0); row2.setSpacing(2)
+
         self._tab_btns = {}
         for vid, label in VIEWS:
-            btn = _ViewTabBtn(label)
+            is_cad = vid in _CAD_SHORT
+            btn = _ViewTabBtn(_CAD_SHORT[vid] if is_cad else label)
+            # Keep the full name discoverable now that the CAD labels are short.
+            btn.setToolTip(label)
             btn.setChecked(vid == "elevation")
             btn.clicked.connect(lambda _, v=vid: self._switch_view(v))
-            tbl.addWidget(btn)
-            self._tab_btns[vid] = btn
-        tbl.addStretch()
+            (row2 if is_cad else row1).addWidget(btn)
+            self._tab_btns[vid] = btn        # unchanged: all 9 vids, same keys
+        row1.addStretch()
+
+        cad_cap = QLabel("CAD")
+        cad_cap.setStyleSheet(
+            f"color:{TEXT3};font-size:11px;font-weight:700;"
+            f"letter-spacing:1px;margin-right:6px;")
+        row2.insertWidget(0, cad_cap)
+        row2.addStretch()
+
+        tb_outer.addLayout(row1)
+        tb_outer.addLayout(row2)
+        tbl = row2          # zoom / reset controls below attach to the CAD row
 
         self._zoom_lbl = QLabel("100%")
         self._zoom_lbl.setStyleSheet(f"color:{TEXT3};font-size:12px;margin-right:4px;")

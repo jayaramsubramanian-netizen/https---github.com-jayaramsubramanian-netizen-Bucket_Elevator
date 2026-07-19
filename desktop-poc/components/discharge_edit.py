@@ -40,7 +40,14 @@ That is the same failure as components_library_panel.py's _input_style():
 any file that hand-rolls its own field styling silently opts out of every
 fix made to the shared helpers.
 
-THRESHOLD-IN-FRONTEND (flagged, not changed)
+THRESHOLD-IN-FRONTEND -- RESOLVED (TASK_LIST item 2)
+The 40%/60% chute-loading bands below were engineering constants living in
+this UI file. calculations.py now emits `chute_loading_status` alongside
+loading_pct (plus chute_loading_ok_pct / _warn_pct for labels), so this
+dialog reads the verdict instead of restating the rule. Numbers relocated,
+not retuned -- boundary behaviour unit-tested identical.
+
+Previously:
 ────────────────────────────────────────────
     load_status = "ok" if loading_pct < 40 else ("warn" if loading_pct < 60 else "fail")
 
@@ -134,7 +141,7 @@ class DischargeEditDialog(QDialog):
             f"({'auto from bucket style' if not self._dtype_val[0] else 'overridden'})."
         )
         dtype_note.setWordWrap(True)
-        dtype_note.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
+        dtype_note.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
         bl.addWidget(dtype_note)
 
         # ── Chute angle ──────────────────────────────────────────────
@@ -156,12 +163,10 @@ class DischargeEditDialog(QDialog):
             cap = perf.get("capacity_check") or {}
             if cap:
                 loading_pct = cap.get("loading_pct") or 0
-                # THRESHOLD-IN-FRONTEND: the 40%/60% bands are engineering
-                # constants that belong in chute_flow.py, returned as a verdict
-                # alongside loading_pct. Preserved exactly -- flagged, not
-                # silently altered. See module docstring.
-                load_status = ("ok" if loading_pct < 40
-                               else ("warn" if loading_pct < 60 else "fail"))
+                # RESOLVED (item 2): the 40%/60% bands now come from the
+                # backend as `chute_loading_status`, computed alongside
+                # loading_pct rather than restated here.
+                load_status = r.get("chute_loading_status") or "ok"
                 bl.addWidget(stat_box(
                     [("Loading", f"{fmt(loading_pct, 1)}%"),
                      ("Stream depth",
@@ -248,7 +253,7 @@ class DischargeEditDialog(QDialog):
             if geom.get("note"):
                 geom_note = QLabel(geom["note"])
                 geom_note.setWordWrap(True)
-                geom_note.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
+                geom_note.setStyleSheet(f"color: {TEXT2}; font-size: 11px;")
                 bl.addWidget(geom_note)
 
         # ── Casing clearance ─────────────────────────────────────────

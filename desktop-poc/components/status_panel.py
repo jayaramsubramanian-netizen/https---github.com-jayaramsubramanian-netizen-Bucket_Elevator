@@ -52,24 +52,27 @@ KpiGrid.jsx's own DISC object, which uses literals rather than CSS vars.
 Those are now expressed via the same _tint() helper for consistency, at
 identical values.
 
-ARCHITECTURE VIOLATION -- FLAGGED, NOT SILENTLY CHANGED
-───────────────────────────────────────────────────────
+ARCHITECTURE VIOLATION -- RESOLVED (TASK_LIST item 2)
+─────────────────────────────────────────────────────
+This panel used to compute its own headshaft-load verdict:
+
     T_warn = T_total is not None and T_total > 50000
     T_fail = T_total is not None and T_total > 80000
 
-These 50 kN / 80 kN headshaft-load thresholds are ENGINEERING CONSTANTS
-living in the frontend. The project rule is that the frontend is pure I/O
--- no physics, no engineering constants -- precisely so a threshold here
-can't silently drift from the backend's. Every other status on this panel
-already reads a pre-computed boolean (cap_ok, speed_ok, cr_ok, l10_ok);
-this one does not, and there is no `headshaft_ok` in results to read.
+Those 50 kN / 80 kN limits were ENGINEERING CONSTANTS living in the
+frontend, in violation of the pure-I/O rule -- and every other status on
+this panel already read a pre-computed backend verdict (cap_ok, speed_ok,
+cr_ok, l10_ok), so this one was the outlier that could silently drift.
 
-I have NOT invented a backend field or changed the numbers -- they are
-preserved exactly. But this wants a `headshaft_load_ok` (and ideally a
-`headshaft_load_limit_N`) computed in calculations.py and consumed here,
-the same way cap_ok is. Same for "≥ 40,000 h continuous" in the L10 card's
-target text and "Optimal: 1.0 – 1.8" in the CR card -- both are hardcoded
-limits the backend already knows. Marked with THRESHOLD-IN-FRONTEND below.
+calculations.py now emits, alongside T_total:
+    headshaft_load_status   "ok" | "warn" | "fail" | None
+    headshaft_load_warn_N   50000.0
+    headshaft_load_fail_N   80000.0
+and likewise l10_status / l10_min_h / l10_warn_h, and cr_opt_min /
+cr_opt_max for the CR card's "Optimal" text. The numbers were RELOCATED,
+not retuned -- boundary behaviour was unit-tested to be identical.
+
+A None verdict renders NEUTRAL, not green: an unknown is not a pass.
 
 ALSO
 ────
@@ -151,7 +154,7 @@ class _StatusPill(QLabel):
             self,
             f"background-color: {s['bg']}; color: {s['color']}; "
             f"border: 1px solid {s['border']}; border-radius: {R_PILL}px; "
-            f"padding: 2px 8px; font-size: 12px; font-weight: 700; "
+            f"padding: 2px 8px; font-size: 9px; font-weight: 700; "
             f"letter-spacing: .06em;"
         ))
 
@@ -166,7 +169,7 @@ class _DiscTag(QLabel):
         self.setStyleSheet(scoped(
             self,
             f"background-color: {d['bg']}; color: {d['color']}; border: none; "
-            f"border-radius: {R_PILL}px; padding: 1px 7px; font-size: 12px; "
+            f"border-radius: {R_PILL}px; padding: 1px 7px; font-size: 9px; "
             f"font-weight: 600; letter-spacing: .05em;"
         ))
 
@@ -200,7 +203,7 @@ class KpiCard(QFrame):
 
         label_lbl = QLabel(label.upper())
         label_lbl.setStyleSheet(
-            f"color: {TEXT2}; font-size: 13px; font-weight: 600; "
+            f"color: {TEXT2}; font-size: 10px; font-weight: 600; "
             f"letter-spacing: .04em;")
         outer.addWidget(label_lbl)
 
@@ -209,14 +212,14 @@ class KpiCard(QFrame):
         value_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
         value_lbl = QLabel(str(value))
         value_lbl.setStyleSheet(
-            f"color: {s['color']}; font-size: 24px; font-weight: 700; "
+            f"color: {s['color']}; font-size: 23px; font-weight: 700; "
             f"font-family: {FF_MONO};"
         )
         value_row.addWidget(value_lbl)
         if unit:
             unit_lbl = QLabel(unit)
             unit_lbl.setStyleSheet(
-                f"color: {TEXT2}; font-size: 14px; font-family: {FF_MONO};")
+                f"color: {TEXT2}; font-size: 12px; font-family: {FF_MONO};")
             value_row.addWidget(unit_lbl, alignment=Qt.AlignmentFlag.AlignBottom)
         outer.addLayout(value_row)
 
@@ -232,7 +235,7 @@ class KpiCard(QFrame):
             inset_row.setContentsMargins(10, 6, 10, 6)
             if target:
                 target_lbl = QLabel(f"Target: {target}")
-                target_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 13px;")
+                target_lbl.setStyleSheet(f"color: {TEXT2}; font-size: 10.5px;")
                 target_lbl.setWordWrap(True)
                 inset_row.addWidget(target_lbl, 1)
             if margin is not None:
@@ -240,7 +243,7 @@ class KpiCard(QFrame):
                 sign = "+" if margin >= 0 else ""
                 margin_lbl = QLabel(f"{sign}{fmt(margin, 1)}%")
                 margin_lbl.setStyleSheet(
-                    f"color: {margin_color}; font-size: 13px; font-weight: 700; "
+                    f"color: {margin_color}; font-size: 10.5px; font-weight: 700; "
                     f"font-family: {FF_MONO};"
                 )
                 inset_row.addWidget(margin_lbl)
@@ -253,7 +256,7 @@ class KpiCard(QFrame):
             self.toggle_btn.setStyleSheet(scoped(
                 self.toggle_btn,
                 f"background-color: transparent; color: {TEXT3}; border: none; "
-                f"text-align: left; font-size: 13px; font-weight: 600; "
+                f"text-align: left; font-size: 10px; font-weight: 600; "
                 f"letter-spacing: .03em; padding: 0;",
                 extra="{sel}:hover { color: %s; }" % TEXT2,
             ))
@@ -265,7 +268,7 @@ class KpiCard(QFrame):
             self.formula_box.setStyleSheet(scoped(
                 self.formula_box,
                 f"background-color: {PANEL}; border: 1px solid {BORDER}; "
-                f"border-radius: {R_SM}px; color: {TEXT2}; font-size: 13px; "
+                f"border-radius: {R_SM}px; color: {TEXT2}; font-size: 10.5px; "
                 f"font-family: {FF_MONO}; padding: 10px 12px;"
             ))
             self.formula_box.setWordWrap(True)
@@ -311,7 +314,7 @@ class StatusPanel(QWidget):
         if not results.get("bucket"):
             empty = QLabel("Run a calculation to see KPIs.")
             empty.setStyleSheet(
-                f"color: {TEXT2}; font-size: 13px; font-style: italic;")
+                f"color: {TEXT2}; font-size: 11px; font-style: italic;")
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.list_layout.addWidget(empty)
             self.list_layout.addStretch()
@@ -334,15 +337,16 @@ class StatusPanel(QWidget):
         T_total_kN = T_total / 1000 if T_total is not None else None
         L10 = r.get("L10")
 
-        # THRESHOLD-IN-FRONTEND (see module docstring). These 50/80 kN limits
-        # are engineering constants that belong in calculations.py, exposed as
-        # a `headshaft_load_ok` boolean like cap_ok/speed_ok/cr_ok/l10_ok. Every
-        # other card on this panel reads a backend verdict; this one computes
-        # its own, which is exactly how a frontend limit silently drifts from
-        # the backend's. Values preserved unchanged -- flagged, not "fixed" by
-        # inventing a field that doesn't exist yet.
-        T_warn = T_total is not None and T_total > 50000
-        T_fail = T_total is not None and T_total > 80000
+        # RESOLVED (TASK_LIST item 2): the 50/80 kN limits no longer live here.
+        # calculations.py emits `headshaft_load_status` alongside T_total, the
+        # same way it emits cap_ok / speed_ok / cr_ok / l10_ok. This panel now
+        # READS the verdict instead of recomputing it, so the limit cannot drift
+        # from the backend's.
+        # None (backend did not compute it) renders NEUTRAL rather than a green
+        # PASS -- an unknown is not the same as an adequate result.
+        _hs_status = r.get("headshaft_load_status")
+        T_warn = _hs_status == "warn"
+        T_fail = _hs_status == "fail"
 
         cards = [
             dict(
@@ -473,11 +477,11 @@ class StatusPanel(QWidget):
                 value=(f"{(L10 / 1000):.0f}k"
                        if L10 is not None and L10 > 9999 else fmt(L10, 0)),
                 unit="h", disc="mechanical",
-                status="ok" if l10_ok else ("warn" if (L10 or 0) >= 20000 else "fail"),
-                # THRESHOLD-IN-FRONTEND: 40,000h display text + the 20,000h
-                # floor in the status expression above. The 20,000h floor is a
-                # real optimizer constraint in the backend -- it should be read
-                # from there, not restated here.
+                # RESOLVED (item 2): the 20,000h floor was a real optimiser
+                # constraint restated here. calculations.py now emits
+                # `l10_status` (and l10_min_h / l10_warn_h for the label), so
+                # the floor is read, not duplicated.
+                status=r.get("l10_status") or ("ok" if l10_ok else "fail"),
                 target="≥ 40,000 h continuous", margin=None,
                 formula=(
                     f"L10 = (C / P)³ × 10⁶ / (60 × n)\n"

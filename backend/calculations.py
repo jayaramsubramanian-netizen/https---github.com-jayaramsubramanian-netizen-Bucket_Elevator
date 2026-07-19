@@ -3044,6 +3044,56 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "speed_ok":     (bucket.get("v_min", 0.5) <= v <= bucket.get("v_max", 9.9)),
         "cr_ok":        1.0 <= float(cr) <= 1.8,
         "l10_ok":       L10 >= 40000.0,
+
+        # ── Engineering verdicts (TASK_LIST item 2) ──────────────────────────
+        # These nine bands were hardcoded in SIX UI files. Two of them
+        # (startup-margin 1.0/1.1) existed as TWO independent copies in
+        # power_edit.py and equipment_tree.py -- the classic way one constant
+        # becomes two that drift apart. They are computed here, once, and the
+        # frontend now only READS them, matching how cap_ok / speed_ok / cr_ok /
+        # l10_ok / chain_v_ok already work.
+        #
+        # Both the VERDICT and the LIMITS are emitted: the limits let the UI
+        # render its own labels ("≥ 40,000 h", "Optimal: 1.0-1.8") without
+        # restating the number, so display text cannot drift from the rule
+        # either. Values are carried over EXACTLY as the UI had them -- this is
+        # a relocation, not a retune.
+        "headshaft_load_status":  _band_hi(T1 + T2 + T3, 50000.0, 80000.0),
+        "headshaft_load_warn_N":  50000.0,
+        "headshaft_load_fail_N":  80000.0,
+
+        "l10_min_h":              40000.0,   # display: ">= 40,000 h"
+        "l10_warn_h":             20000.0,   # optimiser constraint floor
+        "l10_status":             ("ok" if L10 >= 40000.0
+                                   else ("warn" if L10 >= 20000.0 else "fail")),
+
+        "cr_opt_min":             1.0,       # display: "Optimal: 1.0-1.8"
+        "cr_opt_max":             1.8,
+
+        "motor_margin_ok_pct":    10.0,
+        "motor_margin_warn_pct":  0.0,
+        "motor_margin_status":    _band_lo(
+            (float(motor_kw) / float(P_total) - 1.0) * 100.0 if P_total > 0 else 0.0,
+            10.0, 0.0),
+
+        "startup_margin_ok":      1.1,
+        "startup_margin_warn":    1.0,
+        "startup_margin_status":  _band_lo(
+            (startup_dyn or {}).get("startup_margin"), 1.1, 1.0),
+
+        "chain_SF_ok_min":        6.0,
+        "chain_SF_warn_min":      5.0,
+        "chain_SF_status":        _band_lo(chain_SF_act, 6.0, 5.0),
+
+        "chute_loading_ok_pct":   40.0,
+        "chute_loading_warn_pct": 60.0,
+        "chute_loading_status":   _band_hi(
+            (((discharge_chute or {}).get("performance") or {})
+             .get("capacity_check") or {}).get("loading_pct"), 40.0, 60.0,
+            inclusive=False),
+
+        "mtbf_min_h":             8000.0,
+        "mtbf_ok":                _mtbf_ok(maintenance_result, 8000.0),
         # Margins as percentages — avoids (value - target) / target in JS
         "cap_margin_pct":   round((float(Q) / float(inp.Q_req) - 1.0) * 100.0, 1),
         "motor_margin_pct": round((float(motor_kw) / float(P_total) - 1.0) * 100.0, 1)
@@ -3074,6 +3124,49 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "sprocket":        sprocket,
         "boot_sprocket":   boot_sprocket,
     }
+
+
+# ── Verdict banding helpers (TASK_LIST item 2) ───────────────────────────────
+# Three-state banding, used so the UI never restates an engineering limit.
+# Returning None for a missing input is deliberate: the UI can then render a
+# neutral state instead of a green PASS derived from a value that was never
+# computed.
+
+def _band_lo(value, ok_at, warn_at):
+    """HIGHER is better: ok if value >= ok_at, warn if >= warn_at, else fail."""
+    if value is None:
+        return None
+    v = float(value)
+    if v >= ok_at:
+        return "ok"
+    return "warn" if v >= warn_at else "fail"
+
+
+def _band_hi(value, warn_over, fail_over, inclusive=True):
+    """LOWER is better: ok until warn_over, warn until fail_over, then fail.
+
+    inclusive=True  -> warn when value > warn_over   (load limits: >50kN warns)
+    inclusive=False -> warn when value >= warn_over  (percentage bands: <40% ok)
+    """
+    if value is None:
+        return None
+    v = float(value)
+    if inclusive:
+        if v > fail_over:
+            return "fail"
+        return "warn" if v > warn_over else "ok"
+    if v >= fail_over:
+        return "fail"
+    return "warn" if v >= warn_over else "ok"
+
+
+def _mtbf_ok(maintenance_result, min_h):
+    """MTBF verdict. reliability.py owns mtbf_h; the LIMIT belongs with it, not
+    in maintenance_panel.py. None when reliability.py is not deployed (the stub
+    path) so the UI shows neutral rather than a false failure."""
+    kpis = ((maintenance_result or {}).get("kpis") or {})
+    mtbf = kpis.get("mtbf_h")
+    return None if mtbf is None else float(mtbf) >= float(min_h)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
