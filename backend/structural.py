@@ -106,6 +106,34 @@ def _b17_key(d_shaft_mm: float) -> tuple[float, float]:
     return _B17_KEYS[-1][1], _B17_KEYS[-1][2]
 
 
+# ── Hub sizing ratio ─────────────────────────────────────────────────────────
+# Thick-wall minimum for a hub on a shaft. NOT a cited standard -- INDUSTRY
+# PRACTICE, per the hub_diameter() docstring. Named here because it was
+# previously written twice: once inside hub_diameter() and once hardcoded inline
+# at the BOOT pulley call site in calculations.py, which bypasses hub_diameter()
+# (correctly -- see plain_bore_hub_od below). Two copies of one unsourced
+# constant is how they drift apart; this is the single source.
+HUB_THICK_WALL_RATIO = 1.5
+
+
+def plain_bore_hub_od(shaft_diameter_m: float) -> float:
+    """Hub OD for a PLAIN BORE hub (no keyway), in metres.
+
+    Why this is not hub_diameter(): that function takes the MAX of two criteria
+    -- keyway wall clearance (d + 2*h_key + 2*wall) and the thick-wall ratio.
+    The keyway term is applied unconditionally, because _b17_key() returns key
+    dimensions for any shaft regardless of torque. A boot pulley has no drive
+    torque and therefore no key, so the keyway criterion does not physically
+    apply; calling hub_diameter(torque_Nm=0) would still oversize the hub by the
+    keyway allowance and push a marginal design into the degenerate
+    hub-larger-than-shell geometry that pulley_end_disc() flags.
+
+    Only the thick-wall ratio applies to a plain bore -- and it now comes from
+    the same constant hub_diameter() uses.
+    """
+    return HUB_THICK_WALL_RATIO * float(shaft_diameter_m)
+
+
 class StructuralStressEngine:
 
     # ── 1. Shaft — Free Body Diagram ──────────────────────────────────────────
@@ -456,7 +484,7 @@ class StructuralStressEngine:
 
         # Hub OD
         d_hub_wall = d_mm + 2.0 * h_mm + 2.0 * min_wall_mm
-        d_hub_ratio = 1.5 * d_mm
+        d_hub_ratio = HUB_THICK_WALL_RATIO * d_mm
         d_hub_mm = max(d_hub_wall, d_hub_ratio)
 
         # Hub length from bearing stress

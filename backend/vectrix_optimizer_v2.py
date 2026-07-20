@@ -57,11 +57,24 @@ Objectives (all minimised; L10 is negated to express "maximise life"):
   F3  cr_deviation      — distance outside the material's preferred CR range
                           (this is the "strong default" mechanism for A)
 
-Known limitation (flagged in findings log, not yet fixed): solve_elevator()
-can raise an uncaught ValueError ("math domain error") under extreme-load
-boot-pulley end-disc geometry (structural.py, negative arm). This optimizer
-catches it defensively and scores it as maximally infeasible, but the root
-cause is a separate latent bug in the core calc engine, not introduced here.
+RESOLVED (was: "known limitation, not yet fixed"): solve_elevator() used to
+raise an uncaught ValueError ("math domain error") under extreme-load
+boot-pulley end-disc geometry -- structural.py computed arm = R_shell - R_hub,
+which goes negative when the required hub is larger than the pulley shell, and
+math.sqrt() then raised.
+
+That is FIXED at the root: pulley_end_disc() clamps the arm to a 1mm floor so
+it always returns, reports the TRUE (possibly negative) arm_m, and exposes
+`hub_fits_in_shell`. calculations.py consumes that flag and raises a proper
+FAIL check for both head and boot pulleys, so the condition now surfaces as an
+actionable design error instead of an opaque exception. Verified against
+degenerate geometry (hub == shell, hub > shell, hub 2x shell): no raise.
+
+The defensive try/except below is retained as a BACKSTOP, not the primary
+mechanism. Keep it: it protects against any future uncaught exception from the
+solver, and a sensitivity/Monte-Carlo sweep -- which deliberately pushes inputs
+to extremes far more often than NSGA-II does -- needs that guarantee. But it
+should no longer be masking this particular bug.
 """
 import time
 import warnings

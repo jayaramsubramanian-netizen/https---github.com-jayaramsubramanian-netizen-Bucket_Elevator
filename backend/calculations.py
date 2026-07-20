@@ -71,9 +71,9 @@ try:
 except ImportError:
     from physics import DischargePhysics
 try:
-    from .structural import StructuralStressEngine
+    from .structural import StructuralStressEngine, plain_bore_hub_od
 except ImportError:
-    from structural import StructuralStressEngine
+    from structural import StructuralStressEngine, plain_bore_hub_od
 try:
     from .dynamics import DynamicLoadEngine
 except ImportError:
@@ -2556,7 +2556,12 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
 
     boot_end_disc = StructuralStressEngine.pulley_end_disc(
         pulley_diameter_m = _boot_D_mm / 1000.0,
-        hub_od_m          = boot_shaft["d_mm"] / 1000.0 * 1.5,  # plain bore hub, no key-driven sizing
+        # Plain-bore hub: no drive torque on a boot pulley, so no key, so the
+        # keyway-clearance criterion in hub_diameter() does not apply. The 1.5
+        # ratio used to be hardcoded HERE as well as inside hub_diameter() --
+        # two copies of one unsourced "industry practice" figure. Now both read
+        # structural.HUB_THICK_WALL_RATIO via this helper.
+        hub_od_m          = plain_bore_hub_od(boot_shaft["d_mm"] / 1000.0),
         T_total_N         = _R_boot_N,
         face_width_m      = BW_mm / 1000.0 + 0.050,
     )
