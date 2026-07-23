@@ -602,6 +602,123 @@ class BucketElevatorInput(BaseModel):
         ),
     )
 
+    # ── Operating profile (duty classification) ───────────────────────────────
+    # These are INPUTS describing how the machine is used, not design outputs.
+    # They feed duty_classifier.py, which reads duty_class_rules from the
+    # database — so the thresholds are data with provenance, never constants
+    # here. The derived duty class then selects which engineering_limits apply
+    # (required L10 20k/40k/60k/80k/100k h).
+    #
+    # The same profile feeds bearing life, chain life, belt flex life, pulley
+    # and shaft fatigue, and lubrication intervals — one description of duty,
+    # consumed by every component selector.
+    hours_per_day: float = Field(
+        16.0, ge=0.1, le=24.0,
+        description="Operating hours per day. Default 16 h (two shifts).",
+    )
+    days_per_week: float = Field(
+        6.0, ge=0.1, le=7.0,
+        description="Operating days per week. Default 6.",
+    )
+    weeks_per_year: float = Field(
+        50.0, ge=1.0, le=52.0,
+        description="Operating weeks per year. Default 50 (2 weeks shutdown).",
+    )
+    design_years: float = Field(
+        20.0, ge=1.0, le=50.0,
+        description="Intended service life of the installation [years].",
+    )
+    operating_hours_per_year: Optional[float] = Field(
+        None, ge=1.0, le=8760.0,
+        description=(
+            "Annual operating hours OVERRIDE. Leave empty to compute from "
+            "hours/day × days/week × weeks/year. Many industries specify "
+            "equipment directly this way (grain ~1200, food ~4200, "
+            "cement ~8200, mining ~8600 h/year)."
+        ),
+    )
+
+    starts_per_hour: float = Field(
+        4.0, ge=0.0, le=60.0,
+        description=(
+            "Average starts per hour. Drives torque transients and thermal "
+            "cycling, which can govern component life independently of "
+            "running hours."
+        ),
+    )
+    emergency_starts_per_year: float = Field(
+        0.0, ge=0.0,
+        description="Emergency/loaded starts per year (full-bucket restarts).",
+    )
+    reversing: bool = Field(
+        False,
+        description="Reversing duty — imposes load reversals the steady-state model does not capture.",
+    )
+    vfd_enabled: bool = Field(
+        False,
+        description="VFD-driven. Affects starting transients and speed range.",
+    )
+    shock_loading: Literal["low", "moderate", "high"] = Field(
+        "low",
+        description=(
+            "Shock/impact severity of the feed. low = uniform metered feed; "
+            "moderate = lumpy or intermittent; high = large lumps, choke "
+            "feeding or frequent jams."
+        ),
+    )
+
+    ambient_temperature_c: float = Field(
+        20.0, ge=-40.0, le=80.0,
+        description=(
+            "Ambient temperature at the installation [°C]. Distinct from "
+            "material_temperature_c — this drives grease life and "
+            "relubrication interval."
+        ),
+    )
+    availability_target_pct: float = Field(
+        95.0, ge=50.0, le=100.0,
+        description=(
+            "Required availability [%]. Expresses consequence of failure: "
+            "99% allows under ~88 h/year of total downtime, which effectively "
+            "removes any window for unplanned bearing replacement."
+        ),
+    )
+
+    @property
+    def annual_hours(self) -> float:
+        """Operating hours per year — the override if given, else derived."""
+        if self.operating_hours_per_year is not None:
+            return float(self.operating_hours_per_year)
+        return min(float(self.hours_per_day) * float(self.days_per_week)
+                   * float(self.weeks_per_year), 8760.0)
+
+    @property
+    def design_hours(self) -> float:
+        """Total operating hours over the intended service life."""
+        return self.annual_hours * float(self.design_years)
+
+    @property
+    def number_of_starts(self) -> float:
+        """Total starts over the service life, including emergency starts."""
+        return (self.annual_hours * float(self.starts_per_hour)
+                + float(self.emergency_starts_per_year)) * float(self.design_years)
+
+    def duty_profile(self) -> dict:
+        """Flat dict for duty_classifier.classify(). Keys MUST match the
+        `parameter` values in duty_class_rules — that table is the contract."""
+        return {
+            "annual_hours":          self.annual_hours,
+            "design_hours":          self.design_hours,
+            "starts_per_hour":       self.starts_per_hour,
+            "number_of_starts":      self.number_of_starts,
+            "shock_loading":         self.shock_loading,
+            "reversing":             self.reversing,
+            "vfd_enabled":           self.vfd_enabled,
+            "ambient_temperature_c": self.ambient_temperature_c,
+            "availability_target":   self.availability_target_pct,
+            "design_years":          self.design_years,
+        }
+
     # Discharge type override — allows forcing continuous mode on non-HF buckets
     # or centrifugal on HF (engineer override for non-standard applications)
     discharge_type_override: Literal["", "centrifugal", "continuous"] = Field(

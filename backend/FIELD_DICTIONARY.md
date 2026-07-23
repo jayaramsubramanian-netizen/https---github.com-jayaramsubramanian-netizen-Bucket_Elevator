@@ -1,6 +1,6 @@
 # VECTRIX Engineering Field Dictionary
 
-*Generated from the live schema on 2026-07-21. Do not edit by hand -- edit `generate_field_dictionary.py` and regenerate.*
+*Generated from the live schema on 2026-07-23. Do not edit by hand -- edit `generate_field_dictionary.py` and regenerate.*
 
 This is the engineering contract. If a field's meaning changes, change it here -- not in the solver.
 
