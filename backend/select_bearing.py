@@ -96,7 +96,12 @@ def select_bearing(
     plus the full candidate/rejection trace and a confidence score."""
     caps, duty = catalogue["caps"], catalogue["duty"]
     if required_life_h is None:
-        required_life_h = (duty.get(duty_class) or {}).get("target_design_life_h", 40000.0)
+        # float() pins the type: dict.get() returns Any|None to the type checker,
+        # and a NULL target_design_life_h is theoretically possible, so coerce to
+        # a concrete float here rather than propagating an Optional through every
+        # comparison below.
+        _life = (duty.get(duty_class) or {}).get("target_design_life_h") or 40000.0
+        required_life_h = float(_life)
 
     duty_col = _duty_column(duty_class)
     trace: List[Dict[str, Any]] = []

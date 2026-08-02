@@ -299,6 +299,37 @@ class StructuralStressEngine:
         return (numer / denom) ** 0.25
 
     @staticmethod
+    def actual_shaft_slope_deg(
+        radial_load_N: float,
+        shaft_diameter_m: float,
+        overhang_A_m: float = 0.080,
+        span_B_m: float = 0.400,
+    ) -> float:
+        """Actual slope at the pulley bushing for a GIVEN shaft diameter [deg].
+
+        shaft_diameter_deflection() inverts the CEMA slope equation to SIZE the
+        shaft (slope forced to alpha_max = 0.0015 rad). This does the forward
+        calculation: given the diameter actually selected -- which rounds UP to a
+        standard size and is therefore usually a bit larger than the theoretical
+        minimum -- what is the real slope?
+
+            alpha = R*A*(B^2 - A^2) / (6*E*I*B),   I = pi*d^4 / 64
+
+        The result is <= 0.0859 deg (the CEMA limit) by construction, and is the
+        number a bearing's RUNNING misalignment capability must accommodate. Feed
+        it to the bearing selector so the report shows the real slope, not the
+        worst-case bound.
+        """
+        E = _shaft_E()
+        R = max(radial_load_N, 1.0)
+        A = max(overhang_A_m, 0.001)
+        B = max(span_B_m, 0.001)
+        d = max(shaft_diameter_m, 0.001)
+        I = math.pi * d ** 4 / 64.0
+        alpha_rad = R * A * (B ** 2 - A ** 2) / (6.0 * E * I * B)
+        return math.degrees(alpha_rad)
+
+    @staticmethod
     def shaft_diameter_governing(
         moment:         float,
         torque:         float,

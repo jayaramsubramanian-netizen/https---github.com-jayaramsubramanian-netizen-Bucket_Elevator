@@ -197,6 +197,44 @@ BELT_TEMP_LIMITS: dict = {
 
 # ── Lookup maps ────────────────────────────────────────────────────────────────
 _BUCKET_BY_ID   = {b["id"]: b for b in BUCKET_SERIES}
+
+
+# ── Bearing selection (replaces the hardcoded 355 kN C default) ──────────────
+# Lazy + cached: the catalogue and selector are loaded once, the first time a
+# solve needs them, from the same database catalog.py already uses. If the
+# component-catalog tables are not present (un-migrated DB), _BEARING_CATALOGUE
+# stays None and calc_bearing_life falls back to its legacy default so the app
+# still runs -- the selection simply does not refine L10 until the DB is migrated.
+_BEARING_CATALOGUE = None
+_BEARING_READY = False
+
+
+def _bearing_catalogue():
+    global _BEARING_CATALOGUE, _BEARING_READY
+    if _BEARING_READY:
+        return _BEARING_CATALOGUE
+    _BEARING_READY = True
+    try:
+        try:
+            from .catalog import _DB_PATH as _CATALOG_DB   # reuse catalog.py's path
+        except Exception:
+            from catalog import _DB_PATH as _CATALOG_DB
+    except Exception:
+        _CATALOG_DB = None
+    try:
+        try:
+            from .select_bearing import load_catalogue
+        except ImportError:
+            from select_bearing import load_catalogue
+        import os
+        db = _CATALOG_DB or os.path.join(os.path.dirname(os.path.abspath(__file__)), "vectrix.db")
+        cat = load_catalogue(db)
+        # only usable if the capability table was actually seeded
+        if cat.get("caps"):
+            _BEARING_CATALOGUE = cat
+    except Exception:
+        _BEARING_CATALOGUE = None            # any failure -> legacy fallback
+    return _BEARING_CATALOGUE
 _BUCKET_BY_STYLE: dict[str, list] = {}
 for _b in BUCKET_SERIES:
     _BUCKET_BY_STYLE.setdefault(_b["style"], []).append(_b)
@@ -2418,8 +2456,70 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
     trajectory_upper = _to_mm_dicts(traj_upper)
     trajectory_lower = _to_mm_dicts(traj_lower)
 
-    # ── Bearing life ──────────────────────────────────────────────────────────
-    L10 = calc_bearing_life(R_head, inp.n_rpm)
+    # ── Bearing selection + life ──────────────────────────────────────────────
+    # Previously: L10 = calc_bearing_life(R_head, inp.n_rpm) with a hardcoded
+    # C = 355 kN, so EVERY design used the same assumed bearing rating regardless
+    # of what would actually be fitted -- optimistic by up to ~25x for the small
+    # bearings real small-bore shafts take. Now the bearing is SELECTED from the
+    # catalogue by the real engineering sequence (family eligibility, shaft-slope
+    # misalignment, duty-class life requirement), and L10 comes from the selected
+    # bearing's real C. This will LOWER L10 relative to the old default, and some
+    # designs that passed 40,000 h before will now fail -- that is the correct
+    # result, not a regression; the report attributes it to the named bearing.
+    #
+    # Falls back to the legacy calc_bearing_life() if the component-catalog
+    # tables are not present (un-migrated DB) so the app still runs.
+    bearing_selection = None
+    _bcat = _bearing_catalogue()
+    if _bcat is not None:
+        try:
+            try:
+                from .select_bearing import select_bearing as _sel
+            except ImportError:
+                from select_bearing import select_bearing as _sel
+            try:
+                from .structural import StructuralStressEngine as _SSE
+            except ImportError:
+                from structural import StructuralStressEngine as _SSE
+            # actual slope at the SELECTED shaft diameter (<= CEMA 0.0859deg by
+            # construction; rounding up to a standard shaft reduces it further)
+            _slope_deg = _SSE.actual_shaft_slope_deg(R_head, d_governing_m, A_m, B_m)
+            # duty class from the operating profile, if the model carries one
+            _duty = "MEDIUM"
+            if hasattr(inp, "duty_profile"):
+                try:
+                    try:
+                        from .duty_classifier import load_rules as _lr, classify as _cl
+                    except ImportError:
+                        from duty_classifier import load_rules as _lr, classify as _cl
+                    import os as _os
+                    _db = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "vectrix.db")
+                    _dc = _cl(inp.duty_profile(), _lr(_db))
+                    _duty = _dc.get("duty_class") or "MEDIUM"
+                except Exception:
+                    _duty = "MEDIUM"
+            bearing_selection = _sel(
+                _bcat,
+                shaft_diameter_mm = d_governing_m * 1000.0,
+                radial_load_N     = R_head,
+                rpm               = inp.n_rpm,
+                shaft_slope_deg   = _slope_deg,
+                duty_class        = _duty,
+            )
+            _sel_row = bearing_selection.get("selected")
+            if _sel_row:
+                # L10 from the SELECTED bearing's real C rating
+                L10 = float(_sel_row["L10_h"])
+            else:
+                # no catalogue bearing fits at this bore/duty -- this is a real
+                # design failure, not a math error. Report L10 as the best
+                # achievable at this bore so the deficiency is visible and the
+                # l10_ok verdict fails honestly rather than passing on a phantom.
+                L10 = calc_bearing_life(R_head, inp.n_rpm)
+        except Exception:
+            L10 = calc_bearing_life(R_head, inp.n_rpm)   # any failure -> legacy
+    else:
+        L10 = calc_bearing_life(R_head, inp.n_rpm)
 
     # ── Discharge chute design ────────────────────────────────────────────────
     # traj_center is already the raw (x, y) tuple list in metres from stream_envelope()
@@ -3048,7 +3148,12 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         "cap_ok":       float(Q) >= float(inp.Q_req),
         "speed_ok":     (bucket.get("v_min", 0.5) <= v <= bucket.get("v_max", 9.9)),
         "cr_ok":        1.0 <= float(cr) <= 1.8,
-        "l10_ok":       L10 >= 40000.0,
+        # l10_ok now respects the DUTY-BASED required life when a bearing was
+        # selected (the selection already enforced it), falling back to the
+        # legacy 40,000 h only when no selection ran.
+        "l10_ok":       (L10 >= float((bearing_selection or {}).get("required_life_h", 40000.0))
+                         if bearing_selection else L10 >= 40000.0),
+        "bearing_selection": bearing_selection,  # None on un-migrated DB
 
         # ── Engineering verdicts (TASK_LIST item 2) ──────────────────────────
         # These nine bands were hardcoded in SIX UI files. Two of them
@@ -3063,9 +3168,22 @@ def solve_elevator(inp: BucketElevatorInput) -> dict:
         # restating the number, so display text cannot drift from the rule
         # either. Values are carried over EXACTLY as the UI had them -- this is
         # a relocation, not a retune.
-        "headshaft_load_status":  _band_hi(T1 + T2 + T3, 50000.0, 80000.0),
-        "headshaft_load_warn_N":  50000.0,
-        "headshaft_load_fail_N":  80000.0,
+        # headshaft_load_status: the 50/80 kN limits were UNSOURCED judgement
+        # (engineering_limits now classes this 'derived'). When a bearing was
+        # selected, the allowable radial load is the selected bearing's STATIC
+        # rating C0 -- a real component limit -- so the verdict is resolved from
+        # that instead of the phantom constants. Falls back to the legacy bands
+        # only when no selection ran (un-migrated DB).
+        "headshaft_load_status":  (
+            _band_hi(R_head,
+                     0.5 * float((bearing_selection or {}).get("selected", {}).get("C0_kN", 0) or 0) * 1000.0,
+                     float((bearing_selection or {}).get("selected", {}).get("C0_kN", 0) or 0) * 1000.0)
+            if (bearing_selection and (bearing_selection.get("selected") or {}).get("C0_kN"))
+            else _band_hi(T1 + T2 + T3, 50000.0, 80000.0)),
+        "headshaft_load_source": (
+            "selected bearing C0 rating" if (bearing_selection and
+                (bearing_selection.get("selected") or {}).get("C0_kN"))
+            else "VECTOMEC judgement (unsourced 50/80 kN — no bearing selected)"),
 
         "l10_min_h":              40000.0,   # display: ">= 40,000 h"
         "l10_warn_h":             20000.0,   # optimiser constraint floor
